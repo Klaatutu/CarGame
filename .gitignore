@@ -1,0 +1,6 @@
+# Cache d'import Godot (régénéré à l'ouverture du projet)
+.godot/
+
+# Backups et caches Blender / Python
+*.blend1
+__pycache__/
