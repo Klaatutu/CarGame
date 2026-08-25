@@ -8,6 +8,7 @@ const CarScript := preload("res://scripts/car.gd")
 const RoadScript := preload("res://scripts/road.gd")
 const Retro := preload("res://scripts/retro.gd")
 const DriverScript := preload("res://scripts/driver.gd")
+const GiantScript := preload("res://scripts/giant.gd")
 
 @export_group("Ambiance")
 ## Densite du brouillard : plus c'est haut, moins on voit loin.
@@ -102,6 +103,12 @@ func _ready() -> void:
 		_throw_test()
 	elif "stalltest" in OS.get_cmdline_user_args():
 		_stall_test()
+	elif "glaretest" in OS.get_cmdline_user_args():
+		_glare_test()
+	elif "gianttest" in OS.get_cmdline_user_args():
+		_giant_test()
+	elif "centipedetest" in OS.get_cmdline_user_args():
+		_centipede_test()
 
 
 func _process(_delta: float) -> void:
@@ -1102,6 +1109,329 @@ func _leak_scan(pack: Node3D) -> void:
 		"" if worst == Vector3.ZERO else ", vers %s" % str(worst.snappedf(0.01))])
 	print("  AUCUN RAPATRIEMENT: %s   (plus grand bond inexplique : %.3f m)" % [
 		jump < 0.15, jump])
+
+
+## Banc d'essai du mille-pattes : par ou il entre, et comment il tient.
+##
+## IL EST AVANCE A LA MAIN, pas laisse tourner. `_physics_process` est coupe et
+## le banc l'appelle lui-meme avec un pas fixe de 1/60 s. Ce n'est pas un
+## raccourci, c'est la seule facon de mesurer la BESTIOLE et pas la machine :
+## sous le rendu complet, ce projet tombe a quelques images par seconde, et un
+## marcheur qui avance de 42 cm par image ne prouve rien de son adherence — il
+## la met en defaut par la taille du pas. Les autres bancs ont paye ce piege
+## deux fois (la 5e qui ne converge pas, la main a plat qui s'ouvre a 124°).
+##
+## Le corollaire compte aussi : les 40 s de promenade ci-dessous sont 40 s de
+## bestiole, pas 40 s d'attente. Le banc entier tient en quelques secondes.
+func _centipede_test() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	await get_tree().create_timer(0.8).timeout
+	var cabin = car.cabin
+	var bug: Node3D = cabin.centipede
+	if bug == null:
+		print("pas de mille-pattes"); get_tree().quit(); return
+	bug.rng.seed = 20250825
+	bug.set_physics_process(false)
+	var dt := 1.0 / 60.0
+	# Les boucles ci-dessous tournent SANS rendre la main au moteur : ce que
+	# `car.frame_accel` vaut a cet instant vaut donc pour toute la mesure. On la
+	# met a zero — sinon un geant qui secoue la caisse au meme moment fige la
+	# bestiole (elle se cramponne, c'est le §8) et le banc tourne sans fin. La
+	# valeur est rendue a la voiture des la premiere image suivante.
+	car.frame_accel = Vector3.ZERO
+
+	# --- 1. Les bouches sont RELEVEES, et elles soufflent du bon cote ----------
+	#
+	# Le sens ne se lit dans aucune position : une bouche retournee donnerait
+	# exactement les memes coordonnees, et la bestiole entrerait dans la planche
+	# de bord au lieu d'en sortir. On teste donc le SIGNE, sur les huit.
+	print("--- bouches relevees sur le .glb (%d) ---" % cabin.vents.size())
+	var into := 0
+	for v in cabin.vents:
+		var ok: bool = (v["dir"] as Vector3).dot(cabin.EYE_REF - (v["pos"] as Vector3)) > 0.0
+		if ok:
+			into += 1
+		var span: Vector3 = v["span"]
+		print("  %-24s pos=%s dir=%s fente=%.0fx%.0f mm  %s" % [
+			v["label"], (v["pos"] as Vector3).snappedf(0.001), v["dir"],
+			maxf(maxf(span.x, span.y), span.z) * 2000.0,
+			(span.x + span.y + span.z - maxf(maxf(span.x, span.y), span.z)) * 2000.0,
+			"vers l'habitacle" if ok else "A L'ENVERS"])
+	print("  TOUTES VERS L'HABITACLE : %s   (%d/%d)" % [
+		into == cabin.vents.size(), into, cabin.vents.size()])
+
+	# L'epaisseur du corps n'est pas un choix, c'est ce que laissent les lames.
+	var s0: MeshInstance3D = cabin.find_child("DASH_SideVentSlat_L0", true, false)
+	var s1: MeshInstance3D = cabin.find_child("DASH_SideVentSlat_L1", true, false)
+	if s0 != null and s1 != null:
+		var gap: float = _panel_box(s1).position.y - _panel_box(s0).end.y
+		print("  jour entre deux lames : %.1f mm   corps : %.1f mm   IL PASSE : %s" % [
+			gap * 1000.0, bug.BODY_T * 1000.0, bug.BODY_T <= gap])
+
+	# --- 2. Vitres fermees : il n'entre que par les grilles --------------------
+	var draws := 200
+	var by_window := 0
+	for i in draws:
+		bug.rewind()
+		bug.enter_now()
+		if String(bug.entry_label).begins_with("vitre"):
+			by_window += 1
+	print("vitres fermees      : %d entrees, dont %d par une vitre" % [draws, by_window])
+	print("  QUE PAR LES GRILLES : %s" % (by_window == 0))
+
+	# --- 3. Vitre du conducteur baissee : c'est par la qu'il passe -------------
+	#
+	# La vitre est ouverte par le VRAI mecanisme (crank + wind, window.gd), pas
+	# en ecrivant `open` : ce qui est en jeu ici, c'est que la bestiole lise la
+	# course reelle de la glace. Le geste souris->manivelle, lui, est prouve par
+	# `-- windowtest` et n'a pas a l'etre deux fois.
+	var win = cabin.windows[0]
+	win.crank(8.0)
+	for i in 200:
+		win.wind(dt)
+	var top: float = win.glass_box.end.y - win.travel * win.open
+	print("vitre conducteur    : ouverture=%.2f   haut de glace y=%.3f (fermee %.3f)" % [
+		win.open, top, win.glass_box.end.y])
+
+	by_window = 0
+	for i in draws:
+		bug.rewind()
+		bug.enter_now()
+		if String(bug.entry_label).begins_with("vitre"):
+			by_window += 1
+	print("  %d entrees, dont %d par la vitre (%.0f %%)" % [
+		draws, by_window, 100.0 * float(by_window) / float(draws)])
+	print("  LA VITRE L'EMPORTE  : %s   (elle pese plus que les huit grilles)" % (
+		by_window > draws / 2))
+
+	# --- 4. Il SORT du trou, il n'apparait pas dedans --------------------------
+	#
+	# C'est ce que la trace semee a l'avance doit donner : a l'instant de
+	# l'entree, le corps est encore tout entier derriere la bouche, et il en est
+	# paye anneau par anneau. Une bestiole qui apparaitrait d'un bloc dans
+	# l'habitacle ne serait pas entree, elle aurait ete posee.
+	var vent: Dictionary = cabin.vents[0]
+	for v in cabin.vents:
+		if v["label"] == "grille de degivrage":
+			vent = v
+	var mouth: Vector3 = vent["pos"]
+	var mdir: Vector3 = vent["dir"]
+	bug.rewind()
+	bug.enter_by(vent)
+	# ETRE ENCORE DEDANS, c'est etre DANS LA GARNITURE — pas "de l'autre cote du
+	# plan de la bouche". Le degivrage souffle vers le HAUT : son plan coupe
+	# l'habitacle en deux, et tout ce qui est plus bas que la planche de bord
+	# serait compte comme "pas encore sorti", y compris le plancher. Un anneau
+	# est dans la tole ou il n'y est pas, et les boites le disent.
+	var buried0 := _buried(cabin, bug.segment_points())
+	var tail0: float = (mouth - bug.segment_points()[bug.SEGMENTS - 1]).dot(mdir)
+	print("entre par           : %s, a %s" % [bug.entry_label, mouth.snappedf(0.001)])
+	print("  a l'instant zero  : %d anneaux sur %d encore dans la planche" % [
+		buried0, bug.SEGMENTS])
+	print("  QUEUE DANS LE TROU: %s   (%.0f mm derriere la bouche)" % [
+		tail0 > bug.BODY_LEN * 0.9, tail0 * 1000.0])
+
+	var steps_in := 0
+	while bug.state != 2 and steps_in < 600:      # 2 = ROAMING
+		bug._physics_process(dt)
+		steps_in += 1
+	print("  emerge apres      : %.0f mm, puis il se raccroche" % (bug._emerged * 1000.0))
+	var half_out := -1
+	var guard := 0
+	while bug.walked < 0.40 and guard < 3000:
+		guard += 1
+		bug._physics_process(dt)
+		if half_out < 0 and _buried(cabin, bug.segment_points()) <= bug.SEGMENTS / 2:
+			half_out = 1
+			print("  a mi-corps sorti  : la tete a fait %.0f mm" % (bug.walked * 1000.0))
+	print("  apres 40 cm       : %d anneaux dans la planche" % [
+		_buried(cabin, bug.segment_points())])
+	print("  IL EST TOUT SORTI : %s" % (_buried(cabin, bug.segment_points()) == 0))
+
+	# --- 5. Quarante secondes de promenade ------------------------------------
+	#
+	# Quatre choses a la fois, parce qu'elles se tiennent.
+	#
+	# IL NE FLOTTE JAMAIS. `clearance()` est la distance a la surface la plus
+	# proche, et elle ne doit jamais depasser RIDE : au-dela il marche sur rien.
+	# Elle descend en revanche legitimement a zero — la ou deux boites de
+	# reptation se recouvrent, il est pose sur l'une tout en etant DANS l'autre,
+	# et le recouvrement est autorise ici (cabin.gd, crawl_solids). Ce n'est donc
+	# pas un plancher a exiger.
+	#
+	# IL NE S'ENFONCE JAMAIS DANS LE MOBILIER. Voila la mesure qui manquait, et
+	# celle qui a un sens : `solids` sont les boites du VRAI mobilier, celles que
+	# le joueur voit, et elles ne se recouvrent jamais entre elles. La bestiole
+	# ne doit etre dans aucune. Cette mesure-la n'est pas circulaire — elle ne
+	# passe pas par la fonction qui a place la bete.
+	#
+	# IL NE SORT JAMAIS DE LA COQUE, et LE CORPS NE SE DECOUD PAS.
+	var lo := INF
+	var hi := -INF
+	var out_hull := -INF
+	var sunk := 0.0
+	var gap_max := 0.0
+	var faces := {}
+	var start: float = bug.walked
+	var seen := AABB(bug.head_pos, Vector3.ZERO)
+	for i in int(40.0 / dt):
+		bug._physics_process(dt)
+		var c: float = bug.clearance()
+		lo = minf(lo, c)
+		hi = maxf(hi, c)
+		out_hull = maxf(out_hull, _outside(bug.head_pos, cabin.HULL_MIN, cabin.HULL_MAX))
+		for s in cabin.solids:
+			sunk = maxf(sunk, -_outside(bug.head_pos, s["min"], s["max"]))
+		var pts: Array[Vector3] = bug.segment_points()
+		for k in range(1, pts.size()):
+			gap_max = maxf(gap_max, pts[k - 1].distance_to(pts[k]))
+		faces[(bug.head_nrm as Vector3).snappedf(0.9)] = true
+		seen = seen.expand(bug.head_pos)
+	# L'ETENDUE plutot que le nombre de normales : une bestiole qui tourne en
+	# rond sur le plancher visite exactement autant de normales qu'une qui fait
+	# le tour de l'habitacle, et le nombre de normales ne les distingue pas.
+	# C'est le VOLUME visite qui dit s'il se promene ou s'il pietine.
+	print("40 s de promenade   : %.2f m parcourus, %d orientations de tole" % [
+		bug.walked - start, faces.size()])
+	print("  etendue visitee   : %.2f x %.2f x %.2f m   (habitacle %.2f x %.2f x %.2f)" % [
+		seen.size.x, seen.size.y, seen.size.z,
+		cabin.HULL_MAX.x - cabin.HULL_MIN.x, cabin.HULL_MAX.y - cabin.HULL_MIN.y,
+		cabin.HULL_MAX.z - cabin.HULL_MIN.z])
+	print("  IL SE PROMENE     : %s   (il ne pietine pas un coin)" % (
+		seen.size.x > 0.8 and seen.size.z > 0.8))
+	print("  distance a la tole : %.1f a %.1f mm   (assise sur %.1f)" % [
+		lo * 1000.0, hi * 1000.0, bug.RIDE * 1000.0])
+	print("  IL NE FLOTTE PAS  : %s   (jamais au-dela de l'assise)" % (
+		hi <= bug.RIDE + 0.0002))
+	print("  PAS DANS LA TOLE  : %s   (enfoncement maxi dans le mobilier %.1f mm)" % [
+		sunk <= 0.0, maxf(sunk, 0.0) * 1000.0])
+	print("  JAMAIS HORS COQUE : %s   (depassement maxi %.1f mm)" % [
+		out_hull <= 0.0, maxf(out_hull, 0.0) * 1000.0])
+	print("  ecart entre anneaux : %.1f mm maxi   (espacement %.1f)" % [
+		gap_max * 1000.0, bug.SEG_SPACING * 1000.0])
+	print("  LE CORPS TIENT    : %s" % (gap_max <= bug.SEG_SPACING + 0.0005))
+
+	# --- 6. L'ANGLE SAILLANT --------------------------------------------------
+	#
+	# Le coeur de la marche. Pose sur le dessus de la planche de bord, cap vers
+	# le conducteur, il arrive au nez de la planche : il doit BASCULER par-dessus
+	# l'arete et continuer sur la face verticale, pas continuer tout droit dans
+	# le vide ni s'arreter au bord. Rien dans le code ne parle d'arete — c'est la
+	# regle generale qui doit produire ca, sinon elle ne vaut rien.
+	bug.head_pos = Vector3(0.0, 0.950, -0.62)
+	bug.head_nrm = Vector3.UP
+	bug._dir = Vector3.BACK                       # +z : vers le conducteur
+	bug._goal = Vector3(0.0, 0.60, -0.50)         # en bas de la face verticale
+	bug._running = true
+	bug._wait = 99.0
+	# On guette l'INSTANT ou la normale bascule, on ne relit pas l'etat final :
+	# il continue sa route ensuite et finit sur le dessus de console, normale en
+	# l'air, ce qui donnerait "il n'a pas bascule" alors qu'il vient d'y passer.
+	# Premiere version du banc, premier faux negatif.
+	var y0: float = bug.head_pos.y
+	var tipped := Vector3.ZERO
+	var tip_y := 0.0
+	var tip_at := 0.0
+	for i in int(1.2 / dt):
+		bug._physics_process(dt)
+		if tipped == Vector3.ZERO and absf(bug.head_nrm.y) < 0.4:
+			tipped = bug.head_nrm
+			tip_y = bug.head_pos.y
+			tip_at = bug.head_pos.z
+	print("le nez de la planche: normale (0, 1, 0) -> %s au bord z=%.3f" % [
+		tipped.snappedf(0.01), tip_at])
+	print("  IL A BASCULE      : %s   (a l'arete, %.0f mm sous le dessus)" % [
+		tipped != Vector3.ZERO and tipped.z > 0.9, (y0 - tip_y) * 1000.0])
+	print("  ET IL CONTINUE    : %s   (%.0f mm plus bas, ventre a %.1f mm)" % [
+		bug.head_pos.y < y0 - 0.10, (y0 - bug.head_pos.y) * 1000.0,
+		bug.clearance() * 1000.0])
+
+	# --- 7. Fige, il ne pedale pas dans le vide -------------------------------
+	bug._running = false
+	bug._wait = 99.0
+	var phase0: float = bug._phase
+	var walked0: float = bug.walked
+	for i in int(1.0 / dt):
+		bug._physics_process(dt)
+	print("fige 1 s            : pattes %+.4f   distance %+.4f m" % [
+		bug._phase - phase0, bug.walked - walked0])
+	print("  LES PATTES SE TAISENT : %s   (elles suivent la distance, pas le temps)" % (
+		absf(bug._phase - phase0) < 0.0001))
+
+	# --- 8. Coup de frein : il se cramponne -----------------------------------
+	#
+	# Il ne glisse pas — s'agripper est tout son metier — mais il arrete de
+	# courir, ce qui est ce que fait une bestiole quand le monde bouge sous elle.
+	bug._running = true
+	bug._wait = 0.5
+	walked0 = bug.walked
+	for i in int(0.5 / dt):
+		bug._physics_process(dt)
+	var free: float = bug.walked - walked0
+
+	car.frame_accel = Vector3(0.0, 0.0, 18.0)     # freinage pedale : 17 m/s^2
+	bug._running = true
+	bug._wait = 0.5
+	walked0 = bug.walked
+	for i in int(0.5 / dt):
+		bug._physics_process(dt)
+	var braked: float = bug.walked - walked0
+	car.frame_accel = Vector3.ZERO
+	print("0,5 s de marche     : libre %.3f m   sous 18 m/s^2 %.3f m" % [free, braked])
+	print("  IL SE CRAMPONNE   : %s" % (braked < free * 0.25))
+
+	# --- 9. Laisse tourner : il part TOUT SEUL --------------------------------
+	#
+	# Tout ce qui precede l'a avance a la main. Il reste a prouver la chaine
+	# complete, moteur en marche : le compteur descend, `_choose_entry` tire une
+	# ouverture, et il entre sans qu'on le lui demande. Sans ce dernier point, un
+	# banc entierement vert pourrait couvrir une bestiole que rien ne declenche.
+	bug.set_physics_process(true)
+	bug.rewind()
+	bug._wait = 0.5
+	var came: bool = await _until(func(): return bug.state != 0, 5.0)
+	print("laisse tourner      : il part seul=%s   par %s" % [came, bug.entry_label])
+
+	# --- 10. Ce qu'on voit ----------------------------------------------------
+	bug.rewind()
+	bug.enter_by(vent)
+	_env.ambient_light_energy = 1.6
+	await _aim_at(Vector3(0.0, 0.95, -0.80))
+	await get_tree().create_timer(0.5).timeout
+	await _shot("20_millepattes_sort.png")
+	await get_tree().create_timer(2.5).timeout
+	await _shot("21_millepattes_planche.png")
+
+	# Un gros plan, parce qu'a un metre et par 27 cm de long il ne fait que 13 %
+	# de la largeur de l'image : de quoi le VOIR, pas de quoi juger la bete. On
+	# resserre le champ plutot que de le grossir — c'est la meme bestiole.
+	bug.set_physics_process(false)
+	bug.head_pos = Vector3(-0.20, 0.950, -0.78)
+	bug.head_nrm = Vector3.UP
+	bug._dir = Vector3(1.0, 0.0, 0.35).normalized()
+	bug._running = true
+	bug._wait = 99.0
+	bug._goal = Vector3(0.60, 0.95, -0.70)
+	for i in int(0.7 / dt):
+		bug._physics_process(dt)
+	car.cam.fov = 26.0
+	await _aim_at(bug.head_pos)
+	await get_tree().create_timer(0.4).timeout
+	await _shot("22_millepattes_gros_plan.png")
+	get_tree().quit()
+
+
+## Combien d'anneaux sont encore DANS la tole — planche de bord, garniture,
+## mobilier. C'est ce qui dit qu'il sort d'un trou au lieu d'y apparaitre, et ca
+## vaut pour les huit bouches sans avoir a savoir de quel cote elles soufflent.
+func _buried(cabin, pts: Array[Vector3]) -> int:
+	var n := 0
+	for p in pts:
+		for s in cabin.solids + cabin.crawl_solids:
+			if _outside(p, s["min"], s["max"]) < 0.0:
+				n += 1
+				break
+	return n
 
 
 ## De combien un point sort de la boite [lo, hi]. Negatif ou nul : il est dedans.
@@ -2136,6 +2466,320 @@ func _gear_test() -> void:
 	get_tree().quit()
 
 
+## Banc d'essai du geant.
+##
+## Quatre choses a prouver, dans cet ordre d'importance :
+##
+##   1. LES PIEDS NE GLISSENT PAS. C'est ce qui trahit une animation
+##      procedurale, et rien d'autre ne compte tant que ce n'est pas acquis. On
+##      suit la POINTE du pied d'appui image par image, sur toute la course.
+##      Ce n'est pas la cheville qu'on suit : en fin d'appui le pied se dresse
+##      sur ses orteils, la cheville monte de deux metres et avance d'un autre,
+##      et c'est normal. La pointe, elle, ne doit pas bouger.
+##   2. LES JAMBES NE S'ALLONGENT PAS. C'est le corollaire : le seul moyen de ne
+##      pas glisser tout en gardant le bassin ou l'on veut, c'est d'etirer la
+##      cuisse. On mesure donc hanche-cheville contre la longueur de jambe.
+##   3. IL AVANCE DE CE QU'IL FAIT. La foulee mesuree fois la cadence mesuree
+##      doit redonner la vitesse. Trois nombres qui se contredisent, c'est
+##      exactement ce qui fait les demarches de dessin anime.
+##   4. LE PIED FRAPPE. Un pietinement qui tombe sur la voiture doit passer les
+##      2,4 g, sinon rien ne decolle dans l'habitacle et le coup n'est qu'un
+##      effet de camera.
+func _giant_test() -> void:
+	var g = road.giant
+
+	# --- 0. la route le pose-t-elle vraiment ? -----------------------------
+	# Tout le reste du banc place le geant a la main. Ce premier essai est le
+	# seul qui prouve le CABLAGE : on avance le rendez-vous a l'echantillon
+	# suivant, on roule, et on regarde si road.gd le sort des arbres tout seul,
+	# du bon cote et a la bonne distance de la chaussee. Sans lui, on pourrait
+	# livrer un geant parfait que personne ne rencontrerait jamais.
+	print("--- la route le pose ---------------------------------------------")
+	car.gear = 5
+	car.speed = 28.0
+	road._giant_next = road._index0 + RoadScript.SAMPLES - 4
+	var posed: bool = await _until(func(): return road.giant_index >= 0, 12.0)
+	var off := 0.0
+	if posed:
+		var at: Transform3D = road.sample_at(road.giant_index)
+		off = Vector2(g.global_position.x - at.origin.x,
+			g.global_position.z - at.origin.z).length()
+	print("  ELLE LE POSE      : %s   (echantillon %d, a %.1f m de l'axe)" % [
+		posed, road.giant_index, off])
+	print("  DANS LES ARBRES   : %s   (les sapins vont de %.1f a %.1f m de l'axe)" % [
+		off > RoadScript.ROAD_HALF + RoadScript.SHOULDER and off < 20.4,
+		RoadScript.ROAD_HALF + RoadScript.SHOULDER, 20.4])
+	print("  IL ATTEND         : %s   (%s)" % [
+		g.state == GiantScript.DORMANT or g.state == GiantScript.RISING,
+		g.debug_line()])
+
+	# La suite place le geant a la main : la route ne doit plus venir en poser
+	# un autre au milieu du banc, elle ecraserait chaque fois la position.
+	road._giant_next = 1000000000
+	road.giant_index = -1
+
+	print("--- anatomie -----------------------------------------------------")
+	print("taille %.1f m   pied %.2f x %.2f m   jambe %.2f m   bassin en course %.2f m" % [
+		GiantScript.HEIGHT, GiantScript.FOOT_LEN, GiantScript.FOOT_WIDE,
+		GiantScript.LEG, GiantScript.HIP_RUN])
+	print("  PIED = VOITURE  : %s   (la Civic fait 3,965 x 1,675)" % (
+		absf(GiantScript.FOOT_LEN - 3.965) < 0.02
+		and absf(GiantScript.FOOT_WIDE - 1.675) < 0.02))
+	print("  IL EST CABLE    : %s   (premier rendez-vous a l'echantillon %d, soit %.0f m)" % [
+		g != null, RoadScript.GIANT_FIRST,
+		(RoadScript.GIANT_FIRST - RoadScript.BEHIND) * RoadScript.STEP])
+
+	var step_len: float = g.run_speed / GiantScript.RUN_CADENCE
+	print("course : %.1f m/s (%.0f km/h)   %.2f pas/s   %.1f m par pas" % [
+		g.run_speed, g.run_speed * 3.6, GiantScript.RUN_CADENCE, step_len])
+	print("  FROUDE COHERENT : %s   (%.1f m x %.2f /s = %.1f m/s)" % [
+		absf(step_len * GiantScript.RUN_CADENCE - g.run_speed) < 0.5,
+		step_len, GiantScript.RUN_CADENCE, step_len * GiantScript.RUN_CADENCE])
+	print("  on le seme en 5e (%.0f km/h) ; 4e %.0f ; 3e %.0f ; lui %.0f" % [
+		CarScript.GEAR_TOP[6] * 3.6, CarScript.GEAR_TOP[5] * 3.6,
+		CarScript.GEAR_TOP[4] * 3.6, g.run_speed * 3.6])
+	print("  SEULE LA 5e SUFFIT : %s" % (
+		CarScript.GEAR_TOP[6] > g.run_speed and CarScript.GEAR_TOP[4] < g.run_speed))
+
+	# --- 1. il est tapi, puis il se leve ----------------------------------
+	print("--- l'apparition -------------------------------------------------")
+	car.gear = 5
+	car.speed = 24.0
+	await get_tree().create_timer(0.8).timeout
+
+	_place_giant(g, 150.0, 16.0)
+	await get_tree().create_timer(0.4).timeout
+	var crouched: float = g.hip_height()
+	print("pose a 150 m       : %s" % g.debug_line())
+	print("  IL EST TAPI      : %s   (bassin a %.2f m, debout %.2f)" % [
+		crouched < GiantScript.HIP_STAND * 0.45, crouched, GiantScript.HIP_STAND])
+	print("  IL SE CACHE      : %s   (%.1f m de haut accroupi, les sapins font 6 a 11 m)" % [
+		crouched * 2.1 < 11.0, crouched * 2.1])
+	await _giant_shot(g, "50_geant_tapi.png", 26.0, 0.55)
+
+	# On le rapproche : il doit remarquer la voiture tout seul et se deplier.
+	_place_giant(g, 60.0, 14.0)
+	var rose: bool = await _until(func(): return g.state == GiantScript.CHASING, 6.0)
+	print("rapproche a 60 m   : %s" % g.debug_line())
+	print("  IL S'EST LEVE    : %s   (bassin %.2f m, etait %.2f)" % [
+		rose and g.hip_height() > crouched * 2.0, g.hip_height(), crouched])
+	await _giant_shot(g, "51_geant_leve.png", 34.0, 0.62)
+
+	# --- 2. la marche, image par image ------------------------------------
+	#
+	# On roule VITE pendant cette mesure, et ce n'est pas un detail : a 24 m/s
+	# il rattrape la voiture au bout de huit secondes, la depasse, et se met a
+	# tourner autour — on mesurerait alors une demarche de virage serre, pas une
+	# course. A 36 m/s il ne gagne que deux metres par seconde et court droit.
+	print("--- la course ----------------------------------------------------")
+	car.gear = 6
+	car.speed = 36.0
+	await get_tree().create_timer(3.5).timeout      # qu'il monte a son allure
+	var slide := 0.0
+	var stretch := 0.0
+	var anchor: Array[Vector3] = [Vector3.INF, Vector3.INF]
+	var was: Array[bool] = [g.planted(0), g.planted(1)]
+	var lands := []
+	var hip_lo := 99.0
+	var hip_hi := 0.0
+	var t := 0.0
+	while t < 11.0:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		for i in 2:
+			var now: bool = g.planted(i)
+			if now and not was[i]:
+				anchor[i] = g.toe(i)
+				lands.append([t, g.global_position])
+			elif now and anchor[i].is_finite():
+				slide = maxf(slide, anchor[i].distance_to(g.toe(i)))
+			elif not now:
+				anchor[i] = Vector3.INF
+			was[i] = now
+			stretch = maxf(stretch, g.hip(i).distance_to(g.ankle(i)) / GiantScript.LEG)
+		hip_lo = minf(hip_lo, g.hip_height())
+		hip_hi = maxf(hip_hi, g.hip_height())
+
+	print("apres %.0f s de course : %s" % [t, g.debug_line()])
+	print("  LES PIEDS TIENNENT : %s   (derive maxi de la pointe : %.0f mm)" % [
+		slide < 0.05, slide * 1000.0])
+	# Le seuil n'est pas zero, et il ne peut pas l'etre : le pied vise un point
+	# choisi une seconde plus tot, et le joueur a le droit de donner un coup de
+	# volant entre-temps. Ce qu'on exige, c'est que l'ecart reste INVISIBLE —
+	# 6 % de 12,82 m font 77 cm, moins que l'epaisseur du tibia (1,05 m) : le
+	# jeu au genou reste enfoui dans le membre. Au-dela, la jambe se disloque.
+	print("  LA JAMBE TIENT     : %s   (allongement maxi %.1f %%, soit %.0f cm ; le tibia fait %.0f cm d'epaisseur)" % [
+		stretch <= 1.06, (stretch - 1.0) * 100.0,
+		(stretch - 1.0) * GiantScript.LEG * 100.0, GiantScript.THICK_SHIN * 100.0])
+	print("  le bassin respire  : %.2f a %.2f m   (%.0f cm de battement)" % [
+		hip_lo, hip_hi, (hip_hi - hip_lo) * 100.0])
+
+	if lands.size() >= 4:
+		var n := lands.size()
+		var span: float = lands[n - 1][0] - lands[0][0]
+		var walked: float = (lands[n - 1][1] as Vector3).distance_to(lands[0][1])
+		var cad := float(n - 1) / span
+		var stride := walked / float(n - 1)
+		print("mesure : %d pas en %.1f s pour %.0f m   ->  %.2f pas/s, %.1f m par pas" % [
+			n - 1, span, walked, cad, stride])
+		print("  ILS SE RECOUPENT   : %s   (%.1f x %.2f = %.1f m/s, il roule a %.1f)" % [
+			absf(stride * cad - g.speed) < 2.0, stride, cad, stride * cad, g.speed])
+
+	# --- 3. on le seme, ou pas --------------------------------------------
+	print("--- la poursuite -------------------------------------------------")
+	for v in [30.0, 43.0, 50.0]:
+		car.gear = 6 if v > 44.0 else 5
+		car.speed = v
+		await get_tree().create_timer(1.2).timeout      # qu'il retrouve son allure
+		var d0: float = car.global_position.distance_to(g.global_position)
+		await get_tree().create_timer(3.0).timeout
+		var d1: float = car.global_position.distance_to(g.global_position)
+		print("a %5.1f m/s (%3.0f km/h) : ecart %5.1f -> %5.1f m   %+.1f m/s" % [
+			v, v * 3.6, d0, d1, (d1 - d0) / 3.0])
+		print("   %s" % ("ON LE SEME" if d1 > d0 + 3.0 else
+			("IL REVIENT" if d1 < d0 - 3.0 else "il tient l'ecart")))
+
+	# --- 4. le pied ---------------------------------------------------------
+	print("--- le pied ------------------------------------------------------")
+	# On lui remet la voiture sous le nez, doucement : il ne peut plus la rater.
+	car.speed = 10.0
+	_place_giant(g, 34.0, 0.0)
+	g.state = GiantScript.CHASING
+	g._rise = 1.0
+	g.speed = g.run_speed * 0.7
+
+	var can: Node3D = car.interaction.grabbables[1] if car.interaction.grabbables.size() > 1 else null
+	var can0: Vector3 = can.position if can != null else Vector3.ZERO
+	var hits0: int = g.hits
+	var got: bool = await _until(func(): return g.hits > hits0, 22.0)
+	# Releve TOUT DE SUITE : d'autres pas vont tomber pendant qu'on mesure le
+	# choc, et chacun ecrase last_step. Lire ces deux-la a la fin, c'est decrire
+	# le pas d'apres en croyant parler de celui qui a touche.
+	var hit_at: Vector3 = g.last_step
+	var hit_on: bool = g.last_step_hit
+	# Et la voiture aussi, au meme instant : en une seconde et demie de mesure
+	# elle parcourt quinze metres, et l'ecart mesure apres coup n'est plus celui
+	# du pas — c'est celui du chemin fait depuis.
+	var car_at := Vector3(car.global_position.x, 0.0, car.global_position.z)
+	# On suit la POINTE du choc, pas l'etat d'apres : _shock s'eteint en 60 ms et
+	# le ressort de la suspension en une seconde. Relever apres coup, c'est
+	# mesurer le retour au calme.
+	var peak_a := 0.0
+	var peak_cam := 0.0
+	var peak_pitch := 0.0
+	# Le coup lui-meme, tel qu'il a ete injecte. Il faut le prendre au maximum
+	# sur la fenetre : d'autres pas tombent pendant qu'on mesure, plus faibles,
+	# et car.last_impact ne garde que le dernier — lu a la fin, il vaut 5 m/s^2
+	# et fait croire que le pied a caresse la voiture.
+	var peak_inj: float = car.last_impact
+	var left := 1.4
+	while left > 0.0:
+		await get_tree().process_frame
+		left -= get_process_delta_time()
+		peak_inj = maxf(peak_inj, car.last_impact)
+		peak_a = maxf(peak_a, car.frame_accel.length())
+		peak_cam = maxf(peak_cam, car.cam.position.length())
+		peak_pitch = maxf(peak_pitch, absf(car.cam.rotation.x))
+	print("pietinements %d   touches %d   (il a frappe : %s)" % [g.stomps, g.hits, got])
+	print("  IL VISE LA VOITURE : %s   (le pas est tombe a %.1f m d'elle)" % [
+		hit_on, hit_at.distance_to(car_at)])
+	print("  CA SECOUE          : %s   (coup de %.0f m/s^2 = %.1f g ; il en reste %.1f g" % [
+		peak_inj > 23.5, peak_inj, peak_inj / 9.81, peak_a / 9.81]
+		+ " a l'image suivante, seuil des objets 2,4 g)")
+	print("  LA CAMERA ENCAISSE : %s   (%.0f mm de debattement, %.1f deg de tangage)" % [
+		peak_cam > 0.002, peak_cam * 1000.0, rad_to_deg(peak_pitch)])
+	if can != null:
+		await get_tree().create_timer(1.0).timeout
+		print("  LA CANETTE DECOLLE : %s   (elle a bouge de %.0f mm)" % [
+			can.position.distance_to(can0) > 0.01,
+			can.position.distance_to(can0) * 1000.0])
+
+	# --- 5. ce qu'on voit du siege ------------------------------------------
+	# Deux braises dans le brouillard, et rien d'autre : de nuit, les feux
+	# arriere ne portent qu'a seize metres, la lune ne fait pas d'ombres, et il
+	# est noir. C'est la SEULE chose qui dit qu'il est encore la.
+	car.speed = 26.0
+	_place_giant(g, 46.0, 3.0)
+	g.state = GiantScript.CHASING
+	g._rise = 1.0
+	await get_tree().create_timer(1.4).timeout
+	# On vise l'HORIZON, pas le geant, et c'est le sujet de la capture : a 46 m
+	# sa tete est a 29 degres au-dessus de l'horizontale, et la lunette arriere
+	# n'ouvre que sur une dizaine de degres. Assis au volant on ne voit donc
+	# jamais ce qui nous poursuit — on voit ses JAMBES passer dans la lunette.
+	# Viser sa tete ne cadre que le ciel de toit, ce que la premiere version de
+	# ce banc a soigneusement photographie trois fois de suite.
+	await _aim_clamped(car.to_local(Vector3(g.global_position.x,
+		car.global_position.y + 1.2, g.global_position.z)))
+	await get_tree().create_timer(0.4).timeout
+	await _shot("52_geant_derriere.png")
+
+	# ET L'IMAGE QUI COMPTE VRAIMENT : quand il vous a rattrape. Le banc vient de
+	# montrer qu'a 108 km/h il revient a trois metres — c'est donc la situation
+	# ordinaire, pas un cas limite. La, il n'est plus derriere : il est A COTE,
+	# et une jambe grande comme un immeuble passe dans la vitre du conducteur.
+	# C'est le seul angle depuis le siege ou il tienne dans le champ.
+	_place_giant(g, 6.0, -12.0)
+	g.state = GiantScript.CHASING
+	g._rise = 1.0
+	g.speed = car.speed
+	await get_tree().create_timer(0.7).timeout
+	await _aim_clamped(car.to_local(g.global_position + Vector3(0.0, 6.0, 0.0)))
+	await get_tree().create_timer(0.3).timeout
+	await _shot("55_geant_a_cote.png")
+
+	# Et la meme scene eclairee, de trois quarts, en entier.
+	await _giant_shot(g, "53_geant_course.png", 62.0, 0.50)
+
+	# L'echelle : la voiture au premier plan, lui dessus. C'est la seule image
+	# qui dise vraiment ce que "son pied fait la taille de la voiture" veut dire.
+	await _giant_shot(g, "54_geant_echelle.png", 34.0, 0.14)
+	get_tree().quit()
+
+
+## Pose le geant a `back` metres derriere la voiture et `side` sur le cote, dans
+## son sens de marche, et le remet a l'etat tapi.
+func _place_giant(g, back: float, side: float) -> void:
+	var b: Basis = car.global_transform.basis
+	var p: Vector3 = car.global_position + b.z * back + b.x * side
+	g.global_transform = Transform3D(Basis(Vector3.UP, car.rotation.y),
+		Vector3(p.x, 0.0, p.z))
+	g.arm(car)
+
+
+## Capture eclairee, camera exterieure placee de trois quarts arriere par rapport
+## au geant, cadree sur lui. `dist` en metres, `high` en fraction de sa taille.
+##
+## L'ambiante est poussee a 9 le temps de la prise : de nuit il est a 0,05
+## d'albedo sous une lune sans ombres, la capture ne montrerait qu'un carre noir.
+func _giant_shot(g, fname: String, dist: float, high: float) -> void:
+	var was_amb: float = _env.ambient_light_energy
+	var was_fog: float = _env.fog_density
+	var was_adj: bool = _env.adjustment_enabled
+	# 18 et pas 9 : sa peau est a 0,05 d'albedo, et le tonemap filmique plus le
+	# contraste de l'ambiance ecrasent ce qui reste. A 9 la capture ne montrait
+	# qu'une ombre dans du noir — on n'y voyait meme pas ou etaient ses pieds.
+	_env.ambient_light_energy = 18.0
+	_env.fog_density = 0.004
+	_env.adjustment_enabled = false
+	var ext := Camera3D.new()
+	ext.fov = 48.0
+	ext.far = 600.0
+	add_child(ext)
+	var aim: Vector3 = g.global_position + Vector3(0.0, GiantScript.HEIGHT * high, 0.0)
+	var dir: Vector3 = (g.global_transform.basis.z * 0.75 + g.global_transform.basis.x * 0.66).normalized()
+	ext.global_position = aim + dir * dist + Vector3(0.0, dist * 0.10, 0.0)
+	ext.look_at(aim, Vector3.UP)
+	ext.make_current()
+	await get_tree().create_timer(0.35).timeout
+	await _shot(fname)
+	car.cam.make_current()
+	ext.queue_free()
+	_env.ambient_light_energy = was_amb
+	_env.fog_density = was_fog
+	_env.adjustment_enabled = was_adj
+
+
 ## Sequence de captures automatiques, pour verifier le rendu sans jouer.
 func _auto_capture() -> void:
 	car.gear = 4          # 3e
@@ -2359,6 +3003,432 @@ func _moon_test() -> void:
 
 	await get_tree().create_timer(0.3).timeout
 	get_tree().quit()
+
+
+## Fenetre de PARE-BRISE ou se lit la route : au-dessus de la planche de bord,
+## entre les deux montants. C'est la seule zone dont la lisibilite compte.
+##
+## Elle est serree exprès. Prise plus large elle mordait sur le pare-soleil range
+## (en haut) et sur le retroviseur interieur (a droite), deux pieces d'habitacle
+## que le plafonnier eclaire en plein : elles faisaient a elles seules la moitie
+## du "voile" mesure, et on aurait regle le reflet sur la luminosite du plastique
+## qui l'entoure.
+const GLARE_WIN_FROM := Vector2i(520, 340)
+const GLARE_WIN_TO := Vector2i(1040, 545)
+## Intensites balayees pour le calibrage. Une seule execution donne la courbe
+## entiere : regler `strength` a l'oeil, une valeur par lancement, revient a
+## comparer des images prises sur des routes differentes.
+const GLARE_SWEEP := [0.5, 1.0, 1.5, 2.0, 2.8, 3.5, 5.0]
+
+## Bande du BAS du pare-brise, sur toute sa largeur : c'est la que se lisent les
+## reflets des objets poses sur la planche de bord. Elle s'arrete sous le
+## retroviseur interieur, qui s'allume avec le plafonnier et compterait pour une
+## bosse a lui tout seul.
+const GLARE_BAND_FROM := Vector2i(470, 452)
+const GLARE_BAND_TO := Vector2i(1450, 570)
+## Une bosse doit depasser cette fraction de la plus haute de la bande, et etre a
+## au moins tant de pixels de la precedente, pour compter comme un reflet
+## distinct. Les copies du halo fautif tombaient a 21 et 36 px : l'ecart minimal
+## est en dessous, sans quoi le banc les fusionnerait et ne verrait rien.
+const PEAK_FLOOR := 0.35
+const PEAK_GAP := 14
+
+
+## Banc d'essai du reflet de pare-brise (windshield_glare.gd).
+##
+## Ce qu'on mesure n'est PAS "y a-t-il un reflet" — une capture le dirait. C'est
+## CE QU'IL PREND A LA ROUTE. On lit la meme fenetre de pare-brise, plafonnier
+## eteint puis allume, et on en sort la luminance moyenne et le contraste RMS.
+##
+## Un voile lumineux a une signature qu'on ne peut pas confondre : il fait
+## MONTER la luminance et BAISSER le contraste rapporte a cette luminance. Une
+## image simplement plus claire ferait monter les deux. C'est donc le troisieme
+## chiffre — RMS / moyenne — qui dit si la vision empire vraiment, et il doit
+## descendre.
+##
+## La lampe est actionnee PAR LE VRAI GESTE (visee, clic, la main qui monte au
+## luminaire) et non en ecrivant `on` par en dessous : ce qui doit etre eprouve,
+## c'est que le reflet suive l'interrupteur, pas qu'un uniforme fasse ce qu'on
+## lui demande.
+func _glare_test() -> void:
+	car.gear = 4          # 3e
+	car.speed = 16.0
+	await get_tree().create_timer(1.8).timeout
+
+	var dome: Node3D = car.cabin.dome_light
+	if dome == null:
+		print("pas de plafonnier dans ce .glb : rien a mesurer")
+		get_tree().quit()
+		return
+	var glare: Node3D = car.cabin.glare
+	print("plafonnier a %s   reflet a %s   quad %s m" % [
+		dome.position.snappedf(0.001), glare.position.snappedf(0.001),
+		(glare.mesh as QuadMesh).size])
+
+	# LA VOITURE EST FIGEE, et ce n'est pas pour la pose. Les deux images
+	# comparees doivent etre la MEME image a la lampe pres : en roulant, la route
+	# defile de plusieurs metres entre les deux captures, le contraste change
+	# tout seul, et on n'attribuerait plus rien a personne.
+	car.set_physics_process(false)
+	car.velocity = Vector3.ZERO
+	car.throttle = 0.0
+	await _aim_at(Vector3(car.SEAT_X, 1.10, -3.0))
+	await get_tree().create_timer(0.6).timeout
+
+	# --- lampe eteinte : la reference -------------------------------------
+	await _dome_switch(dome, false)
+	await _look_at_road()
+	await _shot("30_plafonnier_eteint.png")
+	var img_off := _grab()
+	var off := _window_stats(img_off)
+
+	# --- lampe allumee, meme regard, meme image ---------------------------
+	await _dome_switch(dome, true)
+	await _look_at_road()
+	await _shot("31_plafonnier_allume.png")
+	var img_on := _grab()
+	var on := _window_stats(img_on)
+
+	# CE QUE LA GLACE A A REFLETER, avant tout melange. Sans cette sonde, un
+	# reflet trop pale ne se distingue pas d'une camera mal placee : les deux
+	# donnent un pare-brise a peine voile, et on regle `strength` a l'aveugle
+	# pendant que la camera regarde le capot.
+	_probe_reflection(glare)
+
+	print("fenetre pare-brise %s -> %s" % [GLARE_WIN_FROM, GLARE_WIN_TO])
+	print("  plafonnier eteint : luminance %.4f   RMS %.4f   contraste %.4f" % off)
+	print("  plafonnier allume : luminance %.4f   RMS %.4f   contraste %.4f" % on)
+	print("  soit                %+6.1f %%        %+6.1f %%     %+6.1f %%" % [
+		_relative(on[0], off[0]), _relative(on[1], off[1]), _relative(on[2], off[2])])
+
+	# --- LE HALO ETALE-T-IL, OU RECOPIE-T-IL ? -----------------------------
+	#
+	# Un flou etale une image ; une poignee d'echantillons ecartes la RECOPIE. La
+	# premiere version prenait quatre points a 11 % de la vitre : sur une canette
+	# posee sur la planche de bord, ca ne faisait pas un halo, ca faisait CINQ
+	# CANETTES.
+	#
+	# Ce qui separe les deux se mesure en un chiffre : la FINESSE DE DETAIL. Une
+	# copie garde tout le detail de l'original, un flou l'efface. On isole donc
+	# le halo — la difference entre le reflet complet et le meme reflet halo
+	# coupe — et on compare sa finesse a celle de l'image nette. Nettement en
+	# dessous : c'est un flou. Autour de 1 : ce sont des copies.
+	var mat: ShaderMaterial = glare.material_override
+	# NON TYPEES : un uniforme jamais assigne se relit `null`, et le remettre tel
+	# quel est justement ce qui rend au shader sa valeur par defaut.
+	var veil_kept = mat.get_shader_parameter("veil")
+	var smear_kept = mat.get_shader_parameter("smear_gain")
+
+	# ON NE MESURE PAS L'IMAGE, ON MESURE CE QUE LA CANETTE Y AJOUTE. Deux
+	# captures ou seule la canette change : la route, la planche, le halo, les
+	# traces d'essuie-glace, tout s'annule, et il ne reste dans la bande basse du
+	# pare-brise que ses reflets a elle. Compter des bosses dans l'image entiere
+	# ne voudrait rien dire — l'habitacle en a des dizaines, et c'est normal.
+	# Ici, chaque bosse au-dela de la premiere est une canette de trop.
+	#
+	# La mesure se fait AMPLIFIEE : au reglage de jeu le reflet d'une canette
+	# pese un niveau sur 255, et le tramage plein ecran le noie. On pousse donc
+	# le reflet bien au-dessus du plancher de bruit — c'est le nombre de copies
+	# qu'on compte, pas leur luminosite.
+	var cans := _put_on_dash(2)
+	if cans.size() < 2:
+		print("  pas assez de canettes a poser : rien a compter")
+	else:
+		# Elles viennent d'etre deplacees : on les laisse se caler. Mesurer
+		# pendant qu'elles bougent donnerait des images qui different aussi par
+		# leur POSITION, et la difference compterait leurs etapes.
+		await get_tree().create_timer(0.8).timeout
+		mat.set_shader_parameter("strength", 8.0)
+		await get_tree().create_timer(0.4).timeout
+		await RenderingServer.frame_post_draw
+		var img_none := _grab()
+
+		cans[0].visible = true
+		await get_tree().create_timer(0.5).timeout
+		await RenderingServer.frame_post_draw
+		var seen_one := _count_peaks(_grab(), img_none)
+
+		# TEMOIN. Un banc qui annonce "un seul reflet" sans avoir jamais su en
+		# voir deux n'annonce rien du tout : il aurait pu repondre 1 parce qu'il
+		# est aveugle. On en pose donc une SECONDE, a 24 cm de la premiere, et
+		# le compte doit passer a 2. Si les deux lignes disent 1, c'est la
+		# mesure qu'il faut corriger, pas le reflet.
+		cans[1].visible = true
+		await get_tree().create_timer(0.5).timeout
+		await RenderingServer.frame_post_draw
+		var seen_two := _count_peaks(_grab(), img_none)
+		mat.set_shader_parameter("strength", glare.strength)
+
+		print("  une canette posee a %s  -> %d reflet(s)" % [
+			car.to_local(cans[0].global_position).snappedf(0.01), seen_one])
+		print("  temoin, une deuxieme a 24 cm      -> %d reflet(s)  (%s)" % [
+			seen_two, "la mesure sait compter" if seen_two > seen_one \
+				else "MESURE AVEUGLE"])
+
+	# --- les trois couches, cote passager ----------------------------------
+	#
+	# La ou une canette est posee sur la planche de bord : c'est l'objet sur
+	# lequel le defaut s'etait vu. Les trois captures separent ce qui vient du
+	# reflet lui-meme, du halo, et des traces d'essuie-glace — sans quoi on
+	# corrige au jugé la couche qui n'y est pour rien.
+	await _aim_at(Vector3(0.45, 1.02, -1.40))
+	await get_tree().create_timer(0.6).timeout
+	mat.set_shader_parameter("veil", 0.0)
+	mat.set_shader_parameter("smear_gain", 0.0)
+	await get_tree().create_timer(0.4).timeout
+	await _shot("34_reflet_nu.png")
+	mat.set_shader_parameter("veil", veil_kept)
+	await get_tree().create_timer(0.4).timeout
+	await _shot("35_reflet_halo.png")
+	mat.set_shader_parameter("smear_gain", smear_kept)
+	await get_tree().create_timer(0.4).timeout
+	await _shot("36_reflet_complet.png")
+	await _look_at_road()
+
+	# Les canettes sortent du champ avant le calibrage. Elles sont posees DANS la
+	# fenetre de mesure, et la reference `off` a ete prise sans elles : les
+	# laisser la ferait compter leur propre lumiere comme du voile, et toute la
+	# courbe serait decalee vers le haut.
+	for c in cans:
+		c.visible = false
+	await get_tree().create_timer(0.4).timeout
+
+	# --- courbe de calibrage ----------------------------------------------
+	#
+	# Le meme pare-brise, la meme route, la meme lampe : seule `strength` bouge.
+	# C'est ce tableau qui fixe sa valeur par defaut, et il montre ce qu'on
+	# achete a chaque cran — du voile contre du contraste.
+	# Lue sur le NOEUD, pas sur le materiau : `get_shader_parameter` d'un
+	# uniforme jamais assigne renvoie null, et le banc mourait la sans un mot.
+	var kept: float = glare.strength
+	print("  strength      luminance   contraste   contraste perdu")
+	for s in GLARE_SWEEP:
+		mat.set_shader_parameter("strength", s)
+		await get_tree().create_timer(0.25).timeout
+		await RenderingServer.frame_post_draw
+		var st := _window_stats(_grab())
+		print("    %4.1f          %+5.1f %%     %.4f       %+6.1f %%" % [
+			s, _relative(st[0], off[0]), st[2], _relative(st[2], off[2])])
+	mat.set_shader_parameter("strength", kept)
+	await get_tree().create_timer(0.3).timeout
+
+	# --- le reflet BOUGE-T-IL avec la tete ? ------------------------------
+	#
+	# C'est ce qui separe un reflet d'une decalcomanie, et aucun des chiffres
+	# ci-dessus ne le dirait : une texture collee sur la vitre donnerait
+	# exactement le meme voile.
+	#
+	# La mesure se fait sur la SOUSTRACTION allume - eteint, pas sur l'image. Il
+	# le faut : decaler l'oeil deplace aussi la route, les arbres et les montants,
+	# et un centre de gravite lu sur l'image entiere suivrait tout ca sans qu'on
+	# sache ce qui a bouge. La difference, elle, ne contient plus que ce que la
+	# lampe a ajoute — le reflet, et rien d'autre.
+	#
+	# L'oeil se decale SANS que le regard tourne, ce que seule la voiture figee
+	# permet : sinon car.gd repose la tete a sa place a chaque image.
+	var seated: Vector3 = car.head.position
+	var at_seat := _glare_centre(img_on, img_off)
+
+	car.head.position = seated + Vector3(GLARE_LEAN, 0.0, 0.0)
+	await get_tree().create_timer(0.5).timeout
+	await _shot("32_plafonnier_oeil_decale.png")
+	var img_on2 := _grab()
+	await _dome_switch(dome, false)
+	await get_tree().create_timer(0.5).timeout
+	var img_off2 := _grab()
+	var at_lean := _glare_centre(img_on2, img_off2)
+	car.head.position = seated
+
+	print("  centre du reflet, oeil au volant      : x %.0f   y %.0f px" % at_seat)
+	print("  oeil decale de %.0f cm vers le passager : x %.0f   y %.0f px" % [
+		GLARE_LEAN * 100.0, at_lean[0], at_lean[1]])
+	print("  parallaxe                             : %.0f px en x, %.0f px en y" % [
+		absf(at_lean[0] - at_seat[0]), absf(at_lean[1] - at_seat[1])])
+
+	await get_tree().create_timer(0.3).timeout
+	get_tree().quit()
+
+
+## Le regard rendu a la route, un peu plongeant : droit devant, la visee accroche
+## le pare-soleil range et son bandeau d'aide s'affiche EN PLEIN DANS LA FENETRE
+## de mesure. Une mesure de luminance qui inclut du texte blanc ne mesure plus
+## grand-chose.
+func _look_at_road() -> void:
+	await _aim_at(Vector3(car.SEAT_X, 1.00, -3.0))
+	await get_tree().create_timer(0.7).timeout
+
+
+## Actionne le plafonnier a la main jusqu'a l'etat voulu, puis rend le regard a
+## la route. Rien n'est ecrit dans `on` : on vise, on clique, la main monte.
+func _dome_switch(dome: Node3D, want: bool) -> void:
+	if dome.on == want:
+		return
+	await _aim_at(dome.position)
+	await _click()
+	# La main met un moment a arriver au luminaire : la bascule n'a lieu qu'une
+	# fois qu'elle y est. Attendre une duree fixe mesurerait la machine.
+	await _until(func(): return dome.on == want, 3.0)
+	print("  geste sur le plafonnier -> %s" % ("allume" if dome.on else "eteint"))
+
+
+## Un pixel sur deux dans chaque sens : 36 000 echantillons suffisent a 0,0001
+## pres, et get_pixel() en GDScript coute cher.
+const GLARE_STEP := 2
+## De combien l'oeil se decale pour la mesure de parallaxe. Un buste qui se
+## penche vers le centre de la voiture, pas un demenagement.
+const GLARE_LEAN := 0.16
+
+
+func _grab() -> Image:
+	return get_viewport().get_texture().get_image()
+
+
+## Ou est la camera du reflet de pare-brise, ce qu'elle vise, et ce qu'elle
+## ramene. L'image brute est ecrite telle quelle : c'est la seule facon de voir
+## si elle cadre l'habitacle ou le capot.
+func _probe_reflection(glare: Node3D) -> void:
+	var view := glare.get_node("View") as SubViewport
+	var cam := glare.get_node("View/Eye") as Camera3D
+	var img: Image = view.get_texture().get_image()
+	img.save_png("user://33_reflet_brut.png")
+
+	var sum := 0.0
+	for y in img.get_height():
+		for x in img.get_width():
+			sum += img.get_pixel(x, y).get_luminance()
+	print("  camera du reflet a %s   vise %s   near %.2f  far %.1f  %s px" % [
+		car.to_local(cam.global_position).snappedf(0.01),
+		(cam.global_transform.basis * Vector3.FORWARD).snappedf(0.01),
+		cam.near, cam.far, view.size])
+	print("  luminance de ce qu'elle reflete : %.4f" % [
+		sum / float(img.get_width() * img.get_height())])
+
+
+## Luminance moyenne, ecart-type et contraste (RMS / moyenne) de la fenetre de
+## pare-brise. Le troisieme est celui qui compte : c'est lui qui dit si l'image
+## est devenue plus dure a lire, et non simplement plus claire.
+func _window_stats(img: Image) -> Array:
+	var n := 0
+	var sum := 0.0
+	var sum2 := 0.0
+	for y in range(GLARE_WIN_FROM.y, GLARE_WIN_TO.y, GLARE_STEP):
+		for x in range(GLARE_WIN_FROM.x, GLARE_WIN_TO.x, GLARE_STEP):
+			var l := img.get_pixel(x, y).get_luminance()
+			sum += l
+			sum2 += l * l
+			n += 1
+	var mean := sum / float(n)
+	var rms := sqrt(maxf(sum2 / float(n) - mean * mean, 0.0))
+	return [mean, rms, rms / maxf(mean, 0.0001)]
+
+
+## Ou se trouve le reflet, en pixels d'ecran : le centre de gravite de ce que la
+## lampe a AJOUTE (allume moins eteint, negatif ecrete). Rien d'autre ne bouge
+## entre les deux images, donc ce centre est celui du reflet seul.
+func _glare_centre(lit: Image, dark: Image) -> Array:
+	var sum := 0.0
+	var mx := 0.0
+	var my := 0.0
+	for y in range(GLARE_WIN_FROM.y, GLARE_WIN_TO.y, GLARE_STEP):
+		for x in range(GLARE_WIN_FROM.x, GLARE_WIN_TO.x, GLARE_STEP):
+			var d := maxf(lit.get_pixel(x, y).get_luminance()
+				- dark.get_pixel(x, y).get_luminance(), 0.0)
+			sum += d
+			mx += d * float(x)
+			my += d * float(y)
+	return [mx / maxf(sum, 0.0001), my / maxf(sum, 0.0001)]
+
+
+func _relative(now: float, before: float) -> float:
+	return 100.0 * (now - before) / maxf(before, 0.0001)
+
+
+## Ou le banc pose la canette : sur la casquette de planche de bord, devant le
+## conducteur.
+##
+## La hauteur se lit sur le DESSUS de la boite de cabin.gd, pas sur son centre :
+## la casquette y est declaree centree a 0,845 sur 0,20 d'epaisseur — epaisse
+## vers le bas, parce qu'elle est invisible et qu'une dalle mince se ferait
+## traverser — donc sa face superieure est a 0,945. Posee a 0,90, la canette
+## naissait DANS le solide et se faisait ejecter au plancher.
+const DASH_SPOT := Vector3(-0.20, 1.00, -0.85)
+
+
+## Ecart entre les deux canettes du temoin. 24 cm sur la planche donnent deux
+## reflets separes de plus de cent pixels : largement au-dela de PEAK_GAP, donc
+## un banc qui n'en verrait qu'un aurait un vrai probleme.
+const DASH_GAP := 0.24
+
+
+## Pose `count` canettes intactes sur le tableau de bord, INVISIBLES, et les
+## renvoie. C'est a l'appelant de les montrer une a une.
+##
+## Aucune ne s'y trouve au depart : celle que car.gd fait naitre au-dessus de la
+## planche passager glisse et finit au plancher, et le paquet demarre sur le
+## siege. Le banc en deplace donc — c'est le geste du joueur qui a rapporte le
+## defaut, et il faut le reproduire pour le mesurer.
+##
+## `vel` est remise a zero avec la position : la laisser telle quelle relancerait
+## la canette a travers l'habitacle depuis son nouveau point de depart.
+func _put_on_dash(count: int) -> Array[Node3D]:
+	var out: Array[Node3D] = []
+	for obj in car.interaction.grabbables:
+		if out.size() >= count:
+			break
+		var n := String(obj.name)
+		if not n.begins_with("Can_") or n.ends_with("Crushed"):
+			continue
+		obj.position = DASH_SPOT + Vector3(DASH_GAP * out.size(), 0.0, 0.0)
+		obj.vel = Vector3.ZERO
+		obj.visible = false
+		out.append(obj)
+	return out
+
+
+## Combien de bosses DISTINCTES separent deux images, dans la bande basse du
+## pare-brise.
+##
+## Le profil est la moyenne sur la hauteur de la bande : les copies d'un halo
+## sont decalees en x ET en y, et une ligne unique en manquerait la moitie ;
+## projetees en x, elles comptent toutes. C'est aussi ce qui rend la mesure
+## utilisable — moyenner soixante lignes enterre le tramage.
+func _count_peaks(now: Image, before: Image) -> int:
+	var w := GLARE_BAND_TO.x - GLARE_BAND_FROM.x
+	var profile := PackedFloat32Array()
+	profile.resize(w)
+	for i in w:
+		var x := GLARE_BAND_FROM.x + i
+		var s := 0.0
+		var n := 0
+		for y in range(GLARE_BAND_FROM.y, GLARE_BAND_TO.y):
+			s += maxf(now.get_pixel(x, y).get_luminance()
+				- before.get_pixel(x, y).get_luminance(), 0.0)
+			n += 1
+		profile[i] = s / float(n)
+
+	var smooth := PackedFloat32Array()
+	smooth.resize(w)
+	var top := 0.0
+	for i in w:
+		var s := 0.0
+		var n := 0
+		for k in range(maxi(i - 3, 0), mini(i + 4, w)):
+			s += profile[k]
+			n += 1
+		smooth[i] = s / float(n)
+		top = maxf(top, smooth[i])
+
+	var floor_level := top * PEAK_FLOOR
+	var count := 0
+	var last := -PEAK_GAP * 2
+	for i in range(1, w - 1):
+		if smooth[i] < floor_level:
+			continue
+		if smooth[i] > smooth[i - 1] and smooth[i] >= smooth[i + 1] \
+				and i - last >= PEAK_GAP:
+			count += 1
+			last = i
+	return count
 
 
 func _build_environment() -> void:

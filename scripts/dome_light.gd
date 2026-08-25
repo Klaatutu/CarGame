@@ -101,6 +101,14 @@ func grab_radius() -> float:
 	return 0.10
 
 
+## L'ampoule elle-meme, pour qui a besoin de ce qu'elle eclaire ailleurs —
+## windshield_glare.gd y lit position, couleur, energie et attenuation plutot
+## que de les recopier. Deux jeux de constantes finissent toujours par diverger ;
+## celui-ci ne le peut pas.
+func bulb() -> OmniLight3D:
+	return _light
+
+
 # --------------------------------------------------------------------------
 
 func _apply() -> void:

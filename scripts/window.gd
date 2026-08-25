@@ -53,6 +53,11 @@ var open := 0.0
 ## -1 portiere gauche, +1 portiere droite. Les deux manivelles tournent en
 ## miroir l'une de l'autre, comme sur la vraie voiture.
 var side := -1.0
+## Cotes de la glace VITRE REMONTEE, en espace voiture (relevees par cabin.gd).
+## Descendue, son bord superieur est a `glass_box.end.y - travel * open` : c'est
+## par ce jour-la que le mille-pattes passe (centipede.gd). Rien ici ne s'en
+## sert — une vitre n'a pas a savoir qui l'enjambe.
+var glass_box := AABB()
 
 var _crank: Node3D          # pivot de la manivelle, axe X au moyeu
 var _panes: Node3D          # pivot des deux vitres (interieure et exterieure)

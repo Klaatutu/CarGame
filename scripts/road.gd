@@ -13,6 +13,7 @@ extends Node3D
 
 const Retro := preload("res://scripts/retro.gd")
 const PoliceCar := preload("res://scripts/police_car.gd")
+const GiantScript := preload("res://scripts/giant.gd")
 
 const STEP := 2.0               # distance entre deux points de la ligne mediane
 const SAMPLES := 150            # ~300 m de route vivante
@@ -44,6 +45,20 @@ const POLICE_EVERY_MAX := 1400
 const POLICE_OFF := ROAD_HALF + 1.15   # centre de la caisse : sur l'accotement, hors de la voie
 const POLICE_YAW := 7.0         # nez legerement tourne vers la route, comme garee a la hate
 const POLICE_KEEP_BEHIND := 80.0      # on la laisse vivre tant qu'elle est a moins de 80 m derriere
+
+# Le geant. Il est TAPI dans les arbres a l'echantillon prevu, bien avant que la
+# voiture n'y arrive : c'est lui qui decide de se lever quand elle approche (voir
+# giant.gd, notice_distance). La route ne fait que le poser et le rallumer.
+#
+# 480 m pour le premier, soit une vingtaine de secondes : le temps de partir, de
+# passer les rapports et de croire qu'on est seul.
+const GIANT_FIRST := 240              # echantillon (global)
+const GIANT_EVERY_MIN := 900
+const GIANT_EVERY_MAX := 1800
+## Ecart a l'axe de la route. 15 m : dans la bande d'arbres (elle va jusqu'a
+## 20 m), assez pres pour qu'il soit dans les phares en passant, assez loin pour
+## qu'accroupi il se confonde avec les troncs.
+const GIANT_OFF := 15.0
 
 var target: Node3D
 
@@ -84,6 +99,11 @@ var police: Node3D
 ## Echantillon global ou la voiture de police est posee (-1 : nulle part).
 var police_index := -1
 var _police_next := POLICE_FIRST
+
+var giant: Node3D
+## Echantillon global ou le geant est tapi (-1 : il n'est nulle part).
+var giant_index := -1
+var _giant_next := GIANT_FIRST
 
 
 func _ready() -> void:
@@ -127,6 +147,13 @@ func _process(_delta: float) -> void:
 		police.visible = false
 		police.set_process(false)
 		police_index = -1
+
+	# Le geant s'eteint tout seul une fois seme. On lui donne alors un nouveau
+	# rendez-vous, loin devant : il faut avoir eu le temps de se croire tire
+	# d'affaire avant de retomber sur le suivant.
+	if giant_index >= 0 and giant.asleep():
+		giant_index = -1
+		_giant_next = _index0 + SAMPLES + _rng.randi_range(GIANT_EVERY_MIN, GIANT_EVERY_MAX)
 
 
 # --------------------------------------------------------------------------
@@ -275,6 +302,19 @@ func _place_props(i: int) -> void:
 		police_index = g
 		_police_next = g + _rng.randi_range(POLICE_EVERY_MIN, POLICE_EVERY_MAX)
 
+	# Le geant, tapi dans les arbres d'un cote ou de l'autre, tourne vers la
+	# route. Il est pose ICI, a 275 m devant la voiture, et il ne bougera pas
+	# avant qu'elle soit a 72 m : le temps qu'elle arrive, il fait partie du
+	# paysage.
+	if g >= _giant_next and giant_index < 0 and target != null:
+		var side := 1.0 if _rng.randf() < 0.5 else -1.0
+		var r := _right[i]
+		var basis := Basis(r, Vector3.UP, -Vector3.UP.cross(r)).rotated(
+			Vector3.UP, deg_to_rad(90.0 * side + _rng.randf_range(-25.0, 25.0)))
+		giant.transform = Transform3D(basis, _pos[i] + r * (side * GIANT_OFF))
+		giant.arm(target)
+		giant_index = g
+
 
 ## Pose (centre de la chaussee, face a la route) a l'echantillon global g, ou
 ## l'identite s'il n'est plus dans la fenetre vivante. Sert aux bancs d'essai.
@@ -292,6 +332,11 @@ func _build_prop_pools() -> void:
 	police.visible = false
 	police.set_process(false)
 	add_child(police)
+
+	# Un seul geant, reutilise : il n'y en a jamais deux a la fois.
+	giant = GiantScript.new()
+	giant.name = "Giant"
+	add_child(giant)
 
 	for i in TREE_COUNT:
 		var tree := Node3D.new()

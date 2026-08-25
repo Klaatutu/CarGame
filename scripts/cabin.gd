@@ -27,6 +27,8 @@ const VisorScript := preload("res://scripts/visor.gd")
 const WindowScript := preload("res://scripts/window.gd")
 const IgnitionScript := preload("res://scripts/ignition.gd")
 const DomeLight := preload("res://scripts/dome_light.gd")
+const GlareScript := preload("res://scripts/windshield_glare.gd")
+const CentipedeScript := preload("res://scripts/centipede.gd")
 
 ## Couche des solides de l'habitacle. La caisse elle-meme est sur la couche 1
 ## avec une boite qui englobe tout l'interieur : sans couche dediee, un objet
@@ -132,6 +134,29 @@ const WINDOWS := [
 		"panes": ["DOOR_R_Glass", "EXT_DoorGlass_R"]},
 ]
 
+## BOUCHES D'AERATION : par ou le mille-pattes entre (centipede.gd).
+##
+## Chaque nom est une piece du .glb, et tout le reste — position, taille,
+## direction — en est RELEVE (voir _build_vents et tools/probe_vents.gd). Une
+## bouche saisie a la main ici finirait par ne plus tomber sur la grille qu'elle
+## pretend designer, exactement comme les surfaces de depose avant qu'on les
+## mesure.
+##
+## Le haut-parleur de portiere en fait partie : c'est une grille, elle donne sur
+## un caisson, et un caisson donne sur le vide de la portiere. Il n'y a aucune
+## raison de la traiter autrement qu'un aerateur — sauf qu'elle est a hauteur de
+## coude, ce qui est pire.
+const VENT_MOUTHS := {
+	"DASH_Defrost": "grille de degivrage",
+	"DASH_CenterDefrost": "degivrage central",
+	"DASH_SideVentInner_L": "aerateur lateral gauche",
+	"DASH_SideVentInner_R": "aerateur lateral droit",
+	"STK_Vent_L": "aerateur central gauche",
+	"STK_Vent_R": "aerateur central droit",
+	"DOOR_L_SpeakerGrille2": "haut-parleur gauche",
+	"DOOR_R_SpeakerGrille2": "haut-parleur droit",
+}
+
 ## Pare-soleil : panneau -> tige, qui donne l'axe de basculement.
 const VISORS := {
 	"BODY_Visor_L": "BODY_VisorRod_L",
@@ -158,6 +183,31 @@ const TACHO_MAX_RPM := 8000.0
 var surfaces: Array = []
 ## Boites pleines de l'habitacle, en espace voiture (collision des objets).
 var solids: Array = []
+
+## BOITES SUR LESQUELLES ON RAMPE, en plus des `solids` (centipede.gd).
+##
+## Elles sont a part, et ce n'est pas de la timidite. `solids` est fait pour des
+## objets qui TOMBENT : c'est du mobilier horizontal, plus les parois qu'il faut
+## pour qu'une canette ne parte pas dans la caisse. Ce qui manque a une bestiole
+## qui MARCHE, ce sont justement les faces verticales que personne n'a jamais
+## heurtees — le nez de la planche de bord, ou vivent les aerateurs, et les
+## contre-portes.
+##
+## Les verser dans `solids` serait pourtant un vrai changement de physique : une
+## canette lancee rebondirait desormais sur le nez de la planche au lieu de
+## passer dans le vide qu'il y a derriere, et les quatre bancs qui mesurent les
+## objets (packtest, throwtest) relevent tous des chiffres dans cette zone. On
+## ne deplace pas ces chiffres pour donner un chemin a un mille-pattes.
+##
+## Deux listes coutent aussi moins cher qu'il n'y parait : le marcheur cherche
+## la surface LA PLUS PROCHE, pas les recouvrements. Ces boites peuvent donc se
+## chevaucher librement entre elles et avec `solids`, ce qu'aucune boite de
+## `solids` ne s'autorise.
+var crawl_solids: Array = []
+## Bouches d'aeration relevees sur le modele : [{label, pos, dir, half}].
+var vents: Array = []
+## Le mille-pattes (centipede.gd). Il vit dans l'habitacle, pas dans la voiture.
+var centipede: Node3D
 
 ## COQUE DE L'HABITACLE : le volume dont un objet ne sort JAMAIS.
 ##
@@ -200,6 +250,9 @@ var speedo_needle: Node3D
 var tacho_needle: Node3D
 ## Plafonnier (dome_light.gd), expose a interaction.gd comme objet utilisable.
 var dome_light: Node3D
+## Son reflet dans le pare-brise (windshield_glare.gd) : la contrepartie de
+## l'avoir allume. Null si le .glb n'a pas de plafonnier.
+var glare: Node3D
 ## Retroviseurs (mirror.gd) : voir aim_mirrors().
 var mirrors: Array = []
 ## Ceux qu'on peut regler a la souris, exposes a interaction.gd.
@@ -233,6 +286,9 @@ func _ready() -> void:
 	_build_windows()      # apres l'exterieur : la glace exterieure en fait partie
 	_build_mirrors()
 	_build_ignition()
+	_build_crawl()
+	_build_vents()        # apres l'interieur : les grilles y sont relevees
+	_spawn_centipede()    # en dernier : il lui faut les boites ET les bouches
 
 
 ## Articule les deux vitres de portiere et leur manivelle.
@@ -271,6 +327,13 @@ func _build_windows() -> void:
 		win.name = "Window%s" % spec["side"]
 		crank.add_child(win)
 		win.setup(crank, panes, knob_c, signf(hub_c.x), knob)
+		# Cotes de la glace VITRE REMONTEE, en espace voiture : c'est le seul
+		# instant ou elles se lisent sans avoir a defaire la course en cours.
+		# centipede.gd s'en sert pour savoir ou s'ouvre le jour au-dessus d'elle
+		# — la hauteur du bord superieur en est deduite, pas ecrite quelque part.
+		var pane := find_child(spec["panes"][0], true, false) as MeshInstance3D
+		if pane != null and pane.mesh != null:
+			win.glass_box = _relative_to(pane, self) * pane.mesh.get_aabb()
 		windows.append(win)
 
 
@@ -445,9 +508,16 @@ func _swivel(glass_name: String, at: Transform3D) -> Node3D:
 
 
 ## A appeler chaque image avec la position MONDE de l'oeil du joueur.
+##
+## Le reflet du pare-brise en fait partie : c'est une glace comme les autres,
+## simplement tres grande, tres inclinee, et qu'on regarde AU TRAVERS. Sa camera
+## se cale sur l'oeil exactement de la meme facon, et pour la meme raison — une
+## image figee trahirait le truquage au premier mouvement de tete.
 func aim_mirrors(eye: Vector3) -> void:
 	for m in mirrors:
 		m.aim(eye)
+	if glare != null:
+		glare.aim(eye)
 
 
 # --------------------------------------------------------------------------
@@ -556,6 +626,126 @@ func _surface(size: Vector3, pos: Vector3) -> void:
 	_solid(size, pos)
 
 
+# --------------------------------------------------------------------------
+# Ramper : les faces que le mobilier ne declare pas
+# --------------------------------------------------------------------------
+
+## Ce sur quoi on marche en plus de `solids` — voir `crawl_solids`.
+##
+## Trois manques, et ils ont tous la meme cause : ce sont des faces VERTICALES,
+## et aucun objet pose n'est jamais alle les toucher.
+##
+##   - LE NEZ DE LA PLANCHE DE BORD. `solids` n'en a que le dessus (la casquette,
+##     la planche passager) et le tablier tout au fond, a z -0.95. Entre les
+##     deux, rien : 40 cm de vide sur toute la largeur — la ou sont precisement
+##     les six aerateurs. Sans cette boite, une bestiole qui sort d'un aerateur
+##     n'a rien a portee et se retrouve a chercher la paroi la plus proche a
+##     quatorze centimetres de la.
+##   - LES CONTRE-PORTES. `solids` place les portieres a 0,79, qui est la TOLE ;
+##     la garniture qu'on voit et qu'on longe est a 0,70, et c'est sur elle
+##     qu'est vissee la grille de haut-parleur.
+##   - LE PARE-BRISE. `solids` le ferme en trois marches de 10 cm, ce qui suffit
+##     a renvoyer une canette. On y grimpe en escalier. Six marches de 6 cm le
+##     suivent d'assez pres pour qu'un corps de 27 cm draine dessus sans qu'on
+##     lise les marches — et elles ne coutent rien, personne d'autre ne les voit.
+##
+## La pente n'est pas saisie : elle est DEDUITE des deux lignes de baie que ce
+## fichier declare deja, comme le reflet du pare-brise (_build_glare). Bouger
+## COWL/HEADER emmene les marches avec.
+func _build_crawl() -> void:
+	# Le bloc de planche de bord s'arrete a 0,60 : c'est le DESSUS DE CONSOLE, et
+	# descendre plus bas l'avalait sur ses 12 cm avant. Une bestiole posee sur la
+	# console se retrouvait alors DANS le bloc, ou "la surface la plus proche"
+	# n'est plus celle sur laquelle elle marche — elle sautait d'une face a
+	# l'autre, et le corps s'etirait derriere elle. Les recouvrements sont permis
+	# ici, mais ils ne sont pas gratuits.
+	_crawl(Vector3(1.44, 0.345, 0.355), Vector3(0.0, 0.7725, -0.7225))   # planche de bord, le bloc
+	for x in [-0.73, 0.73]:
+		_crawl(Vector3(0.06, 0.50, 1.24), Vector3(x, 0.72, 0.0))         # contre-porte
+
+	var steps := 6
+	var y0 := COWL_Y + 0.01
+	var slope := (HEADER_Z - COWL_Z) / (HEADER_Y - COWL_Y)
+	var h := (HEADER_Y - y0) / float(steps)
+	for i in steps:
+		var y := y0 + h * (float(i) + 0.5)
+		var z := COWL_Z + (y - COWL_Y) * slope
+		_crawl(Vector3(1.52, h, 0.03), Vector3(0.0, y, z - 0.015))
+
+
+## Une boite de reptation. Elle ne va PAS dans `solids` : rien de ce qui tombe
+## ne doit la sentir.
+func _crawl(size: Vector3, pos: Vector3) -> void:
+	crawl_solids.append({"min": pos - size * 0.5, "max": pos + size * 0.5})
+
+
+# --------------------------------------------------------------------------
+# Bouches d'aeration
+# --------------------------------------------------------------------------
+
+## Releve les grilles nommees dans VENT_MOUTHS et en deduit par ou une bestiole
+## en sort. Rien n'est saisi a la main : ni la position, ni la direction.
+##
+## L'AXE vient de la boite englobante. Une grille est un objet PLAT — 6 mm
+## d'epaisseur pour 1,10 m de large sur le degivrage — donc son axe le plus
+## MINCE est celui du flux d'air, et c'est par la qu'on passe. Le dire ainsi
+## couvre les trois orientations du jeu sans les enumerer : les aerateurs de
+## face soufflent vers l'arriere (z), le degivrage vers le haut (y), les
+## haut-parleurs de portiere vers l'interieur (x).
+##
+## LE SENS, lui, pointe vers l'oeil du conducteur, parce que c'est a quoi sert
+## une bouche d'aeration : elle souffle sur les occupants. Seul le SIGNE du
+## produit scalaire compte, EYE_REF n'a donc pas besoin d'etre exact — meme
+## argument que l'axe de la cle de contact, et il tombe juste sur les huit.
+##
+## Viser le centre de l'habitacle, lui, ne marcherait pas : il est PLUS BAS que
+## le degivrage, qui se retrouverait a souffler dans le tableau de bord.
+func _build_vents() -> void:
+	for name in VENT_MOUTHS:
+		var mesh := find_child(name, true, false) as MeshInstance3D
+		if mesh == null or mesh.mesh == null:
+			push_warning("%s introuvable : une entree de moins" % name)
+			continue
+		var box: AABB = _relative_to(mesh, self) * mesh.mesh.get_aabb()
+		var s := box.size
+		var a := 0
+		if s.y <= s.x and s.y <= s.z:
+			a = 1
+		elif s.z <= s.x and s.z <= s.y:
+			a = 2
+
+		var dir := Vector3.ZERO
+		dir[a] = 1.0
+		if dir.dot(EYE_REF - box.get_center()) < 0.0:
+			dir = -dir
+
+		# L'etendue de la FENTE, epaisseur retiree : de quoi sortir n'importe ou
+		# le long du degivrage plutot que toujours en son milieu.
+		var span := s * 0.5
+		span[a] = 0.0
+
+		vents.append({
+			"label": VENT_MOUTHS[name],
+			"pos": box.get_center() + dir * (s[a] * 0.5 + 0.002),
+			"dir": dir,
+			"span": span,
+		})
+
+
+## Le mille-pattes est enfant de l'HABITACLE, pas de la voiture, et ce n'est pas
+## qu'une place dans l'arbre : il marche sur les boites d'ici, il entre par les
+## bouches d'ici, et il n'a rien a demander a car.gd — sauf `frame_accel`, pour
+## savoir quand se cramponner.
+func _spawn_centipede() -> void:
+	centipede = CentipedeScript.new()
+	centipede.name = "Centipede"
+	centipede.cabin = self
+	var p := get_parent()
+	if p != null and "frame_accel" in p:
+		centipede.carrier = p
+	add_child(centipede)
+
+
 ## Boite pleine, en ESPACE VOITURE. Aucun corps physique : cig_pack.gd resout
 ## lui-meme ses collisions contre ces boites, dans le repere de la voiture.
 ##
@@ -604,6 +794,8 @@ func _build_interior() -> void:
 		dome_light.name = "DomeLight"
 		add_child(dome_light)
 		dome_light.setup(lens, _relative_to(lens, interior).origin)
+		# Et sa contrepartie : ce qu'il met dans le pare-brise.
+		_build_glare()
 
 	# Aiguilles des compteurs : un pivot au moyeu de chacune, que car.gd
 	# oriente a chaque image avec set_gauges().
@@ -648,6 +840,30 @@ func _build_interior() -> void:
 	var button := interior.find_child("CON_BrakeButton", true, false) as Node3D
 	if button != null:
 		grip_local = button.position
+
+
+## Le reflet de l'habitacle dans le pare-brise (windshield_glare.gd) : ce que
+## coute d'allumer le plafonnier la nuit.
+##
+## Le plan de la vitre n'est PAS releve sur le .glb, il est DEDUIT des deux
+## lignes de baie que ce fichier declare deja — le bas (COWL_Y, COWL_Z) et le
+## haut (HEADER_Y, HEADER_Z), celles-la memes qui ferment le pare-brise dans
+## _build_walls(). Un pare-brise est plan : ces deux lignes le definissent
+## entierement, et le reflet ne peut donc pas glisser a cote de la vitre sur
+## laquelle il se pose.
+func _build_glare() -> void:
+	var base := Vector3(0.0, COWL_Y, COWL_Z)
+	var up := (Vector3(0.0, HEADER_Y, HEADER_Z) - base).normalized()
+	# Normale exterieure : perpendiculaire a la pente dans le plan YZ, tournee
+	# vers le haut et vers l'avant. La vitre est couchee de 59 degres sur la
+	# verticale, si bien qu'on la regarde presque en rasant — et c'est de la que
+	# vient l'essentiel du reflet, bien plus que de la lampe elle-meme.
+	var n := Vector3(0.0, up.z, -up.y)
+
+	glare = GlareScript.new()
+	glare.name = "WindshieldGlare"
+	add_child(glare)
+	glare.setup(base, up, n, dome_light)
 
 
 ## Cree un pivot sous `parent` et y reparente les objets nommes, en conservant

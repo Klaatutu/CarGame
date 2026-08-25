@@ -24,6 +24,7 @@ Ouvrir le projet dans Godot 4.8 et appuyer sur F5.
 | **Clic gauche maintenu** sur le rétroviseur ou un pare-soleil | **le placer** (regard bloqué) |
 | **Clic gauche maintenu** sur une manivelle de vitre | **tenir la poignée** (caméra libre) |
 | **Molette ↓ / ↑**, poignée en main | **descendre** / **remonter** la vitre (la boîte ne bouge pas) |
+| **Clic gauche** sur le plafonnier | **l'allumer / l'éteindre** — et le pare-brise se remplit de son reflet |
 | F12 | capture d'écran |
 | Échap | libérer la souris |
 
@@ -825,6 +826,192 @@ six crans demandés, le clic lâché à 0,51 laisse la vitre à 0,51 — le rest
 crans est oublié — et la molette ensuite ne lui fait plus rien. En butée, ou une
 fois la course rattrapée, il n'y aurait rien eu à prouver.
 
+## Le plafonnier, et ce qu'il coûte
+
+Vise le luminaire au pavillon et **clique** : la main monte le toucher, il
+s'allume ou il s'éteint. L'habitacle sort du noir — et **le pare-brise se
+remplit**.
+
+C'est là tout le sujet. Allumer la lumière en roulant de nuit **se paie**, et ça
+se paie de la seule façon qui tienne : pas une pénalité posée par-dessus, mais ce
+que fait l'optique quand on éclaire l'intérieur d'une boîte vitrée. La planche de
+bord se reflète dans la vitre et vient se poser **sur** la route.
+
+### C'est un vrai miroir, pas un dégradé peint
+
+[windshield_glare.gd](scripts/windshield_glare.gd) monte le pare-brise **comme un
+rétroviseur** ([mirror.gd](scripts/mirror.gd)) : un `SubViewport`, une `Camera3D`
+au **symétrique de l'œil** par rapport au plan de la vitre, un **frustum
+asymétrique** dont la fenêtre au plan proche est exactement le rectangle de la
+glace. Une glace de plus, simplement très grande et très inclinée.
+
+On reflète donc l'habitacle **tel qu'il est** — la casquette, la console, les
+aérateurs, le rétroviseur, et ce qu'on a posé dessus : un paquet laissé sur la
+planche de bord se voit dans le pare-brise. Et l'image **bouge avec la tête**, ce
+qu'aucune texture collée sur la vitre ne saurait faire.
+
+Deux différences avec un rétroviseur, et elles font tout :
+
+- **le mélange est additif**, pondéré par le **Fresnel**. Un rétroviseur
+  *remplace* ce qu'il y a derrière ; un pare-brise laisse passer 96 % du paysage
+  et *pose* son reflet dessus. C'est ce qui écrase le contraste de la route au
+  lieu de la masquer ;
+- **la caméra regarde vers l'intérieur.** Éteint, l'habitacle est noir et l'image
+  l'est aussi : **le reflet s'éteint tout seul**, sans qu'on ait à le lui dire.
+  Le facteur `energy` ne sert plus qu'à arrêter la passe de rendu quand il n'y a
+  plus rien à refléter.
+
+Le reste du [shader](shaders/windshield_glare.gdshader) n'est que des propriétés
+du **verre**, jamais de ce qu'il reflète :
+
+- **Fresnel.** Le verre renvoie 4 % de face et bien plus en rasant. Le pare-brise
+  est couché de **59° sur la verticale**, donc on le regarde justement en
+  rasant : c'est de là que vient la force du reflet, et c'est pour ça qu'il est
+  plus marqué en bas de la vitre qu'en haut. Ce dégradé ne se peint pas, il tombe
+  de la formule.
+- **Le voile.** Une vitre n'est pas un miroir propre : l'épaisseur du verre et la
+  poussière *étalent* une part de ce qu'elle reflète. C'est ce halo, et non
+  l'image nette, qui lave les noirs de la route.
+- **Les traces d'essuie-glace.** Elles restent accrochées à la **vitre** pendant
+  que le reflet, lui, glisse dessous quand on bouge la tête. Les deux ne se
+  déplacent pas ensemble — c'est exactement ce qu'on voit dans une voiture.
+
+### Un flou étale, il ne recopie pas
+
+Le voile a d'abord été **cinq canettes**. Posez-en une sur le tableau de bord et
+elle se reflétait en cinq exemplaires, bien alignés.
+
+Ce n'était pas un flou, c'étaient des **copies**. Le halo prenait *quatre*
+échantillons de l'image réfléchie, écartés de 11 % de la vitre : à ce compte-là
+on ne dilue rien, on duplique — l'original plus ses quatre fantômes, chacun à
+14 % de l'original, largement de quoi les compter. Un flou demande assez de
+points, assez rapprochés, et assez **faibles chacun** pour qu'aucun ne se
+reconnaisse. Ils sont maintenant **douze**, en deux anneaux, et le plus lourd
+pèse 8 % du total.
+
+Deux détails s'y cachaient :
+
+- **`repeat_disable`.** Un halo va chercher ses échantillons *autour* de chaque
+  point, et près du bord ils sortent de l'image. En répétition — le défaut de
+  Godot — ils reviennent par le côté opposé, et le pare-brise se met à refléter
+  son bord gauche sur son bord droit.
+- **L'aspect.** La vitre est deux fois et demie plus large que haute. Un rayon
+  exprimé en coordonnées de texture y donne une **ellipse couchée**, trois fois
+  plus étalée en travers qu'en hauteur ; il est donc corrigé de cet aspect au
+  moment de l'échantillonnage.
+
+Le plan de la vitre n'est pas relevé sur le `.glb` : il est **déduit des deux
+lignes de baie** que [cabin.gd](scripts/cabin.gd) déclare déjà, celles-là mêmes
+qui ferment le pare-brise contre les objets lancés. Un pare-brise est plan, ces
+deux lignes le définissent entièrement, et le reflet ne peut donc pas glisser à
+côté de la vitre sur laquelle il se pose. Les caractéristiques de l'ampoule sont
+**lues sur elle** (`dome_light.bulb()`) plutôt que recopiées, et l'état de la
+lampe est relu **à chaque image** : deux jeux de constantes finissent toujours
+par diverger, et un reflet resté allumé sous une lampe éteinte serait
+indébuggable.
+
+### Ce qu'il prend à la route
+
+Ce qu'on mesure n'est pas « y a-t-il un reflet » — une capture le dirait. C'est
+**ce qu'il prend à la route**. Le banc lit la même fenêtre de pare-brise, lampe
+éteinte puis allumée, **voiture figée** : les deux images doivent être la même
+image à la lampe près, sinon la route défile entre les deux, le contraste change
+tout seul et on n'attribue plus rien à personne.
+
+Un voile lumineux a une signature qu'on ne peut pas confondre : il fait **monter**
+la luminance et **baisser** le contraste rapporté à cette luminance. Une image
+simplement plus claire ferait monter les deux. C'est donc le troisième chiffre qui
+dit si la vision empire vraiment.
+
+Mesuré (`godot --path . -- glaretest`) :
+
+| | luminance | contraste (RMS / moyenne) |
+|---|---|---|
+| plafonnier éteint | 0,1275 | 0,7303 |
+| plafonnier allumé | 0,1746 | **0,4706** |
+| | **+37 %** | **−36 %** |
+
+**Ces valeurs bougent de quelques points d'un lancement à l'autre**, et c'est
+normal : la voiture se fige là où elle se trouve, donc jamais deux fois devant le
+même bout de forêt. C'est l'écart entre les deux lignes qui se lit, pas la
+troisième décimale.
+
+La lampe est actionnée **par le vrai geste** (visée, clic, la main qui monte au
+luminaire) et non en écrivant `on` par en dessous : ce qui doit être éprouvé,
+c'est que le reflet suive l'interrupteur, pas qu'un uniforme fasse ce qu'on lui
+demande.
+
+**La fenêtre de mesure est serrée exprès.** Prise plus large, elle mordait sur le
+pare-soleil rangé et sur le rétroviseur intérieur, deux pièces que le plafonnier
+éclaire en plein : elles faisaient à elles seules la moitié du « voile » mesuré,
+et on aurait réglé le reflet sur la luminosité du plastique qui l'entoure.
+
+### Combien de fois une canette se reflète-t-elle ?
+
+Le défaut a été rapporté comme ça — *une canette posée sur le tableau de bord s'y
+reflète cinq fois* — et c'est comme ça qu'il se mesure.
+
+On ne mesure pas l'image, on mesure **ce que la canette y ajoute** : deux captures
+où seule la canette change. La route, la planche, le halo, les traces d'essuie-
+glace, tout s'annule, et il ne reste dans la bande basse du pare-brise que ses
+reflets à elle. Compter des bosses dans l'image entière ne voudrait rien dire —
+l'habitacle en a des dizaines, et c'est normal. Ici, **chaque bosse au-delà de la
+première est une canette de trop**.
+
+La mesure se fait **amplifiée** (`strength` poussé à 8) : au réglage de jeu le
+reflet d'une canette pèse un niveau sur 255, et le tramage plein écran le noie.
+C'est le nombre de copies qu'on compte, pas leur luminosité.
+
+| | reflets |
+|---|---|
+| une canette sur la casquette | **1** |
+| **témoin** — une seconde à 24 cm | **2** |
+
+**Le témoin n'est pas décoratif.** Un banc qui annonce « un seul reflet » sans
+avoir jamais su en voir deux n'annonce rien du tout : il aurait pu répondre 1
+parce qu'il est aveugle. C'est la deuxième ligne qui donne son sens à la première.
+
+Une version intermédiaire mesurait à la place la **finesse de détail** du halo
+(une copie garde le détail, un flou l'efface). Elle a été retirée : au niveau où
+vit le halo, elle ne mesurait que le bruit de quantification et annonçait un
+défaut là où il n'y en avait plus. Une mesure qui ment est pire que pas de mesure.
+
+### Il bouge avec la tête
+
+C'est ce qui sépare un reflet d'une décalcomanie, et aucun des chiffres ci-dessus
+ne le dirait : une texture collée sur la vitre donnerait exactement le même voile.
+
+La mesure se fait sur la **soustraction** allumé − éteint, pas sur l'image.
+Il le faut : décaler l'œil déplace aussi la route, les arbres et les montants, et
+un centre de gravité lu sur l'image entière suivrait tout ça sans qu'on sache ce
+qui a bougé. La différence, elle, ne contient plus que ce que la lampe a ajouté.
+
+Œil décalé de **16 cm** vers le passager, sans que le regard tourne : le centre du
+reflet se déplace de **54 px en x et 25 px en y** (54 à 77 px selon le relevé).
+
+### Le calibrage
+
+`strength` est le seul nombre arbitraire de l'affaire, et c'est le réglage de
+jouabilité : le Fresnel donne la **forme** du reflet, celui-ci sa **présence**. Le
+banc balaie la plage en une seule exécution — le régler à l'œil, une valeur par
+lancement, reviendrait à comparer des images prises sur des routes différentes.
+
+| `strength` | 0,5 | 1,0 | 1,5 | 2,0 | **2,8** | 3,5 | 5,0 |
+|---|---|---|---|---|---|---|---|
+| luminance | +11 % | +17 % | +23 % | +29 % | **+37 %** | +44 % | +58 % |
+| contraste perdu | −16 % | −22 % | −27 % | −31 % | **−36 %** | −39 % | −44 % |
+
+**2,8** est la valeur retenue. Elle est montée de 2,0 après essai à l'écran : le
+reflet y était juste, mais trop discret pour qu'on hésite à laisser la lampe
+allumée — et une contrepartie qu'on ne pèse pas n'en est pas une. À 2,8 le voile
+se voit sans qu'on le cherche et la route reste lisible.
+
+Le plafond est vers 5 : au-delà, les arbres disparaissent purement et simplement
+du brouillard, ce qui n'est plus une contrepartie mais une punition. La courbe
+s'aplatit d'ailleurs — le contraste perdu ne gagne que 8 points de 2,8 à 5,0,
+pour 21 points de voile en plus. On paie de plus en plus cher de moins en moins
+d'effet.
+
 ## Regarder derrière
 
 Au-delà de 62° de rotation de tête, le conducteur ne se contente pas de tourner
@@ -1175,8 +1362,10 @@ change un `volume_db` dans un script, le reporter dans `LEVELS`.
 | `scripts/window.gd` | vitres de portière, descendues à la manivelle |
 | `scripts/ignition.gd` | clé de contact : prise au clic, tournée à la molette |
 | `scripts/prop.gd` | objets libres de l'habitacle : simulation en repère voiture, frottement de Coulomb |
-| `scripts/road.gd` | route infinie et lisse, arbres, poteaux, voiture de police |
+| `scripts/road.gd` | route infinie et lisse, arbres, poteaux, voiture de police, apparition du géant |
 | `scripts/police_car.gd` | voiture de police garée (`police_car.glb`) : gyrophares rotatifs, faisceaux bleus |
+| `scripts/giant.gd` | le géant : anatomie déduite du pied, course procédurale sans patinage, piétinement |
+| `tools/make_giant_sounds.py` | synthèse du pas et du cri (`assets/audio/giant/`), dosés à la sonie |
 | `assets/blender/build_police_car.py` | construit, rend et exporte `police_car.glb` depuis Blender (ligne de commande) |
 | `assets/blender/build_police_car_simple.py` | idem pour la version basse-poly `police_car_simple.glb` (non utilisée) |
 | `scripts/retro.gd` | fabrique de matériaux, tous branchés sur le shader |
@@ -1185,7 +1374,9 @@ change un `volume_db` dans un script, le reporter dans `LEVELS`.
 | `tools/make_engine_sounds.py` | synthèse des boucles moteur (`assets/audio/engine/`) |
 | `tools/make_cabin_sounds.py` | synthèse des sons d'habitacle (`assets/audio/cabin/`) |
 | `tools/make_starter_sounds.py` | synthèse du démarreur et du calage (`assets/audio/starter/`) |
+| `scripts/centipede.gd` | mille-pattes : entre par les grilles ou la vitre, marche sur les surfaces de l'habitacle |
 | `tools/probe_surfaces.gd` | carte de hauteurs du maillage, comparée aux surfaces de dépose de `cabin.gd` |
+| `tools/probe_vents.gd` | bouches d'aération du `.glb` : boîte englobante et axe du flux |
 | `tools/render_audio_demo.py` | rendu hors ligne de tous les sons aux niveaux du jeu, pour la balance |
 | `shaders/retro.gdshader` | tramage ordonné (Bayer 4×4) |
 
@@ -1380,6 +1571,491 @@ Côté Blender, deux pièges rencontrés, tous deux corrigés dans le script :
 `godot --path . -- shot` produit `17_police_approche.png` (vue du siège, 40 m
 avant) et `18_police_exterieur.png` (de côté, sous ses gyrophares et nos phares).
 
+## Le géant
+
+Premier ennemi du jeu. Il attend accroupi dans les sapins, se relève quand la
+voiture approche, se met à courir derrière elle et essaie de l'écraser du pied.
+Tout est dans [giant.gd](scripts/giant.gd), en primitives animées — pas de
+`.glb`, pas de squelette, pas d'`AnimationPlayer`.
+
+### On ne choisit que la taille du pied
+
+Son pied fait la voiture : 3,97 m sur 1,68 m, les cotes d'une Civic EF. C'est la
+**seule** mesure réglée à la main. Chez l'humain le pied vaut 15,2 % de la
+stature ; un pied de 3,97 m appartient donc à quelqu'un de **26,1 m**, et cuisse,
+tibia, buste, bras, tête sont les fractions anthropométriques habituelles
+multipliées par cette stature. Rien d'autre n'est arbitraire, et c'est ce qui
+évite le monstre en pâte à modeler — celui dont les bras sont trop courts sans
+que personne ne sache dire pourquoi il sonne faux.
+
+Une exception, et elle compte : le bassin est à **0,44** de la stature en course,
+pas à 0,53. Un sprinteur court genoux fléchis, et il le faut ici aussi — jambe
+tendue au repos, il ne resterait pas un centimètre pour aller poser le pied
+devant soi.
+
+### Sa vitesse n'est pas choisie non plus
+
+Deux animaux de même forme et de tailles différentes bougent au même **nombre de
+Froude** : les vitesses vont comme la racine de l'échelle, les cadences comme son
+inverse, les foulées comme l'échelle. Un sprinteur fait 10 m/s à 4,4 pas par
+seconde ; à l'échelle 14,9 (26,1 m pour 1,75 m) cela donne :
+
+| | sprinteur | × Froude | le géant |
+|---|---|---|---|
+| vitesse | 10 m/s | ×3,86 | **38 m/s** (137 km/h) |
+| cadence | 4,4 pas/s | ÷3,86 | **1,14 pas/s** |
+| foulée | 2,3 m | ×14,9 | **33,3 m** |
+
+Ces trois nombres se recoupent (33,3 × 1,14 = 38), et c'est de là que vient
+l'impression de masse : un géant qui court vite en piaffant à la cadence d'un
+homme ressemble immanquablement à une maquette filmée en accéléré.
+
+Accessoirement cela **répond à la question de jeu sans qu'on ait à l'arbitrer**.
+La Civic plafonne à 180 km/h en 5e, 155 en 4e, 122 en 3e. On ne le sème donc
+qu'en 5e, et lentement — 12 m/s d'écart, quinze secondes pleines pour prendre
+200 m. En 4e on tient l'écart sans le creuser. En 3e il gagne. Le banc d'essai
+mesure les trois : `IL REVIENT`, `il tient l'écart`, `ON LE SÈME`.
+
+### Les pieds ne glissent pas
+
+C'est le seul endroit où une animation procédurale se fait prendre tout de suite,
+et rien d'autre ne compte tant que ce n'est pas acquis. Un pied posé est **posé** :
+on retient le point du monde où il a touché et il y reste jusqu'au décollage,
+quoi que fasse le corps au-dessus. Le banc suit la **pointe** image par image sur
+toute la course et relève 0 mm de dérive.
+
+Ce n'est pas la cheville qu'on suit, et la distinction est le cœur du mécanisme :
+en fin d'appui le pied **pivote sur ses orteils**, la cheville monte de deux
+mètres et avance d'un autre. Sans ce détail rien ne ferme — au décollage la
+cheville se retrouve à 9,6 m derrière la hanche pour une jambe de 12,8 m et un
+bassin à 11,5 m, et le compte ne tombe pas. Le talon qui se lève est exactement
+ce qu'un sprinteur fait, et c'est ce qui referme le triangle. La pointe, elle, ne
+bouge pas d'un millimètre pendant ce temps.
+
+Le bassin, de son côté, **ne monte jamais plus haut que ce que la jambe d'appui
+autorise**. On n'écrit aucune sinusoïde de rebond : le balancement vertical de la
+course (48 cm relevés) sort tout seul de cette contrainte.
+
+### Trois pièges, tous rencontrés
+
+- **La trajectoire du pied en vol se définit par rapport à la hanche, pas dans le
+  monde.** Pendant qu'un pied fait ses 65 m, la hanche en fait 50 ; les 15 autres
+  sont le pas proprement dit. Un `smoothstep` entre les deux bouts laisse le pied
+  sur place pendant que le corps démarre : au quart du vol il traîne treize
+  mètres en arrière, pour une jambe qui en fait douze. On rend donc **linéaire**
+  la part qui n'est que le déplacement du corps (`_hip_share`) et on ne lisse que
+  le reste. L'allongement maxi passe de 34 % à 0,2 %.
+- **Le décollage ne se lit pas sur un franchissement de seuil.** Le seuil, c'est
+  le rapport cyclique, et il bouge avec la vitesse — de 0,62 à l'arrêt à 0,24
+  lancé. Une jambe posée à la phase 0,50 se retrouve du mauvais côté sans avoir
+  rien franchi, et reste plantée un cycle entier pendant que le corps s'en va
+  sans elle. On énonce l'invariant (« une jambe dont la phase dit *en l'air*
+  n'est pas au sol ») plutôt que sa dérivée.
+- **On vise où sera la hanche, pas où elle est.** Il accélère pendant que le pied
+  vole (7 m/s² sur 1,3 s : neuf mètres d'erreur) et il tourne (0,55 rad/s :
+  quarante degrés). On vise donc avec la vitesse moyenne du vol et le milieu de
+  l'arc. Et quand ça ne suffit pas — le joueur a le droit de donner un coup de
+  volant — un **pas de rattrapage** repose le pied hors du rythme, comme un
+  coureur qui trébuche ; le décalage entre les deux jambes se résorbe en deux
+  foulées.
+
+### Ce qu'il fait à la voiture
+
+Rien de définitif, pour l'instant : le pied **secoue**, il ne tue pas. Un pas qui
+tombe à côté envoie une onde dans le sol (26 m/s² au pied du choc, moitié moins à
+14 m) ; un pied qui tombe *dessus* envoie 60 m/s², soit 6 g. Les deux passent par
+`car.impact()`, qui les répartit à deux endroits :
+
+- dans `frame_accel`, d'où **tout ce qui traîne dans l'habitacle décolle** dès que
+  le coup passe 2,4 g (`static_mu` de [prop.gd](scripts/prop.gd)) — le banc voit
+  la canette bondir de 25 cm ;
+- dans la suspension : un ressort amorti à 2,4 Hz qui fait tressauter la caméra
+  de 3 mm et piquer la tête de 0,8°.
+
+Un choc qui ne ferait que secouer l'image serait un effet de post-traitement.
+Celui-là fait sauter les canettes du siège.
+
+Il **n'a pas de boîte de collision**, et c'est délibéré. Un pied solide qui se
+pose sur une `CharacterBody3D` la catapulte au `move_and_slide` suivant ; un pied
+solide qui se pose à côté arrête net une voiture lancée à 160 km/h. Les deux
+demandent une réponse aux dégâts qui n'existe pas encore.
+
+### De nuit, on ne voit que ses yeux
+
+C'est la trouvaille de cette première version, et elle décide de tout le reste.
+Il n'a que deux sources de lumière : une lune à 0,15 d'énergie **sans ombres**,
+et l'ambiante à 0,055. Les phares regardent devant, les feux arrière ne portent
+qu'à seize mètres, et lui est toujours derrière. Ce qui le rend visible n'est
+donc pas ce qui l'éclaire, c'est **le brouillard devant lui** : à cinquante
+mètres, le brouillard remplit les trois quarts du pixel et lui le quart qui
+reste ; il ne se lit qu'en tache un peu plus sombre que la nuit.
+
+D'où trois conséquences :
+
+- Son albédo est à 0,070, dans la famille des troncs de la route (0,075). La
+  première version était à 0,052 et **il n'existait tout simplement pas**.
+- Ses **yeux débordent de 1** (émission à 4,2), au-dessus du seuil de glow à
+  0,95, avec une petite braise omni qui les marque dans le brouillard
+  volumétrique. Quand il court à côté de la voiture, c'est la seule chose qu'on
+  voit de lui (`55_geant_a_cote.png`).
+- **Assis, on ne voit jamais sa tête.** À 46 m elle est à 29° au-dessus de
+  l'horizontale et la lunette arrière n'ouvre que sur une dizaine de degrés : on
+  voit ses jambes passer, pas lui. Il ne devient franchement visible que quand
+  les phares le trouvent — c'est-à-dire quand il est passé devant.
+
+Le son porte donc l'essentiel de la menace : c'est voulu.
+
+### Le pas et le cri
+
+`tools/make_giant_sounds.py` synthétise `step.wav` et `roar.wav` (numpy requis),
+joués par des `AudioStreamPlayer3D` accrochés aux pieds et à la tête, sur le bus
+**Cabine** — ils sont dehors, ils doivent traverser la caisse comme la route et
+le vent, et s'ouvrir quand on baisse une vitre.
+
+Le piège de tout son de géant, et la première version y est tombée : on empile
+des graves, on regarde la forme d'onde, on trouve ça énorme — et à l'écoute il ne
+reste qu'un frottement de gravier. **À 30 Hz l'oreille perd 40 dB.** Une couche à
+24 Hz qui occupe 86 % de l'énergie du fichier peut être parfaitement inaudible
+pendant qu'une pincée de bruit à 2 kHz, invisible sur la courbe, porte tout le
+son. Chaque couche est donc ramenée à une **sonie unité** (RMS pondéré A) avant
+d'être dosée, et l'outil imprime les deux répartitions côte à côte — l'énergie
+brute et ce qu'on entend. Pour le pas elles n'ont rien à voir : 65 % de l'énergie
+sous 40 Hz, 44 % de la *sonie* entre 80 et 200 Hz.
+
+Le cri est un train de pulsations glottales (modèle de Rosenberg) à fondamentale
+descendante, avec jitter, shimmer et une **subharmonique** à f0/2 qui monte au
+milieu — le *growl* des gros félins, deux régimes vibratoires à la fois. Deuxième
+piège : une bosse lisse (cosinus redressé au cube) n'a que quatre harmoniques
+utiles, son spectre s'effondre de 36 dB entre 150 et 400 Hz et il ne reste rien à
+mettre dans les formants. C'est **la fermeture brusque de la glotte** qui casse
+la dérivée et porte le spectre jusqu'en haut.
+
+Une honnêteté à noter : les formants sont à 190, 560 et 1250 Hz. À l'échelle
+stricte, un conduit vocal quinze fois plus long les mettrait à 35, 100 et 220 Hz
+et personne ne l'entendrait. C'est le compromis habituel du cinéma, il vaut mieux
+l'écrire que le redécouvrir.
+
+### Où il apparaît, et les boutons
+
+[road.gd](scripts/road.gd) le pose comme la voiture de police : `GIANT_FIRST`
+(échantillon 240, soit 480 m — le temps de partir, de passer les rapports et de
+se croire seul), `GIANT_EVERY_MIN/MAX`, `GIANT_OFF` (15 m de l'axe, dans la bande
+d'arbres). Il est posé **275 m devant la voiture et n'y bouge pas** : accroupi il
+ne fait que 8,5 m de haut, les sapins en font 6 à 11, il fait partie du paysage.
+C'est lui qui décide de se lever, à `notice_distance` (72 m) — le temps qu'il se
+déplie (2,2 s), la voiture arrive à sa hauteur. Une fois semé (200 m pendant 3 s)
+il s'éteint et la route lui donne un nouveau rendez-vous, loin devant.
+
+Les boutons qu'on tourne en premier : `run_speed` (toute la difficulté est là),
+`notice_distance` et `rise_time` (la mise en scène de l'apparition),
+`stomp_cooldown` (à 2,6 s il court et frappe ; plus bas il pioche sur place),
+`stomp_hit_accel` / `ground_accel` (la violence), et l'albédo de `_mat_hide` si
+on le trouve trop ou pas assez visible.
+
+```bash
+godot --path . -- gianttest
+```
+
+Le banc prouve, dans cet ordre : que la route le pose vraiment dans les arbres,
+que le pied fait la voiture, que Froude se recoupe, qu'il se lève seul, que les
+pieds ne glissent pas, que les jambes ne s'allongent pas, que foulée × cadence =
+vitesse, qu'on le sème en 5e et pas en 4e, et que le pied qui tombe dessus fait
+sauter une canette. Il produit `50_geant_tapi.png`, `51_geant_leve.png`,
+`52_geant_derriere.png`, `53_geant_course.png`, `54_geant_echelle.png` et
+`55_geant_a_cote.png`.
+
+## Le mille-pattes
+
+Le géant piétine la voiture de l'extérieur. Celui-ci fait l'inverse : il
+n'essaie pas de casser la caisse, **il entre dedans**. Et il entre par où l'air
+entre — les bouches d'aération — ou par la vitre, si tu l'as laissée ouverte.
+
+C'est ce qui en fait un ennemi et pas un décor : la voiture est le seul abri du
+jeu, et lui la traverse comme si elle n'en était pas un.
+
+Il arrive au bout de `first_delay` (14 s). Il ne doit pas être là au démarrage :
+ce qu'on veut, c'est qu'il **arrive**, et on n'assiste pas à une arrivée dont on
+n'a pas connu l'absence.
+
+### Par où il entre
+
+Huit bouches, **relevées sur le `.glb`**, pas saisies à la main :
+
+| | position (espace voiture) | fente |
+|---|---|---|
+| grille de dégivrage | (0, 0,948, −0,85) | 1100 × 45 mm |
+| dégivrage central | (0, 0,946, −0,70) | 150 × 45 mm |
+| aérateurs latéraux | (±0,62, 0,839, −0,541) | 82 × 48 mm |
+| aérateurs centraux | (±0,075, 0,825, −0,561) | 110 × 45 mm |
+| haut-parleurs de portière | (±0,685, 0,57, −0,50) | 95 × 95 mm |
+
+Le haut-parleur en fait partie, et il n'y a aucune raison de le traiter
+autrement : c'est une grille, elle donne sur un caisson, et un caisson donne sur
+le vide de la portière. Sauf qu'elle est à hauteur de coude.
+
+**L'axe de sortie vient de la boîte englobante.** Une grille est un objet
+*plat* — 6 mm d'épaisseur pour 1,10 m de large sur le dégivrage — donc son axe
+le plus **mince** est celui du flux d'air, et c'est par là qu'on passe. Le dire
+ainsi couvre les trois orientations du jeu sans les énumérer : les aérateurs de
+face soufflent vers l'arrière (z), le dégivrage vers le haut (y), les
+haut-parleurs vers l'intérieur (x).
+
+**Le sens**, lui, pointe vers l'œil du conducteur, parce que c'est à quoi sert
+une bouche d'aération : elle souffle sur les occupants. Seul le *signe* du
+produit scalaire compte — même argument que l'axe de la clé de contact — et il
+tombe juste sur les huit. Viser le centre de l'habitacle ne marcherait pas : il
+est plus *bas* que le dégivrage, qui se retrouverait à souffler dans la planche
+de bord.
+
+**Le corps fait 6 mm d'épaisseur, et ce chiffre est mesuré.**
+`tools/probe_vents.gd` relève les lames des aérateurs à 10,3 mm d'entraxe pour
+4 mm d'épaisseur : il reste **6,5 mm** entre deux lames. C'est par là qu'il
+passe, donc c'est ce qu'il mesure. Un mille-pattes est plat pour exactement
+cette raison — c'est ce qui lui permet de vivre sous les pierres, et ici d'être
+dans la voiture avant toi.
+
+**Et la vitre pèse plus lourd que les huit grilles réunies.** Les bouches sont
+toujours ouvertes — une voiture ne se ferme pas de ce côté-là — tandis qu'une
+vitre n'est une entrée que si tu l'as baissée. Rouler vitres fermées ne le tient
+donc pas dehors, ça le force seulement à prendre le chemin long. C'est une
+contrepartie de plus à la vitre ouverte, comme le pare-brise en est une au
+plafonnier. Mesuré sur 200 entrées : **0 %** par la vitre quand elles sont
+fermées, **61 %** dès que celle du conducteur est baissée.
+
+La hauteur du jour au-dessus de la glace est **lue**, pas écrite : `window.gd`
+descend le pivot de `travel * open`, donc le bord supérieur est à
+`glass_box.end.y − travel * open`. L'entrée monte avec la ceinture de caisse si
+le modèle change.
+
+**Il sort du trou, il n'y apparaît pas.** La trace du corps est semée à l'avance,
+droite, en arrière dans le conduit : les anneaux sont donc payés un par un au
+lieu d'arriver tous ensemble à l'air libre. Le corps était déjà là, on ne le
+voyait pas. Mesuré : à l'instant zéro **14 anneaux sur 15** sont encore dans la
+planche, à mi-corps la tête a fait 128 mm, et à 40 cm il est entièrement sorti.
+
+### Il ne tombe pas, il marche
+
+[prop.gd](scripts/prop.gd) simule des objets qui **tombent** : gravité,
+frottement de Coulomb, rebond. Rien de tout ça ne s'applique ici. Une bestiole
+ne se *pose* pas sur une surface, elle s'y **accroche** — elle monte le montant,
+traverse le pavillon et redescend le pare-brise sans qu'aucune de ces trois
+choses ne soit « un sol ». Le mille-pattes ne partage donc pas la simulation des
+objets ; il partage leur **géométrie**, ce qui est le seul point commun qu'il y
+ait vraiment.
+
+Sa marche tient en quatre lignes, répétées chaque image :
+
+1. il avance selon `_dir`, tangent à la surface où il est ;
+2. on tire le point d'arrivée de `GRIP` **vers l'intérieur** de la surface ;
+3. on le **recolle** à la surface la plus proche de l'habitacle ;
+4. `_dir` est reprojeté dans le plan tangent de la nouvelle normale.
+
+**L'étape 2 est celle qui fait tout.** Sans elle, arrivé au bord de la planche
+de bord, il continuerait tout droit dans le vide ; avec elle il se retrouve un
+millimètre *sous* la tôle, le recollage le ressort par la face la plus proche —
+qui n'est plus le dessus mais le nez de la planche — et il bascule par-dessus
+l'arête pour continuer sur la face verticale. Passer un angle saillant n'est donc
+pas un cas particulier à coder : c'est ce que fait la règle générale, et c'est
+aussi ce que fait une vraie bestiole, qui ne « décide » pas de passer un angle,
+elle ne lâche simplement jamais prise.
+
+Aucune topologie, aucun graphe de navigation, aucune arête à recoudre : la
+question « où est la surface ? » est reposée de zéro à chaque image sur une
+vingtaine de boîtes. Ajouter du mobilier à l'habitacle lui donne de nouveaux
+chemins sans rien rebrancher.
+
+### Être dedans prime sur être près
+
+Et ce n'est pas un détail de tri. Les deux se mesurent en mètres et se
+comparaient donc sur le même pied. Le banc a montré où ça menait : **sous la
+banquette arrière**, le plancher est à 5 mm sous le ventre tandis que le coussin
+englobe la bestiole sur 13 cm — la face du plancher gagnait, et elle marchait
+**enterrée dans le siège**, tranquillement, sur toute la longueur de l'habitacle.
+
+L'ordre correct n'est pas une question de distance mais de nature : « ne traverse
+rien » est une *contrainte*, « reste près de quelque chose » est un *souhait*. On
+sort donc d'abord de ce dans quoi on est, par la face la plus proche, et on ne
+cherche la surface voisine que quand on n'est plus dans rien. Le mille-pattes
+**grimpe** alors sur la banquette au lieu d'y disparaître, sans qu'on ait eu à
+lui parler de banquette.
+
+### Les boîtes sur lesquelles on rampe
+
+`cabin.gd` déclare `crawl_solids` **à part** de `solids`, et ce n'est pas de la
+timidité. `solids` est fait pour des objets qui tombent : c'est du mobilier
+horizontal, plus les parois qu'il faut pour qu'une canette ne parte pas dans la
+caisse. Ce qui manque à une bestiole qui *marche*, ce sont justement les faces
+verticales que personne n'a jamais heurtées :
+
+- **le nez de la planche de bord** — `solids` n'en a que le dessus et le tablier
+  tout au fond, à z −0,95. Entre les deux, rien : 40 cm de vide sur toute la
+  largeur, là où sont précisément les six aérateurs ;
+- **les contre-portes** — `solids` place les portières à 0,79, qui est la
+  *tôle* ; la garniture qu'on longe est à 0,70, et c'est sur elle qu'est vissée
+  la grille de haut-parleur ;
+- **le pare-brise** — `solids` le ferme en trois marches de 10 cm, ce qui suffit
+  à renvoyer une canette. On y grimpe en escalier. Six marches de 6 cm le suivent
+  d'assez près pour qu'un corps de 27 cm drape dessus. La pente n'est pas saisie,
+  elle est **déduite** des deux lignes de baie, comme le reflet du pare-brise.
+
+Les verser dans `solids` serait un vrai changement de physique : une canette
+lancée rebondirait désormais sur le nez de la planche au lieu de passer dans le
+vide qu'il y a derrière, et `packtest` et `throwtest` relèvent tous deux des
+chiffres dans cette zone. **On ne déplace pas ces chiffres pour donner un chemin
+à un mille-pattes.**
+
+Deux listes coûtent aussi moins cher qu'il n'y paraît : le marcheur cherche la
+surface *la plus proche*, pas les recouvrements. Ces boîtes peuvent donc se
+chevaucher librement, ce qu'aucune boîte de `solids` ne s'autorise. Le
+recouvrement n'est pas gratuit pour autant — le bloc de planche de bord s'arrête
+à 0,60 parce qu'en descendant plus bas il avalait le dessus de console, et la
+bestiole posée dessus se retrouvait *dans* le bloc.
+
+### La coque borne la tête
+
+Exactement l'argument de `prop.gd` : le mobilier pousse **dehors**, la coque
+retient **dedans**, et une borne par axe ne peut pas fuir. Sans elle, il suffit
+de faire le tour d'une paroi pour se retrouver à marcher sur la carrosserie, vue
+de l'extérieur : les portières, le pavillon et le fond de coffre ont tous une
+face qui **déborde** de la coque, et rien dans « va vers la surface la plus
+proche » ne distingue le bon côté d'une tôle du mauvais. Le banc l'a relevé à
+**41 mm dehors** avant qu'elle existe.
+
+Les bornes sont rentrées de `RIDE`, ce qui les met exactement là où le ventre se
+pose quand il marche sur une face de la coque : le plancher, le pavillon et la
+lunette arrière ne sont déclarés nulle part ailleurs, et il y marche sans que la
+coque et le recollage se contredisent d'un millimètre.
+
+### Il court puis il se fige
+
+À vitesse constante, ça ne se lit pas comme un insecte, ça se lit comme un petit
+train. Un mille-pattes va par à-coups : il détale, il s'arrête net, il repart.
+
+Et surtout : **les pattes sont animées par la distance parcourue, pas par le
+temps.** Figé, il ne pédale donc pas dans le vide — c'est le défaut classique, et
+il saute aux yeux — mais il continue de fouiller l'air devant lui, ce que fait
+une bestiole arrêtée. Mesuré, figé une seconde : **+0,0000** de phase de pattes.
+
+L'ondulation est **métachronale** : une vague qui descend le corps, pas des
+pattes qui battent ensemble. C'est la seule chose qui distingue un mille-pattes
+d'un mille-pattes en plastique.
+
+Quand tu plantes les freins, il se plaque et s'arrête : `car.frame_accel` est
+déjà publiée pour les objets, elle sert ici à une bestiole qui s'agrippe. Il ne
+glisse pas, lui — s'agripper est tout son métier. Mesuré sur 0,5 s de marche :
+**0,210 m** libre contre **0,000 m** sous 18 m/s².
+
+### Le corps suit un chemin, pas une suite d'images
+
+Deux pièges, tous deux relevés par le banc et tous deux du même genre — une
+approximation qui suppose un pas régulier là où il n'y en a pas :
+
+- **Semer un échantillon de trace par image** marche tant que la tête avance de
+  moins d'un pas. Le jour où elle en franchit trois d'un coup — un recollage, une
+  image longue — la trace garde un trou, les anneaux qui y tombent s'écartent, et
+  le corps s'étire. On sème donc les échantillons *manquants*, pas seulement le
+  dernier.
+- **Placer les anneaux par indice d'échantillon** suppose que ces échantillons
+  sont régulièrement espacés. Ils ne le sont pas : la tête parcourt 7 mm dans une
+  image, 12 dans la suivante. On les place donc en **longueur d'arc**. Avant :
+  27 mm entre deux anneaux espacés de 19. Après : **19,0 mm**.
+
+Et une bestiole ne se téléporte pas. Là où deux boîtes se recouvrent, « la
+surface la plus proche » peut changer de face d'une image à l'autre : on borne
+donc le déplacement de la tête au pas qu'elle vient de faire. C'est une
+relaxation, elle converge en deux ou trois images.
+
+### Chitine rousse et vernie
+
+Elle était d'abord aussi sombre que la planche de bord — 0,06 d'albédo, la valeur
+exacte du plastique une fois rabattu sur la palette de nuit. Résultat en
+capture : une bestiole de 27 cm posée en plein sur le tableau de bord, et **on ne
+la voyait pas**. Un ennemi qu'on ne voit pas n'en est pas encore un.
+
+Elle est donc quatre fois plus claire que la tôle, et **rousse** là où tout
+l'habitacle est gris : ce sont les deux écarts qui la détachent, et une
+scolopendre est réellement de cette couleur. Le **verni** compte autant :
+rugosité 0,32 et un peu de métallicité font de la chitine un objet qui accroche
+des spéculaires — la lueur des compteurs, le retour des phares, le plafonnier —
+là où le plastique mat de la planche (0,94) ne renvoie rien. C'est ce qui la
+trahit quand elle bouge.
+
+Deux détails de lecture, tous deux visibles sur les captures :
+
+- **les anneaux sont plus courts que leur espacement** (0,84 fois), pour qu'il
+  reste 3 mm entre deux. À 1,25 fois ils se recouvraient et le corps se lisait
+  comme un ruban : c'est la *segmentation* qui fait le myriapode ;
+- **les pattes sont coudées**. Une patte droite ne se lit pas comme une patte, ça
+  fait un peigne. Le tarse est enfant de la cuisse, donc il suit la foulée sans
+  qu'on ait à l'animer : une seule rotation par patte, pour deux fois plus de
+  lisibilité.
+
+La géométrie est en primitives. Un `.glb` construit dans Blender, comme la
+voiture et les canettes, reste à faire.
+
+### Banc d'essai
+
+```bash
+godot --path . -- centipedetest
+```
+
+**Il est avancé à la main**, pas laissé tourner : `_physics_process` est coupé et
+le banc l'appelle lui-même avec un pas fixe de 1/60 s. Ce n'est pas un
+raccourci, c'est la seule façon de mesurer la *bestiole* et pas la machine — sous
+le rendu complet ce projet tombe à quelques images par seconde, et un marcheur
+qui avance de 42 cm par image ne prouve rien de son adhérence, il la met en
+défaut par la taille du pas. C'est le piège que la 5e du banc de boîte et la main
+à plat du banc de volant ont déjà payé, par deux chemins différents. Corollaire :
+les 40 s de promenade sont 40 s de bestiole, et le banc entier tient en quelques
+secondes.
+
+| | relevé |
+|---|---|
+| les huit bouches soufflent vers l'habitacle | **8/8** |
+| jour entre deux lames / épaisseur du corps | 6,5 mm / **6,0 mm** — il passe |
+| 200 entrées, vitres fermées | **0** par la vitre |
+| 200 entrées, vitre conducteur baissée | **121** par la vitre (61 %) |
+| à l'instant de l'entrée | **14 anneaux sur 15** encore dans la planche |
+| après 40 cm | **0** — il est tout sorti |
+| 40 s de promenade | **9,12 m**, étendue visitée 1,13 × 0,60 × 1,69 m |
+| distance du ventre à la tôle | **1,0 à 5,0 mm** (assise 5,0) — il ne flotte pas |
+| enfoncement dans le mobilier | **0,0 mm** |
+| dépassement hors de la coque | **0,0 mm** |
+| écart maxi entre deux anneaux | **19,0 mm** (espacement 19,0) |
+| au nez de la planche | normale (0,1,0) → **(0,0,1)**, puis 318 mm plus bas |
+| figé une seconde | **+0,0000** de phase de pattes |
+| 0,5 s de marche, libre / sous 18 m/s² | **0,210 m** / **0,000 m** |
+| laissé tourner, moteur en marche | **il part seul**, par la vitre conducteur |
+
+La dernière ligne est la seule qui ne soit pas avancée à la main, et elle est là
+pour ça : tout le reste prouve *comment* il marche, elle seule prouve que
+**quelque chose le déclenche**. Un banc entièrement vert peut très bien couvrir
+une bestiole que rien ne réveille.
+
+Le banc écrit aussi `20_millepattes_sort.png` (il émerge du dégivrage),
+`21_millepattes_planche.png` et `22_millepattes_gros_plan.png`. Ce n'est pas de
+l'illustration : la couleur trop sombre ne se lisait dans **aucun chiffre** — le
+mille-pattes marchait parfaitement, aux millimètres près, et restait invisible.
+Il faut le voir.
+
+Deux mesures ont dû être refaites, et les deux fois c'est le banc qui avait tort,
+pas le jeu :
+
+- **« Derrière le plan de la bouche »** ne veut rien dire pour une fente
+  verticale. Le dégivrage souffle vers le *haut* : son plan coupe l'habitacle en
+  deux, et tout ce qui est plus bas que la planche comptait comme « pas encore
+  sorti », plancher compris. Un anneau est **dans la tôle** ou il n'y est pas, et
+  les boîtes le disent.
+- **L'angle saillant se mesure à l'instant où il bascule**, pas à l'arrivée. Il
+  continue sa route ensuite et finit sur le dessus de console, normale en l'air —
+  ce qui donnait « il n'a pas basculé » alors qu'il venait d'y passer.
+
+### La suite
+
+Il se promène, il n'attaque pas encore. Ce qui reste à décider est ce qu'il fait
+une fois arrivé sur toi, et ce que tu peux lui faire : le revolver est déjà là,
+et `head_point()` donne sa tête à viser.
+
 ## Les boutons à tourner en premier
 
 - **Boîte** — `car.gd` : `GEAR_TOP` (vitesse au rupteur par rapport),
@@ -1402,6 +2078,14 @@ avant) et `18_police_exterieur.png` (de côté, sous ses gyrophares et nos phare
   doit rester au-dessus du pire cas de conduite (frein + frein moteur, 20,4 m/s²)
   et sous le plafond de `frame_accel` dans `car.gd` (60), sinon plus rien ne peut
   décrocher.
+- **Mille-pattes** — `centipede.gd` : `first_delay` (quand il arrive),
+  `window_weight` (à quel point une vitre ouverte l'emporte sur les grilles),
+  `window_min_open`, `RUN_SPEED`, `RUN_MIN`/`FREEZE_MIN` (le rythme
+  course/arrêt), `HAUNTS` (où il va, et avec quel poids). `GRIP` et `RIDE` ne se
+  touchent qu'ensemble : `GRIP` doit rester inférieur à `RIDE`, sinon il ne se
+  décolle jamais de la tôle. `cabin.gd` : `VENT_MOUTHS` pour ajouter une bouche
+  (le nom d'une pièce du `.glb` suffit, tout le reste en est relevé) et
+  `crawl_solids` pour lui ouvrir un chemin sans toucher à la physique des objets.
 - **Prises sur le volant** — `driver.gd` : `GRIP_PULL` et `GRIP_PUSH` (jusqu'où
   une main suit la jante avant de lâcher, en tirant et en poussant),
   `REGRIP_TIME` / `REGRIP_LIFT` (durée et hauteur du passage de main),
@@ -1503,9 +2187,19 @@ glace qui disparaît sous la ceinture, et les deux panneaux qui suivent) et
 `-- throwtest` (lancer : départ dans l'axe du regard, clic molette qui ne
 débraye pas, objet qui reste dans la caisse et se repose d'aplomb) et
 `-- stalltest` (calage et clé de contact : ce qui tient débrayé meurt embrayage
-lâché, la clé tournée ne lance rien en prise, et on part quand même de l'arrêt).
+lâché, la clé tournée ne lance rien en prise, et on part quand même de l'arrêt)
+et `-- centipedetest` (mille-pattes : les huit bouches relevées et bien
+orientées, l'entrée par la vitre quand elle est baissée, le corps payé hors du
+trou anneau par anneau, et 40 s de marche sans flotter, sans s'enfoncer et sans
+sortir de la coque) et `-- gianttest` (géant : la route qui le pose dans les
+arbres, le pied à la taille de la voiture, Froude qui se recoupe, la pointe du
+pied d'appui qui ne dérive pas d'un millimètre, la jambe qui ne s'allonge pas,
+foulée × cadence = vitesse, semé en 5e et pas en 4e, et la canette qui saute
+quand le pied tombe sur la caisse).
 Ils injectent de vrais événements d'entrée, ils ne rejouent pas la logique en
-double.
+double — à une exception près, assumée et écrite dans le banc : `centipedetest`
+avance la bestiole **à la main**, au pas fixe, pour ne pas mesurer le débit
+d'images à la place de son adhérence.
 
 **Aucun banc à clics ne tourne en `--headless`** : `interaction.gd` ignore la
 souris tant qu'elle n'est pas capturée, ce qu'un moteur sans fenêtre ne peut pas
@@ -1523,6 +2217,13 @@ image plausible peut sortir d'une caméra mal placée, pas une erreur de 0 mm.
 ## Suite possible
 
 Clignotants, essuie-glaces et pluie, quelque chose sur la route.
+
+Pour le géant, dans l'ordre : **une réponse aux dégâts**, sans laquelle il ne
+peut ni avoir de boîte de collision (un pied solide catapulte une
+`CharacterBody3D`) ni tuer. Puis les **arbres qu'il renverse** en coupant à
+travers bois, qui diraient sa masse mieux que n'importe quel son. Puis les
+**variantes de pas** — il n'a qu'un `step.wav` repitché, et à 1,14 pas par
+seconde on l'entend.
 
 Le calage et son démarreur sont faits (voir « Caler »), les rétroviseurs
 montrent vraiment l'arrière depuis qu'ils ont chacun leur `SubViewport` (voir

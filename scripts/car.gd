@@ -271,6 +271,19 @@ const GEAR_PULL := [0.85, 0.0, 1.0, 0.68, 0.46, 0.33, 0.24]
 @export var fov_fast := 58.0
 ## Tremblement de caisse. 0 = camera parfaitement stable.
 @export var camera_shake := 0.35
+## Frequence propre de la suspension apres un coup, en Hz. Une caisse sur ses
+## ressorts oscille entre 1 et 2 Hz ; 2,4 parce qu'on regarde la TETE du
+## conducteur, qui ajoute sa propre nuque a celle de la voiture.
+@export var jolt_hz := 2.4
+## Amortissement. 0,3 laisse voir deux ou trois oscillations : au-dela le coup
+## se resume a un saut d'image, en dessous la voiture flotte comme un bateau.
+@export var jolt_damping := 0.30
+## Combien de vitesse de camera (m/s) donne 1 m/s^2 de choc. A 60 m/s^2 — le
+## plafond — cela fait 0,096 m/s, soit 6 mm d'amplitude a 2,4 Hz. C'est enorme
+## a l'ecran : le tremblement de route ordinaire est a un dixieme de millimetre.
+@export var jolt_gain := 0.0016
+## Tangage de la tete par metre de debattement, en radians. 6 mm donnent 1,7 deg.
+@export var jolt_pitch := 5.0
 ## De combien la tete avance dans la direction du regard, clic droit maintenu.
 ## 0,42 m : c'est ce qu'il faut pour passer la tete entre les deux appuis-tete
 ## et amener l'epaule droite a portee de la banquette. Sans se pencher elle en
@@ -359,7 +372,22 @@ var _hb_press_used := false        # l'appui en cours a servi a desserrer
 var gear := GEAR_N
 var rpm := 850.0
 ## Acceleration de la caisse dans son propre repere, lue par les objets libres.
+## Somme de l'inertie de conduite (_accel) et des chocs encaisses (_shock).
 var frame_accel := Vector3.ZERO
+## L'inertie de conduite seule : virages, freinages, reprises.
+var _accel := Vector3.ZERO
+## Ce qu'un choc exterieur ajoute, et qui s'eteint tout seul. Voir impact().
+var _shock := Vector3.ZERO
+## Intensite du dernier choc encaisse, en m/s^2, telle qu'elle a ete INJECTEE.
+## Ce n'est pas la meme chose que la pointe relevee dans frame_accel : le temps
+## qu'une image passe, le choc a deja perdu un tiers. Les bancs d'essai lisent
+## celle-ci pour savoir ce que le coup valait, et l'autre pour savoir ce qui en
+## est arrive jusqu'aux objets.
+var last_impact := 0.0
+## Suspension apres un coup : un ressort amorti dont le deplacement est celui de
+## la camera. Purement visuel — ce que les objets ressentent passe par _shock.
+var _jolt := Vector3.ZERO
+var _jolt_vel := Vector3.ZERO
 var _prev_speed := 0.0
 ## Vrai pendant une coupure d'allumage du rupteur. Lu par le son.
 var limiter_cut := false
@@ -684,8 +712,13 @@ func _physics_process(delta: float) -> void:
 		# 60 et pas 25 : le plafond doit laisser passer un CHOC (6 g), sinon rien
 		# ne peut plus decrocher ce qui est pose. Voir prop.gd static_mu.
 		var raw := Vector3(-yaw_rate * speed, 0.0, -(speed - _prev_speed) / delta)
-		frame_accel = frame_accel.lerp(raw.limit_length(60.0),
+		_accel = _accel.lerp(raw.limit_length(60.0),
 			clampf(delta * 20.0, 0.0, 1.0))
+	# Le choc encaisse (impact()) s'AJOUTE a l'inertie de conduite et s'eteint en
+	# une soixantaine de millisecondes : c'est un coup, pas un regime. Il passe
+	# par la meme limite : au-dela de 60 m/s^2 le jeu ne sait rien transmettre.
+	_shock = _shock.lerp(Vector3.ZERO, clampf(delta * 16.0, 0.0, 1.0))
+	frame_accel = (_accel + _shock).limit_length(60.0)
 	_prev_speed = speed
 
 	velocity = -global_transform.basis.z * speed
@@ -800,7 +833,19 @@ func _process(delta: float) -> void:
 	# de camera se voit enormement, d'ou des amplitudes de l'ordre du millimetre.
 	_bob += delta * (1.3 + v * 0.14)
 	var shake := (0.0007 + v * 0.00011) * camera_shake
-	cam.position = _cam_offset + Vector3(sin(_bob * 1.15) * shake * 1.2, sin(_bob * 1.9) * shake, 0.0)
+	# La suspension apres un coup : ressort amorti relance par impact(). Integre
+	# en semi-implicite (la vitesse d'abord, la position ensuite avec la vitesse
+	# NEUVE) : c'est le seul schema simple qui ne diverge pas quand le pas de
+	# temps saute, et il saute au premier ecran de chargement venu.
+	var w := TAU * jolt_hz
+	_jolt_vel += (-w * w * _jolt - 2.0 * jolt_damping * w * _jolt_vel) * delta
+	_jolt += _jolt_vel * delta
+	cam.position = _cam_offset + _jolt \
+		+ Vector3(sin(_bob * 1.15) * shake * 1.2, sin(_bob * 1.9) * shake, 0.0)
+	# La tete pique du nez avec la caisse. Sans ce tangage, un coup ne fait que
+	# translater l'image et se lit comme une secousse de camera, pas comme une
+	# voiture qui encaisse.
+	cam.rotation.x = _jolt.y * jolt_pitch
 
 	# Roulis : inclinaison dans les virages, plus l'epaule qui tombe quand on se
 	# penche a la vitre ou qu'on se retourne.
@@ -1051,6 +1096,26 @@ func _window_openness() -> float:
 	for w in cabin.windows:
 		closed *= 1.0 - w.open * (1.0 if w.side < 0.0 else 0.7)
 	return 1.0 - closed
+
+
+## Un choc encaisse par la caisse : un pied de geant qui tombe a cote, ou
+## dessus. `accel` est l'acceleration de pointe, en m/s^2, DANS LE REPERE DE LA
+## CAISSE (Y en haut, -Z devant).
+##
+## Elle part a deux endroits, et c'est tout l'interet : dans `frame_accel`, d'ou
+## tout ce qui traine dans l'habitacle decolle des que le coup passe 2,4 g (voir
+## prop.gd, static_mu) ; et dans la suspension, d'ou la camera tressaute et la
+## tete pique du nez. Un choc qui ne ferait que secouer l'image serait un effet
+## de post-traitement ; celui-la fait sauter les canettes du siege.
+##
+## On ne CUMULE pas : deux pieds qui tombent coup sur coup ne font pas un choc
+## deux fois plus dur, ils font le plus dur des deux. Cumuler les enverrait tout
+## droit au plafond de 60 m/s^2 des qu'il court a cote de la voiture.
+func impact(accel: Vector3) -> void:
+	last_impact = accel.length()
+	if last_impact > _shock.length():
+		_shock = accel
+	_jolt_vel += accel * jolt_gain
 
 
 ## Courbe de couple grossiere : creux sous 2000 tr/min, plein entre 3200 et
