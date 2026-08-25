@@ -1250,6 +1250,13 @@ avant) et `18_police_exterieur.png` (de côté, sous ses gyrophares et nos phare
   autour de l'ampoule, qui déborde du capot et se voit depuis le siège.
 - L'œil doit être à ~1 m du bas du pare-brise. Plus près, toute la structure
   proche paraît gigantesque — c'était la cause du « la voiture est trop imposante ».
+- `Basis.slerp()` caste **ses deux** arguments en quaternion, et Godot refuse
+  d'y couler une base non orthonormale. Celle de la main sort d'une chaîne de
+  `interpolate_with()` qui la dénormalise d'un cheveu — vecteurs unitaires et
+  orthogonaux à 1e-4 près, invisible à l'œil, mais assez pour faire crier la
+  console à chaque image où l'arme est levée. Orthonormaliser l'argument reçu
+  ne suffit pas, il faut aussi celui sur lequel on appelle la méthode
+  ([driver.gd](scripts/driver.gd), `update_pose`).
 
 ## Shaders
 

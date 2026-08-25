@@ -544,8 +544,14 @@ func update_pose(steer: float, throttle: float, braking: float,
 		# Seulement l'orientation : la POSITION reste celle du geste, qui sait
 		# ou est le bras et jusqu'ou il peut aller.
 		if item_aim > 0.0:
-			right.basis = right.basis.slerp(item_aim_basis.orthonormalized(),
-				clampf(item_aim, 0.0, 1.0))
+			# LES DEUX bases doivent etre orthonormales : slerp() les caste en
+			# quaternion, et Godot refuse d'y couler autre chose. Celle de la
+			# main sort de la chaine de interpolate_with() ci-dessus, qui la
+			# denormalise d'un cheveu — ses vecteurs restent unitaires et
+			# orthogonaux a 1e-4 pres, assez pour que le cast proteste a chaque
+			# image ou l'on tient l'arme levee.
+			right.basis = right.basis.orthonormalized().slerp(
+				item_aim_basis.orthonormalized(), clampf(item_aim, 0.0, 1.0))
 	_hand_r.transform = right
 
 	# --- doigts : ils se referment sur ce que la main tient ---------------
