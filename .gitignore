@@ -4,3 +4,6 @@
 # Backups et caches Blender / Python
 *.blend1
 __pycache__/
+
+# Worktrees git de Claude Code (des dépôts, pas des sources)
+.claude/worktrees/

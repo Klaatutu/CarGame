@@ -9,7 +9,8 @@ extends CharacterBody3D
 ## 4e patine, rester en 2e hurle, rater un rapport se sent tout de suite.
 ##
 ## Reglages a bidouiller en priorite : GEAR_TOP, GEAR_PULL, engine_power,
-## steer_rate, et camera_shake si le tremblement gene.
+## steer_rate, steer_return / steer_return_speed pour le rappel du volant, et
+## camera_shake si le tremblement gene.
 ##
 
 const CabinScript := preload("res://scripts/cabin.gd")
@@ -17,6 +18,7 @@ const DriverScript := preload("res://scripts/driver.gd")
 const InteractionScript := preload("res://scripts/interaction.gd")
 const CigPackScript := preload("res://scripts/cig_pack.gd")
 const CanScript := preload("res://scripts/can.gd")
+const RevolverScript := preload("res://scripts/revolver.gd")
 const EngineAudioScript := preload("res://scripts/engine_audio.gd")
 const CabinAudioScript := preload("res://scripts/cabin_audio.gd")
 
@@ -37,6 +39,62 @@ const HEAD_OUT := Vector3(-0.92, 1.14, 0.28)
 ## Verifie degage : entre les appuis-tete (x -0.21..-0.45 et 0.21..0.45),
 ## au-dessus d'eux (1.165) et sous le pavillon (1.275).
 const HEAD_BACK := Vector3(SEAT_X + 0.30, 1.19, 0.50)
+## Ou la tete se place quand on s'ENROULE autour du siege : passee entre les
+## deux dossiers, basse, au-dessus du plancher arriere. De la, l'epaule droite
+## tombe derriere le plan des dossiers et le bras atteint la banquette.
+##
+## C'est une POSE FIXE, et c'est tout l'interet. L'enroulement est declenche par
+## la rotation de la tete ; s'il deplacait la tete LE LONG DU REGARD comme le
+## fait le clic droit, tourner ferait avancer et reculer la camera sur son
+## propre axe — un zoom, et rien d'autre. Ici, une fois qu'on y est, tourner la
+## tete ne deplace plus rien : on regarde autour de soi depuis une place qu'on a
+## prise, exactement comme quand on s'est vraiment retourne dans une voiture.
+const HEAD_WRAP := Vector3(-0.02, 0.98, 0.86)
+
+## --- se pencher (clic droit maintenu) --------------------------------------
+## La tete part DANS L'AXE DU REGARD : on se penche devant le siege passager
+## pour voir la boite a gants et le plancher, et on passe entre les deux sieges
+## pour attraper ce qui traine sur la banquette. C'est le seul mouvement du jeu
+## que le joueur declenche lui-meme — tout le reste (se retourner, sortir la
+## tete) est deduit de l'angle de la tete.
+##
+## La boite ou la tete a le droit d'aller, relevee sur le modele de l'habitacle.
+## En x : la vitre conducteur d'un cote (-0.76 pour le panneau de portiere), le
+## siege passager de l'autre. En z : la planche de bord devant, l'aplomb de la
+## banquette derriere — au-dela on entrerait dans le dossier arriere. En y : le
+## pavillon en haut (1.30), assez bas pour aller regarder au plancher.
+## Le plancher a 0.70 et pas 0.84 : ce n'est pas lui qui doit retenir la tete,
+## c'est `lean_clear`, qui la remonte au-dessus de ce qui est pose dessous. Tant
+## qu'aucune borne ne mord, le buste avance EXACTEMENT sur le rayon du regard et
+## ce qu'on visait reste sous le viseur. Des que le plancher mordait, il
+## poussait la tete HORS de ce rayon, et l'objet passait sous le menton — a 70
+## degres de plongee pour 62 de debattement, on ne pouvait plus le viser.
+const LEAN_MIN := Vector3(-0.55, 0.70, -0.42)
+## Le fond a 1.10 et pas 0.88, pour la meme raison que le plancher a 0.70 : ce
+## n'est pas la boite qui doit retenir la tete, c'est `lean_clear`. A 0.88 elle
+## mordait des qu'on s'enroulait pour aller chercher derriere son siege, et
+## poussait la tete HORS du rayon du regard — l'objet passait alors sur le cote
+## au lieu de rester devant, et changeait d'epaule. C'est ce qui le rendait
+## improuvable a viser : a un demi-tour de la, le lacet requis bascule d'un bord
+## a l'autre pour quelques centimetres de tete.
+const LEAN_MAX := Vector3(0.52, 1.21, 1.10)
+## Le volant est le seul obstacle DANS le passage. Au-dessus de lui — a gauche
+## et en avant — la tete ne descend pas plus bas que sa jante ; ailleurs elle va
+## jusqu'a LEAN_MIN.y. Sans cette exception, plonger vers le plancher cote
+## conducteur faisait traverser le volant a la camera.
+const LEAN_WHEEL_Y := 0.99
+
+# --- son -------------------------------------------------------------------
+## Bus audio ou passe tout ce qui vient de dehors, cree a la volee par
+## _setup_cabin_bus(). Il porte le passe-bas de la vitre et l'attenuation de
+## l'habitacle ; c'est le seul endroit ou le bruit de la voiture est etouffe.
+const CABIN_BUS := "Cabine"
+## Bus des mecanismes de portiere — pour l'instant la seule manivelle de vitre.
+## Sourdine FIXE, contrairement a CABIN_BUS : le mecanisme est enferme dans le
+## caisson de la portiere, derriere la garniture, et il l'est tout autant vitre
+## montee que vitre baissee. Le faire dependre de l'ouverture serait absurde,
+## et surtout ca le rouvrirait pile pendant qu'on tourne la manivelle.
+const DOOR_BUS := "Portiere"
 
 # --- boite de vitesses -----------------------------------------------------
 const GEAR_NAMES := ["R", "N", "1", "2", "3", "4", "5"]
@@ -99,8 +157,66 @@ const GEAR_PULL := [0.85, 0.0, 1.0, 0.68, 0.46, 0.33, 0.24]
 ## a haute vitesse (r = v^2 / max_lateral) et, par ricochet, ce qui reste en
 ## place dans l'habitacle en virage.
 @export var max_lateral := 8.0
-@export var steer_attack := 2.9        # vitesse de braquage du volant
-@export var steer_return := 4.2        # rappel du volant au centre
+## Vitesse de braquage du volant, en braquage complet par seconde. 1.7 : il faut
+## 0.6 s pour aller du centre a la butee, soit un peu moins de 500 degres de
+## jante par seconde. A 2.9 on y arrivait en un tiers de seconde, ce qui, avec
+## les 270 degres de course, jetait le volant d'un bord a l'autre.
+@export var steer_attack := 1.7
+## Le volant durcit avec la vitesse : facteur applique a steer_attack a haute
+## vitesse. A 0.5 on met deux fois plus longtemps a aller d'une butee a l'autre
+## a 130 km/h qu'a l'arret. C'est ce qui enleve le cote nerveux en ligne droite
+## sans rien retirer a la maniabilite en manoeuvre.
+@export var steer_attack_fast := 0.5
+## Inertie du volant. C'est LUI qui enleve la brutalite : sans inertie le volant
+## prend sa vitesse de rotation d'un coup a l'appui sur la touche et s'arrete net
+## au relachement, ce qu'aucune piece qui pese ne fait. La valeur est la vitesse
+## a laquelle la jante prend et perd son elan : 9.0 = environ un dixieme de
+## seconde de mise en train. Monter = plus sec, descendre = plus mou et flottant.
+@export var steer_inertia := 9.0
+## Force du rappel du volant au centre, A PLEINE VITESSE. Ce n'est pas un retour
+## automatique de curseur : c'est le couple d'auto-alignement des roues avant
+## (la chasse), et il n'existe que si la voiture roule. Le rappel etant
+## proportionnel a l'angle, il s'eteint en arrivant au centre : la valeur est
+## celle du DEPART, quand le volant est a la butee.
+##
+## 1.4 : le volant se redresse, mais il prend son temps — a 50 km/h il lui faut
+## une bonne seconde et demie pour rentrer depuis la butee. C'est volontairement
+## mou. Une direction qui claque au centre des qu'on lache la touche donne
+## l'impression de conduire un ressort, pas une voiture.
+@export var steer_return := 1.4
+## Vitesse (m/s) a laquelle ce rappel atteint sa pleine force. En dessous il
+## monte progressivement : nul a l'arret, a peine sensible au pas, franc au-dela.
+## 20 m/s = 72 km/h. Monte de 14 a 20 pour que le volant ne se redresse pas tout
+## seul en ville : a 50 km/h il ne recoit plus que 70 % du rappel.
+@export var steer_return_speed := 20.0
+## Part du rappel qui agit a couple constant, independamment de l'angle. Sans
+## elle, l'exponentielle approche le centre sans jamais l'atteindre et il reste
+## un filet de braquage en ligne droite.
+@export var steer_return_floor := 0.22
+
+@export_group("Son")
+## Isolation de l'habitacle, en dB, appliquee a tout ce qui vient DE DEHORS :
+## moteur, echappement, pneus, vent. C'est le bouton unique pour monter ou
+## baisser la voiture entiere sans toucher a la balance entre les sources, qui
+## a ete reglee a l'oreille source par source.
+##
+## Le levier, le frein a main et la manivelle n'y passent pas : ils sont dans
+## l'habitacle avec le conducteur, il n'y a pas de vitre entre eux et l'oreille.
+@export var cabin_muffle_db := -9.0
+## Coupure du passe-bas, vitres FERMEES. Une glace ne baisse pas le son, elle
+## en mange le haut : c'est ce qui separe un moteur simplement lointain d'un
+## moteur etouffe. Baisser cette valeur enferme davantage, la monter rouvre.
+@export var cabin_muffle_hz := 1300.0
+## Et vitres grandes ouvertes : le filtre s'efface, le pot revient en clair.
+@export var cabin_open_hz := 11000.0
+## Coupure du passe-bas de la manivelle. Le son brut est un train de 24 chocs
+## par seconde, tres pointu : sa crete est ~19 dB au-dessus de sa moyenne, et
+## entendu en clair ca gresille. Le caisson de portiere lui mange le haut, et
+## c'est ce qui en fait un "tonc tonc" de mecanisme au lieu d'un raclement.
+@export var door_muffle_hz := 700.0
+## Attenuation de la manivelle. Elle etait restee au niveau fort pendant que
+## tout le reste passait a cabin_muffle_db, donc elle ressortait bien trop.
+@export var door_muffle_db := -10.0
 
 @export_group("Camera")
 @export var look_sensitivity := 0.0022
@@ -118,16 +234,95 @@ const GEAR_PULL := [0.85, 0.0, 1.0, 0.68, 0.46, 0.33, 0.24]
 ## Idem vers la gauche : le buste se penche, la tete sort par la vitre et la
 ## main gauche va se poser sur le haut de la portiere.
 @export var lean_out_start := 62.0
-@export var pitch_limit := 62.0
+## 70 et pas 62 : enroule autour du siege, on est PENCHE AU-DESSUS de ce qu'on
+## va chercher, et le regard y plonge de plus de 60 degres. A 62, une canette
+## posee derriere son propre siege demandait 63 degres — un de trop, et elle
+## devenait invisible donc improuvable a viser, donc impossible a prendre. 70
+## degres vers le bas restent dans ce qu'une nuque fait sans effort.
+@export var pitch_limit := 70.0
 ## 50 et pas 46 : la planche de bord du modele Blender est plus profonde que
 ## l'ancienne en primitives, et a 46 le volant passait sous le cadre.
 @export var fov_base := 50.0
 @export var fov_fast := 58.0
 ## Tremblement de caisse. 0 = camera parfaitement stable.
 @export var camera_shake := 0.35
+## De combien la tete avance dans la direction du regard, clic droit maintenu.
+## 0,42 m : c'est ce qu'il faut pour passer la tete entre les deux appuis-tete
+## et amener l'epaule droite a portee de la banquette. Sans se pencher elle en
+## est a 0,80 m, pour 0,58 m de bras — le geste existait, mais l'avant-bras
+## s'etirait pour arriver au bout.
+@export var lean_reach := 0.55
+## De combien la tete reste AU-DESSUS de ce qui est pose sous elle : assises,
+## banquette, console, planche, plancher. C'est la seule chose qui l'empeche de
+## s'enfoncer dedans, et c'est une correction VERTICALE — voir _fit_cabin.
+##
+## Ce fut un temps une distance d'arret le long du regard, ce qui paraissait
+## plus juste et ne l'etait pas : la longueur du penchement se mettait alors a
+## suivre ce qu'on regardait, et tourner la tete faisait avancer et reculer la
+## camera sur son propre axe. Un zoom.
+@export var lean_clear := 0.25
+## Degres de rotation SUPPLEMENTAIRES vers la droite quand on est penche.
+##
+## Les 160 degres assis sont la limite d'un dos cale contre son dossier. Penche
+## et retenu par un bras, le buste n'est plus tenu par le siege : il pivote pour
+## de bon, comme quand on se met de trois quarts pour fouiller a l'arriere. 30
+## de plus donnent 190, et c'est exactement ce qu'il faut — le banc d'essai a
+## montre qu'atteindre la banquette DERRIERE LE SIEGE CONDUCTEUR demande 179
+## degres. A 160 on ne pouvait meme pas la regarder, donc pas la viser, donc pas
+## y prendre quoi que ce soit : le seul angle mort de l'habitacle.
+@export var lean_yaw_bonus := 30.0
+## Vitesse d'etablissement du mouvement (1/s). 4,5 : un quart de seconde.
+@export var lean_speed := 4.5
+## --- s'enrouler autour du siege --------------------------------------------
+## CES DEUX SEUILS NE DECLENCHENT RIEN A EUX SEULS : ils ne font que choisir, LE
+## CLIC DROIT DEJA TENU, entre se pencher vers ce qu'on regarde et contourner son
+## propre siege. Se retourner sans rien tenir ne deplace jamais le corps.
+##
+## Lacet a droite a partir duquel se pencher, c'est contourner le siege plutot
+## que d'aller vers l'avant. 105 : le siege passager se regarde a 99 degres, la
+## banquette a partir de 123 — le seuil passe entre les deux.
+@export var wrap_yaw := 105.0
+## Et plongee minimale, en degres sous l'horizontale : on contourne son siege
+## pour aller chercher quelque chose, donc en le REGARDANT. Penche vers l'arriere
+## le regard a plat, on regarde par la lunette, et la tete n'a rien a faire entre
+## les sieges.
+@export var wrap_pitch := 12.0
+## Marges de relachement, en degres. Un joueur arrete a la limite verrait sinon
+## le buste partir et revenir a chaque frisson de souris — et comme s'enrouler
+## ouvre la butee droite a 190, cette oscillation-la emmenerait le regard avec
+## elle.
+##
+## Elles sont LARGES, et pas par prudence : s'enrouler deplace la tete de plus
+## d'un demi-metre, ce qui change de plusieurs dizaines de degres le releve de
+## ce qu'on regarde. Une canette visee a 123 degres depuis le siege n'est plus
+## qu'a 68 une fois qu'on est entre les dossiers. Avec une marge etroite, la
+## suivre des yeux faisait sortir de la zone, donc revenir au siege, donc la
+## renvoyer a 123 : le buste faisait la navette et l'objet devenait
+## inattrapable. On s'enroule sur un geste franc, on se deroule quand on
+## revient vers l'avant ou qu'on releve les yeux — pas entre les deux.
+const WRAP_YAW_RELEASE := 55.0
+## Celle de la PLONGEE, elle, est petite — et ce n'est pas une inconsequence,
+## c'est ce que mesure le banc. S'enrouler deplace la tete PRESQUE LE LONG DU
+## REGARD : le releve de ce qu'on vise ne bouge donc quasiment pas, la ou son
+## gisement, lui, fait un bond. Sur la canette de banquette, le banc lit un lacet
+## qui passe de 123 a 68 degres (55 d'ecart, d'ou la marge ci-dessus) pour une
+## plongee qui ne va que de 52 a 58 (6 d'ecart). Une marge de 25 sur cet axe ne
+## protegeait donc de rien : elle obligeait seulement a lever les yeux de 13
+## degres AU-DESSUS de l'horizontale pour se derouler. Relever la tete vers la
+## route laissait le joueur enroule entre les sieges, camera avancee, sans aucun
+## moyen evident d'en sortir. A 9, la bande morte couvre largement les 6 degres
+## mesures, et remettre le regard a plat suffit a revenir s'asseoir.
+const WRAP_PITCH_RELEASE := 9.0
 
 var speed := 0.0
 var steer := 0.0
+## Le volant rentre au centre de lui-meme (chasse des roues), le joueur n'y est
+## pour rien : c'est ce qui fait glisser la jante sous les paumes du conducteur.
+var wheel_returning := false
+## Vitesse de rotation du volant, en braquage complet par seconde. C'est l'etat
+## que l'inertie fait vivre d'une image a l'autre : sans lui le volant n'aurait
+## aucune memoire de son mouvement et repartirait de zero a chaque image.
+var _steer_vel := 0.0
 var throttle := 0.0
 var braking := 0.0
 var clutch := false
@@ -152,6 +347,9 @@ var driver
 var interaction
 var engine_audio
 var cabin_audio
+## Le passe-bas de la vitre, porte par le bus CABIN_BUS. Sa coupure suit
+## l'ouverture des vitres a chaque image, voir _process().
+var _cabin_lp: AudioEffectLowPassFilter
 
 var _headlights: Array[SpotLight3D] = []
 var _taillights: Array[SpotLight3D] = []
@@ -159,6 +357,16 @@ var _reverse_lights: Array[SpotLight3D] = []
 var _lights_on := true
 var _bob := 0.0
 var _shift_timer := 0.0
+## 0 = assis au fond du siege, 1 = penche a fond dans la direction du regard.
+var _lean := 0.0
+## Longueur du deplacement en cours, relevee pour le banc d'essai.
+var _lean_travel := 0.0
+## Vrai quand le regard demande de s'enrouler autour du siege. Il porte
+## l'hysteresis : c'est LUI qu'on relit pour savoir de quel seuil on depend.
+var _wrapping := false
+## Sa version fondue : 0 = le penchement suit le regard, 1 = il rejoint la pose
+## fixe d'enroulement (HEAD_WRAP).
+var _wrap := 0.0
 var _cam_offset := Vector3.ZERO
 var _hud: Label
 var _flash: Label
@@ -169,6 +377,7 @@ var _hint_timer := 11.0
 
 
 func _ready() -> void:
+	_setup_cabin_bus()      # avant les noeuds audio : ils y branchent leurs lectures
 	_build_collision()
 
 	cabin = CabinScript.new()
@@ -183,10 +392,15 @@ func _ready() -> void:
 	engine_audio.name = "EngineAudio"
 	engine_audio.idle_rpm = idle_rpm
 	engine_audio.redline_rpm = redline_rpm
+	# Le bus se pose AVANT add_child : c'est _ready() du noeud audio qui cree
+	# les lectures, et une lecture choisit son bus a la construction.
+	engine_audio.bus = CABIN_BUS
 	add_child(engine_audio)
 
 	cabin_audio = CabinAudioScript.new()
 	cabin_audio.name = "CabinAudio"
+	cabin_audio.outside_bus = CABIN_BUS
+	cabin_audio.door_bus = DOOR_BUS
 	add_child(cabin_audio)
 	# Le conducteur anime le volant et les leviers du modele Blender plutot que
 	# d'en fabriquer en primitives.
@@ -300,13 +514,52 @@ func _physics_process(delta: float) -> void:
 	rpm = clampf(rpm, idle_rpm, redline_rpm)
 
 	# --- braquage --------------------------------------------------------
+	# Le volant est une PIECE MECANIQUE, pas un curseur : il garde l'angle ou on
+	# l'a laisse. Ce qui le ramene au centre, ce n'est pas un ressort de jeu
+	# video, c'est le couple d'auto-alignement des roues avant — la chasse — et
+	# ce couple n'existe QUE si la voiture roule. A l'arret on braque, on lache,
+	# ca reste braque, exactement comme dans une vraie voiture.
+	v = absf(speed)
+
+	# Le volant durcit avec la vitesse : a 130 km/h on ne le jette plus d'une
+	# butee a l'autre. En manoeuvre il reste vif.
+	var attack := steer_attack * lerpf(1.0, steer_attack_fast, clampf(v / 35.0, 0.0, 1.0))
+
+	# Ou le volant CHERCHE a aller cette image. Ce n'est pas encore ou il ira :
+	# l'inertie plus bas decide de ce qu'il en fait vraiment.
+	var goal := steer
+	# Le volant revient-il TOUT SEUL ? Le conducteur ne le ramene pas a la main :
+	# il desserre et le laisse filer sous ses paumes (driver.wheel_slip). C'est
+	# ici, et nulle part ailleurs, qu'on sait faire la difference entre une jante
+	# qu'on tourne et une jante qui rentre.
+	wheel_returning = false
 	if absf(steer_input) > 0.01:
-		steer = move_toward(steer, steer_input, steer_attack * delta)
+		goal = move_toward(steer, steer_input, attack * delta)
 	else:
-		steer = move_toward(steer, 0.0, steer_return * delta)
+		# Rappel proportionnel a la vitesse ET a l'angle. Proportionnel a l'angle
+		# donc exponentiel : il tire fort quand le volant est loin du centre et
+		# s'eteint en arrivant, au lieu du retour a vitesse constante d'avant, qui
+		# faisait servomoteur. Proportionnel a la vitesse, donc nul a l'arret.
+		var centering := steer_return * clampf(v / steer_return_speed, 0.0, 1.0)
+		if centering > 0.0:
+			goal = lerpf(steer, 0.0, clampf(1.0 - exp(-centering * delta), 0.0, 1.0))
+			goal = move_toward(goal, 0.0, centering * steer_return_floor * delta)
+			# Sous 2 degres de jante il n'y a plus rien qui file : sans ce seuil,
+			# les mains resteraient desserrees en ligne droite.
+			wheel_returning = absf(steer) > 0.008
+
+	# Inertie de la jante. On ne pose pas l'angle, on passe par la VITESSE de
+	# rotation, et cette vitesse met un temps fini a s'etablir comme a retomber.
+	# C'est toute la difference entre un volant qu'on tourne et un curseur qu'on
+	# deplace : au debut de l'appui la jante s'ebranle au lieu de partir a pleine
+	# vitesse, et au relachement elle finit son mouvement au lieu de se figer.
+	# Le rappel en profite aussi — il n'arrache plus le volant des l'instant ou
+	# on lache la touche.
+	var want_vel := (goal - steer) / maxf(delta, 0.0001)
+	_steer_vel = lerpf(_steer_vel, want_vel, clampf(delta * steer_inertia, 0.0, 1.0))
+	steer += _steer_vel * delta
 	steer = clampf(steer, -1.0, 1.0)
 
-	v = absf(speed)
 	# Il faut rouler pour tourner, et on braque moins fort a haute vitesse.
 	var grip := clampf(v / 5.0, 0.0, 1.0)
 	var stability := lerpf(1.0, 0.38, clampf(v / 40.0, 0.0, 1.0))
@@ -345,14 +598,99 @@ func _process(delta: float) -> void:
 	var v := absf(speed)
 
 	# --- regard : se retourner a droite, sortir la tete a gauche ----------
+	# La butee droite se resserre quand on se redresse : sans ce rappel, on
+	# resterait bloque a 190 degres, assis au fond du siege, la nuque tordue.
+	#
+	# Elle est lue AVANT le penchement de cette image, et plus apres : celui-ci
+	# depend desormais de l'angle du regard (l'enroulement, juste dessous), et
+	# l'angle depend de la butee, qui depend du penchement. Se servir de la butee
+	# de l'image precedente ouvre la boucle ; celle de l'image en cours la
+	# refermerait sur elle-meme.
+	head.rotation.y = clampf(head.rotation.y, -_yaw_cap(), _yaw_cap_left())
 	var yaw := rad_to_deg(head.rotation.y)
-	var look_back := smoothstep(look_back_start, yaw_limit_right - 8.0, -yaw)
-	var look_out := smoothstep(lean_out_start, yaw_limit_left - 8.0, yaw)
+
+	# --- se pencher : CLIC DROIT, ET RIEN D'AUTRE -------------------------
+	# Le buste part la ou on regarde. Pas quand le clic droit sert a lever
+	# l'arme, ni quand une main tient une manivelle ou un retroviseur :
+	# interaction.gd le dit lui-meme.
+	# `interaction` n'est pas type : sans l'annotation, l'inference echoue.
+	#
+	# SE RETOURNER NE DEPLACE PAS LE CORPS. Une version l'a essaye : au-dela d'un
+	# certain lacet a droite, le regard plonge declenchait le penchement tout
+	# seul, pour mettre la banquette a portee sans rien demander au joueur. Le
+	# resultat etait qu'on se retrouvait A GENOUX SUR LA BANQUETTE juste pour
+	# avoir regarde derriere soi — et regarder derriere soi, on le fait tout le
+	# temps : pour reculer, pour surveiller, par reflexe. Un mouvement de tete
+	# ordinaire ne doit pas emmener le corps avec lui.
+	#
+	# Se retourner rend donc exactement ce qu'il a toujours rendu : la tete
+	# pivote et vient entre les appuis-tete (HEAD_BACK), le buste se vrille sur
+	# place, le dos reste cale contre le dossier. Aller chercher quelque chose
+	# derriere, ca reste un geste qu'on DEMANDE, en tenant le clic droit.
+	var free_hands: bool = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED \
+		and not interaction.lean_blocked()
+	var hold := Input.is_action_pressed("lean") and free_hands
+
+	# --- s'enrouler autour du siege ---------------------------------------
+	# Penche ET retourne a droite, le penchement ne suit plus le regard : il
+	# rejoint la pose fixe d'enroulement (HEAD_WRAP), qui passe l'epaule derriere
+	# le plan du dossier et met la banquette a portee du bras. C'est ce qui
+	# distingue "je me penche vers l'avant" de "je contourne mon siege".
+	#
+	# `hold` en est desormais une condition a part entiere : sans lui, l'angle du
+	# regard seul suffisait a l'armer, et c'est precisement ce qu'on ne veut
+	# plus. L'hysteresis, elle, reste — une fois le geste engage, on ne veut pas
+	# qu'il se defasse parce que suivre l'objet des yeux a fait repasser le lacet
+	# sous le seuil.
+	var yaw_rel := WRAP_YAW_RELEASE if _wrapping else 0.0
+	var pitch_rel := WRAP_PITCH_RELEASE if _wrapping else 0.0
+	_wrapping = hold \
+		and -yaw >= wrap_yaw - yaw_rel \
+		and rad_to_deg(head.rotation.x) <= -(wrap_pitch - pitch_rel)
+
+	# LEQUEL des deux mouvements, ETABLI AVANT le penchement lui-meme.
+	#
+	# L'ordre n'est pas cosmetique. _lean_offset vaut
+	# `follow.lerp(wrapped, _wrap) * _lean` : tant que `_wrap` traine vers 1 au
+	# meme rythme que `_lean`, le debut du mouvement est domine par `follow`,
+	# c'est-a-dire par le deplacement LE LONG DU REGARD. Regard plonge, la tete
+	# partait donc vers l'avant et vers le bas avant d'etre ramenee sur la pose
+	# fixe : une AVANCEE franche suivie d'un rattrapage.
+	#
+	# Quand rien n'est encore penche, il n'y a rien a fondre : `_wrap` se pose
+	# d'un coup, et la tete rejoint la pose d'enroulement EN LIGNE DROITE. Le
+	# fondu ne sert qu'a changer de mouvement en cours de penchement — tourner la
+	# tete vers l'arriere alors qu'on est deja penche, par exemple.
+	var wrap_goal := 1.0 if _wrapping else 0.0
+	if _lean < 0.02:
+		_wrap = wrap_goal
+	else:
+		_wrap = lerpf(_wrap, wrap_goal, clampf(delta * lean_speed, 0.0, 1.0))
+
+	_lean = lerpf(_lean, 1.0 if hold else 0.0,
+		clampf(delta * lean_speed, 0.0, 1.0))
+	# Le haut de la plage suit la butee du moment. Penche, elle va jusqu'a 190 :
+	# le buste doit continuer a s'enrouler sur toute la course, sinon il sature
+	# a 152 degres et les 38 derniers tombent entierement sur la nuque.
+	var look_back := smoothstep(look_back_start,
+		yaw_limit_right + lean_yaw_bonus * _lean - 8.0, -yaw)
+
+	# Sortir la tete par la vitre est DEDUIT de l'angle du regard ; se pencher
+	# est VOULU. Le second efface donc le premier. Sans ca, une fois penche
+	# entre les deux sieges, tourner les yeux vers le cote gauche de la
+	# banquette envoyait la tete dehors — le lacet avait depasse 62 degres, et
+	# le code n'avait aucun moyen de savoir qu'on regardait EN ARRIERE et pas
+	# le long du flanc. C'etait le banc d'essai qui le montrait : on visait une
+	# canette sur la banquette et on se retrouvait le nez au vent.
+	var look_out := smoothstep(lean_out_start, yaw_limit_left - 8.0, yaw) \
+		* (1.0 - _lean)
 
 	# La camera se DEPLACE, comme dans Euro Truck : on se penche, on ne fait pas
 	# que pivoter la tete. Le lerp donne du poids au mouvement.
-	var head_target := HEAD_POS.lerp(HEAD_BACK, look_back).lerp(HEAD_OUT, look_out)
-	head.position = head.position.lerp(head_target, clampf(delta * 7.0, 0.0, 1.0))
+	var seated := HEAD_POS.lerp(HEAD_BACK, look_back).lerp(HEAD_OUT, look_out)
+	var lean_vec := _lean_offset(seated)
+	_lean_travel = lean_vec.length()
+	head.position = head.position.lerp(seated + lean_vec, clampf(delta * 7.0, 0.0, 1.0))
 
 	for r in _reverse_lights:
 		r.visible = gear == GEAR_R
@@ -373,10 +711,17 @@ func _process(delta: float) -> void:
 
 	# Tant que le frein est simplement tenu, la main reste sur le levier ;
 	# une fois verrouille, elle repart au volant.
+	driver.wheel_slip = 1.0 if wheel_returning else 0.0
 	driver.update_pose(steer, throttle, braking, clutch, gear,
 		handbrake_on, handbrake_on and not handbrake_latched,
-		look_back, look_out, delta)
+		look_back, look_out, lean_vec, delta)
 	var win_open := _window_openness()
+	# La vitre s'ouvre, le filtre s'efface. Meme puissance 0,6 qu'ailleurs : une
+	# fente suffit a laisser rentrer le pot, ce n'est pas proportionnel a la
+	# course de la glace.
+	if _cabin_lp != null:
+		_cabin_lp.cutoff_hz = lerpf(cabin_muffle_hz, cabin_open_hz,
+			pow(clampf(win_open, 0.0, 1.0), 0.6))
 	engine_audio.update(rpm, throttle, not clutch and gear != GEAR_N, delta, limiter_cut, win_open)
 	cabin_audio.update(speed, gear, handbrake_on, delta, win_open)
 	cabin.set_gauges(absf(speed) * 3.6, rpm)
@@ -384,6 +729,125 @@ func _process(delta: float) -> void:
 	# Apres la camera : les miroirs se calent sur l'oeil, pas sur la voiture.
 	cabin.aim_mirrors(cam.global_position)
 	_update_hud(delta)
+
+
+## De combien la tete se deplace en se penchant, dans le repere de la voiture.
+##
+## On avance EXACTEMENT LE LONG DU REGARD. C'est ce qui fait que le geste se
+## pilote : ce qu'on a sous le viseur y reste, puisqu'on se deplace sur son
+## rayon. Une premiere version n'en prenait que la composante horizontale, la
+## verticale reduite — et le buste passait AU-DESSUS de ce qu'il visait. La
+## canette sur la banquette finissait sous le menton, a 87 degres de plongee
+## pour 62 de debattement de nuque : plus moyen de la viser, donc plus moyen de
+## la prendre. C'est le banc d'essai qui l'a montre.
+##
+## `seated` est la pose assise du moment (elle bouge deja quand on se retourne
+## ou qu'on sort la tete) : c'est le point de depart, et le plancher de
+## l'enveloppe, puisqu'elle, elle est deja connue pour tenir dans la caisse.
+##
+## LA LONGUEUR EST CONSTANTE. Une version l'ecourtait le long du regard pour
+## s'arreter court de la premiere surface rencontree : tres bien tant qu'on ne
+## bouge pas la tete, catastrophique des qu'on tourne. En balayant la vue, la
+## distance a la surface visee change en permanence — la planche est a 90 cm, la
+## console a 60, le vide a l'infini — donc la longueur du penchement avec elle.
+## La camera avançait et reculait le long de son propre axe : un ZOOM, et rien
+## d'autre. Ce qui empeche de s'enfoncer dans les sieges, c'est desormais la
+## garde VERTICALE de _fit_cabin, qui remonte la tete au lieu de la reculer.
+func _lean_offset(seated: Vector3) -> Vector3:
+	if _lean < 0.001:
+		return Vector3.ZERO
+	var fwd := -head.transform.basis.z
+	if fwd.length_squared() < 0.000001:
+		return Vector3.ZERO
+	fwd = fwd.normalized()
+	# DEUX mouvements, pas un.
+	#
+	# Le clic droit SUIT LE REGARD : on va vers ce qu'on vise, et ce qu'on vise
+	# reste sous le viseur puisqu'on se deplace sur son rayon. C'est un geste
+	# volontaire, la camera bouge quand on le demande.
+	#
+	# L'enroulement rejoint une POSE FIXE. Lui est declenche par la rotation de
+	# la tete : s'il suivait aussi le regard, tourner ferait avancer et reculer
+	# la camera sur son propre axe, ce qui se lit comme un zoom et pas comme un
+	# corps qui se retourne. Une fois la place prise, tourner ne deplace rien.
+	var follow := fwd * lean_reach
+	var wrapped := HEAD_WRAP - seated
+	return _fit_cabin(seated + follow.lerp(wrapped, _wrap) * _lean, seated) - seated
+
+
+## Hauteur de la surface de l'habitacle la plus haute SOUS ce point — les memes
+## que celles ou l'on repose les objets (cabin.gd) : assises, banquette, console,
+## planche, plancher. -INF s'il n'y a rien dessous.
+func _surface_under(p: Vector3) -> float:
+	var best := -INF
+	for s in cabin.surfaces:
+		var y: float = s["y"]
+		if y > p.y or y <= best:
+			continue
+		var lo: Vector2 = s["min"]
+		var hi: Vector2 = s["max"]
+		if p.x < lo.x or p.x > hi.x or p.z < lo.y or p.z > hi.y:
+			continue
+		best = y
+	return best
+
+
+## Ramene un point dans l'habitacle : la boite LEAN_MIN..LEAN_MAX, ELARGIE a ce
+## que la pose assise demande deja (tete sortie par la vitre : x -0.92, bien
+## au-dela de la boite), plus le volant, qui interdit de descendre la ou il est.
+##
+## Le plafond du volant est amene en fondu et pas par un test franc : une
+## marche, et la camera sauterait de 15 cm des qu'on passe la console.
+##
+## C'est ici, et seulement ici, qu'on empeche la tete de s'enfoncer dans ce qui
+## est pose dessous : on la REMONTE de `lean_clear` au-dessus de la surface. Une
+## correction verticale, pas un raccourcissement du mouvement — reculer le long
+## du regard pour eviter un obstacle, c'est un zoom des qu'on tourne la tete.
+func _fit_cabin(p: Vector3, seated: Vector3) -> Vector3:
+	var over_wheel := (1.0 - smoothstep(-0.24, 0.04, p.x)) \
+		* (1.0 - smoothstep(-0.04, 0.22, p.z))
+	var floor_y := maxf(lerpf(LEAN_MIN.y, LEAN_WHEEL_Y, over_wheel),
+		_surface_under(p) + lean_clear)
+	var lo := Vector3(LEAN_MIN.x, floor_y, LEAN_MIN.z)
+	return p.clamp(lo.min(seated), LEAN_MAX.max(seated))
+
+
+## Butee de rotation vers la DROITE, en radians. Elle s'ouvre en se penchant :
+## voir `lean_yaw_bonus`. Lue au clavier comme a chaque image, pour que les deux
+## soient toujours d'accord.
+func _yaw_cap() -> float:
+	return deg_to_rad(yaw_limit_right + lean_yaw_bonus * _lean)
+
+
+## Et vers la GAUCHE. Elle s'ouvre AUSSI, du meme angle.
+##
+## Pas par symetrie decorative : la direction du regard est un seul nombre, et
+## les deux butees en decoupent un intervalle. Tant qu'il ne couvre pas le tour
+## complet, il reste un secteur — juste derriere — qu'on ne peut atteindre par
+## AUCUN des deux cotes, alors qu'il est physiquement devant les yeux. Ouvrir
+## les deux a 190 donne 380 degres, donc un recouvrement : ce qui est plein
+## arriere se rattrape par la droite comme par la gauche.
+func _yaw_cap_left() -> float:
+	return deg_to_rad(yaw_limit_left + lean_yaw_bonus * _lean)
+
+
+## De combien le buste s'est penche, 0 a 1. Sert au banc d'essai.
+func lean_amount() -> float:
+	return _lean
+
+
+## Longueur du deplacement du penchement (m). Sert au banc : si elle VARIE quand
+## on tourne la tete, la camera avance et recule le long de son propre axe, et
+## ca se voit comme un zoom. A penchement etabli, elle doit rester plate.
+func lean_travel() -> float:
+	return _lean_travel
+
+
+## Vrai quand le penchement en cours contourne le siege au lieu de suivre le
+## regard. Implique le clic droit tenu : se retourner seul ne l'arme jamais.
+## Sert au banc d'essai.
+func wrapping() -> bool:
+	return _wrapping
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -396,7 +860,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		head.rotation.y = clampf(
 			head.rotation.y - event.relative.x * look_sensitivity,
-			-deg_to_rad(yaw_limit_right), deg_to_rad(yaw_limit_left))
+			-_yaw_cap(), _yaw_cap_left())
 		head.rotation.x = clampf(
 			head.rotation.x - event.relative.y * look_sensitivity,
 			-deg_to_rad(pitch_limit), deg_to_rad(pitch_limit))
@@ -405,7 +869,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("gear_down"):
 		_change_gear(-1)
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_MIDDLE:
-		_select_gear(GEAR_N)   # clic molette : point mort direct (debraye)
+		# Clic molette : point mort direct (debraye). Le meme bouton LANCE ce
+		# qu'on a en main, et interaction.gd le consomme alors avant nous — il
+		# est notre enfant. On ne le recoit donc que les mains vides.
+		_select_gear(GEAR_N)
 	elif event is InputEventKey and event.is_action("handbrake"):
 		_handbrake_key(event)
 	elif event.is_action_pressed("headlights"):
@@ -433,6 +900,37 @@ func _handbrake_key(event: InputEventKey) -> void:
 	if debug_input:
 		print("[frein a main] pressed=%s echo=%s serre=%s neutralise=%s" % [
 			event.pressed, event.is_echo(), handbrake_latched, _hb_press_used])
+
+
+## Cree le bus "Cabine" et son passe-bas. Fait a la volee plutot que dans un
+## default_bus_layout.tres : la voiture se construit entierement par code, et un
+## fichier de bus a maintenir a part se serait desynchronise du premier coup.
+## Idempotent — au rechargement de la scene on retrouve le bus deja la, on ne
+## fait que remplacer son effet.
+func _setup_cabin_bus() -> void:
+	_cabin_lp = _make_muffled_bus(CABIN_BUS, cabin_muffle_hz, cabin_muffle_db)
+	# La coupure de celui-la ne bougera plus : voir DOOR_BUS.
+	_make_muffled_bus(DOOR_BUS, door_muffle_hz, door_muffle_db)
+
+
+## Un bus qui envoie vers Master a travers un passe-bas, cree s'il manque.
+## Renvoie le filtre, pour qui veut en piloter la coupure.
+func _make_muffled_bus(bus_name: String, cutoff: float, volume: float) -> AudioEffectLowPassFilter:
+	var idx := AudioServer.get_bus_index(bus_name)
+	if idx < 0:
+		idx = AudioServer.bus_count
+		AudioServer.add_bus(idx)
+		AudioServer.set_bus_name(idx, bus_name)
+		AudioServer.set_bus_send(idx, "Master")
+	# Un seul passe-bas sur le bus : sans ce menage, un rechargement de scene en
+	# empilerait un de plus a chaque fois et le son s'eteindrait par paliers.
+	for e in range(AudioServer.get_bus_effect_count(idx) - 1, -1, -1):
+		AudioServer.remove_bus_effect(idx, e)
+	var lp := AudioEffectLowPassFilter.new()
+	lp.cutoff_hz = cutoff
+	AudioServer.add_bus_effect(idx, lp)
+	AudioServer.set_bus_volume_db(idx, volume)
+	return lp
 
 
 ## Ouverture "acoustique" des vitres, de 0 (fermees) a 1 (une grande ouverte),
@@ -508,6 +1006,17 @@ func _spawn_props() -> void:
 		can.position = spec[2]
 		can.rotation.y = deg_to_rad(spec[3])
 		interaction.grabbables.append(can)
+
+	# Le revolver. Un ramassable comme les autres pour interaction.gd, a ceci
+	# pres qu'il expose fire() : c'est ce qui lui vaut de pouvoir etre leve.
+	var gun := RevolverScript.new()
+	gun.name = "Revolver"
+	gun.carrier = self
+	gun.cabin = cabin
+	cabin.add_child(gun)
+	gun.position = CabinScript.REVOLVER_SPAWN
+	gun.rotation.y = deg_to_rad(CabinScript.REVOLVER_YAW)
+	interaction.grabbables.append(gun)
 
 
 func _build_collision() -> void:
@@ -644,7 +1153,7 @@ func _build_hud() -> void:
 	_hint.offset_right = 700.0
 	_hint.offset_bottom = -22.0
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hint.text = "ZQSD / WASD / fleches : conduire    Maj : embrayage    Molette : rapports, clic : point mort\nH : phares    Espace : frein a main    Souris : regarder"
+	_hint.text = "ZQSD / WASD / fleches : conduire    Maj : embrayage    Molette : rapports, clic : point mort (ou lancer)\nH : phares    Espace : frein a main    Souris : regarder    Clic droit maintenu : se pencher"
 	_hint.add_theme_font_size_override("font_size", 14)
 	_hint.add_theme_color_override("font_color", Color(0.8, 0.82, 0.88, 0.5))
 	layer.add_child(_hint)

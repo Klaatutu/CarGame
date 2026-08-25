@@ -43,6 +43,16 @@ const DIR := "res://assets/audio/cabin/"
 ## exactement le meme clac.
 @export var shot_pitch_spread := 0.06
 
+## Bus des sources EXTERIEURES : la route, le vent, ce qui traverse la caisse.
+## car.gd y branche le passe-bas de la vitre. Le levier, le frein a main et la
+## manivelle n'y passent PAS : ils sont dans l'habitacle avec le conducteur, il
+## n'y a aucune vitre entre eux et l'oreille, les etouffer sonnerait faux.
+## A poser avant l'entree dans l'arbre, _ready() cree les lectures.
+var outside_bus := "Master"
+## Bus des mecanismes de portiere : la manivelle. Ni dehors ni a l'air libre —
+## enferme dans le caisson de la portiere, d'ou une sourdine a lui.
+var door_bus := "Master"
+
 var _road: AudioStreamPlayer
 var _wind_lo: AudioStreamPlayer
 var _wind_hi: AudioStreamPlayer
@@ -63,13 +73,13 @@ var _dbg_open := 0.0
 
 
 func _ready() -> void:
-	_road = _loop("road_roll.wav")
-	_wind_lo = _loop("wind_low.wav")
-	_wind_hi = _loop("wind_high.wav")
-	_wind_open = _loop("wind_open.wav")
-	_buffet = _loop("wind_buffet.wav")
-	_road_open = _loop("road_open.wav")
-	_crank = _loop("crank.wav")
+	_road = _loop("road_roll.wav", outside_bus)
+	_wind_lo = _loop("wind_low.wav", outside_bus)
+	_wind_hi = _loop("wind_high.wav", outside_bus)
+	_wind_open = _loop("wind_open.wav", outside_bus)
+	_buffet = _loop("wind_buffet.wav", outside_bus)
+	_road_open = _loop("road_open.wav", outside_bus)
+	_crank = _loop("crank.wav", door_bus)
 	_shift = _shot("gear_shift.wav")
 	_hb_pull = _shot("handbrake_pull.wav")
 	_hb_release = _shot("handbrake_release.wav")
@@ -117,10 +127,16 @@ func update(speed: float, gear: int, handbrake_on: bool, delta: float, window_op
 	var bell := exp(-pow((v - 25.0) / 12.0, 2.0))
 	_buffet.volume_db = _to_db(fx * bell * db_to_linear(buffet_volume_db))
 	_road_open.volume_db = _to_db(fx * clampf(v / 30.0, 0.0, 1.0) * db_to_linear(road_open_volume_db))
-	# Manivelle : tant que l'ouverture change. Fondu court pour ne pas claquer.
+	# Manivelle : tant que l'ouverture change. Le fondu est ASYMETRIQUE. A la
+	# prise, franc : le mecanisme mord tout de suite, un fondu lent ferait
+	# glisser la manivelle avant d'accrocher. A la coupure, lent : le son est un
+	# train de chocs pointus, et le trancher net sur un choc s'entend comme un
+	# clic. 25/s dans les deux sens hachait le son des qu'on donnait de petits
+	# tours, et c'est une des sources du gresillement.
 	var moving := _last_open >= 0.0 and absf(window_open - _last_open) > 0.0001
 	_last_open = window_open
-	_crank_gain = lerpf(_crank_gain, 1.0 if moving else 0.0, clampf(delta * 25.0, 0.0, 1.0))
+	var gate_rate := 18.0 if moving else 7.0
+	_crank_gain = lerpf(_crank_gain, 1.0 if moving else 0.0, clampf(delta * gate_rate, 0.0, 1.0))
 	_crank.volume_db = _to_db(_crank_gain * db_to_linear(crank_volume_db))
 
 	# --- levier ---------------------------------------------------------------
@@ -145,9 +161,10 @@ func debug_line() -> String:
 
 # --------------------------------------------------------------------------
 
-func _loop(fname: String) -> AudioStreamPlayer:
+func _loop(fname: String, to_bus: String) -> AudioStreamPlayer:
 	var p := AudioStreamPlayer.new()
 	p.volume_db = -80.0
+	p.bus = to_bus
 	var path := DIR + fname
 	if ResourceLoader.exists(path):
 		var stream: AudioStreamWAV = load(path)

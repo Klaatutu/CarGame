@@ -18,9 +18,10 @@ Ouvrir le projet dans Godot 4.8 et appuyer sur F5.
 | Espace | frein à main (maintenu en roulant, verrouillé à l'arrêt) |
 | H | phares |
 | Souris | regarder autour |
+| **Clic droit maintenu** | **se pencher dans la direction du regard** (sauf arme en main : elle se lève) |
 | **Clic gauche maintenu** sur le rétroviseur ou un pare-soleil | **le placer** (regard bloqué) |
 | **Clic gauche maintenu** sur une manivelle de vitre | **tenir la poignée** (caméra libre) |
-| **E** / **A**, poignée en main | **ouvrir** / **fermer** la vitre |
+| **Molette ↓ / ↑**, poignée en main | **descendre** / **remonter** la vitre (la boîte ne bouge pas) |
 | F12 | capture d'écran |
 | Échap | libérer la souris |
 
@@ -96,6 +97,180 @@ tiendrait pas la voiture. Mesuré (`godot --path . -- hbtest`) :
 Le **pied droit** passe de l'accélérateur au frein avec son propre
 amortissement, et se soulève au passage. L'entrée de freinage passe de 0 à 1 en
 une frame : sans ça, le pied se téléporte d'une pédale à l'autre.
+
+## Tourner le volant
+
+Les mains ne sont plus soudées à 10 h 10. Elles **tiennent** la jante et la
+suivent au degré près ; quand une main arrive au bout de sa course, elle
+**lâche, passe au-dessus du volant et se repose plus loin** pendant que l'autre
+tient. C'est ce qui permet d'aller jusqu'aux 270° de `WHEEL_MAX_ANGLE` sans
+qu'un bras ait à faire trois quarts de tour — l'ancien suivi saturait les deux
+mains ensemble à 140° et la jante filait sous des paumes figées.
+
+Une seule règle gouverne l'ensemble : **une main ne lâche que si l'autre tient**.
+Quand la droite est au levier, à l'appui-tête, au frein à main ou qu'elle tient
+un objet, la gauche ne peut plus lâcher : la jante finit par filer sous sa paume
+(compression en tangente hyperbolique vers `GRIP_RESERVE`, 30°). L'ancien
+comportement n'a pas disparu, il est devenu le cas particulier où il se justifie.
+
+**Deux butées par main, pas une.** Le geste n'est pas symétrique : la main qui
+*tire* — la gauche qui descend vers 7 h quand on braque à gauche — travaille
+dans l'axe de son épaule et va loin (`GRIP_PULL`, 105°) ; celle qui *pousse*
+traverse devant le buste et est en bout de bras bien avant (`GRIP_PUSH`, 65°).
+C'est cette différence qui fait **alterner** les mains au lieu de les faire
+lâcher ensemble : celle qui pousse arrive en butée 40° de volant avant l'autre,
+et l'écart se conserve d'une prise à la suivante.
+
+Les deux chiffres sont **mesurés**. `-- wheeltest` imprime la portée
+épaule → poignet le long de la jante, en mètres :
+
+| angle de la main | −125° | −75° | −25° | 0 | +25° | +75° | +125° |
+|---|---|---|---|---|---|---|---|
+| main droite | 0,662 | 0,630 | 0,634 | **0,650** | 0,670 | 0,710 | 0,727 |
+
+Descendre de son côté ne coûte rien — la main droite est *plus près* de son
+épaule à 4 h (0,63 m) qu'à 10 h 10 (0,65 m) — tandis que traverser coûte 2 cm
+tous les 25°. C'est `GRIP_PUSH` qui borne cette traversée. En dessous de 65° la
+main lâcherait dans un virage de route ordinaire, ce qu'aucun conducteur ne
+fait ; au-dessus, l'avant-bras — **invisible**, le modèle n'a plus de bras —
+traverserait le buste sans que rien ne le montre à l'écran.
+
+**Il n'y a pas de rangement automatique.** Une main ne lâche que si elle y est
+forcée, c'est-à-dire au bout de sa course : volant immobile, elle reste
+**agrippée là où elle tient**, même de travers. C'est ce qu'on fait, et une main
+qui se replace toute seule pendant qu'on ne tourne pas se remarque
+immédiatement — un tic. Ce qui les ramène à 10 h 10 après une manœuvre n'est
+donc pas un rangement, c'est le volant qui rentre et leur file sous les paumes
+(voir plus bas), et il les y ramène tout seul.
+
+Une version intermédiaire rangeait les mains au bout de 0,6 s d'immobilité, avec
+deux seuils selon que le volant était droit ou tenu braqué. Elle a été retirée :
+même bien réglée, elle produisait un mouvement que rien ne demandait.
+
+Quatre pièges, tous trouvés par le banc et tous corrigés :
+
+- **Le saut au lâcher.** Une main qui attend son tour est bornée par la
+  compression ; partir de l'angle *brut* de la jante la faisait sauter d'un
+  quart de tour sur l'image du lâcher. On part d'où la main est **vue**.
+- **Les mains qui se traversent.** Elles se croisent forcément, c'est le geste :
+  seul le retrait hors du plan de la jante les sépare (`REGRIP_LIFT`, 85 mm, en
+  racine de sinus pour que la main se lève *d'un coup* et se repose doucement).
+  À 45 mm et en sinus nu, le banc les relevait à 16 mm l'une de l'autre.
+- **Se reposer sur l'autre main.** Pendant qu'une main traverse, l'autre
+  continue de descendre avec la jante : c'est sa position **d'arrivée** qu'il
+  faut dégager (`GRIP_SEPARATION`, 45°), pas celle qu'elle occupe au départ. Et
+  cette position passe par la même compression — une main bloquée en butée était
+  créditée d'une dérive qu'elle ne fait pas, on la croyait partie, et l'autre
+  venait se poser dessus. 5 mm au relevé.
+- **Le transfert de durée fixe.** À plein braquage il tenait la main suivante
+  bloquée 180 ms, pendant lesquelles le volant tournait de 85°. Le geste presse
+  donc le pas avec la vitesse de rotation (`REGRIP_TIME` 0,26 s → 0,13 s).
+
+Les doigts s'ouvrent au décollage et se referment à la repose, dans le même
+sinus que le retrait : une main qui se déplace poing fermé au-dessus du volant
+se voit tout de suite.
+
+### Le volant qui rentre tout seul
+
+Sortie de virage, on ne *ramène* pas le volant : **on desserre les doigts et on
+le laisse filer sous les paumes**, rendu au centre par le couple
+d'auto-alignement des roues. C'est ce que fait le conducteur maintenant, et ça
+ne s'invente pas dans `driver.gd` : `car.gd` sait seul faire la différence entre
+une jante qu'on tourne et une jante qui rentre, puisque c'est lui qui distingue
+l'entrée du joueur du rappel (`wheel_returning`, sous 2° de jante il n'y a plus
+rien qui file). Il l'écrit dans `driver.wheel_slip`, comme `interaction.gd`
+écrit `item_blend`.
+
+Pendant le glissement, la main **cesse de suivre la jante** et rentre à 10 h 10
+à son propre rythme (`SLIP_HOME`), sans rapport avec la vitesse de la jante —
+c'est exactement ce qui distingue les deux gestes. Son point de prise est recalé
+image par image, donc elle reprend le volant d'où elle est dès que le joueur y
+retouche.
+
+Effet de bord, et c'est le bon signe : le retour au centre ne demande plus
+**aucun** changement de prise. Avant, la jante entraînant les mains, il en
+fallait deux ou trois — les mains repartaient en arrière au lieu de rentrer.
+
+Mesuré, plein braquage puis touche relâchée : la jante parcourt **215°**, les
+mains **30°**, soit **14 %** du chemin ; les doigts se desserrent à **0,55** de
+fermeture, et les mains finissent à 10 h 10 à un degré près.
+
+### Une main prise : l'autre conduit à plat
+
+Une canette, une arme — la main libre ne peut plus enserrer la jante : elle **se
+pose à plat dessus et la fait tourner par appui**, du côté conducteur du volant,
+**dos de la main vers le joueur**, paume sur la jante, doigts détendus dans le
+prolongement de l'avant-bras. Un poing fermé, là, tiendrait la jante *et*
+l'objet.
+
+Piège de repère, et il retourne littéralement la main : `PALM_AWAY` est la
+normale **sortante** de la paume — c'est ainsi que `_open_grip` la pose sur un
+pare-soleil et que `held_offset` écarte l'objet tenu. L'envoyer sur l'axe côté
+conducteur mettait donc la paume face au joueur, le dos contre le volant, et la
+main passait de l'autre côté de la jante. C'est `-axis` qu'il faut viser.
+
+**Et la main accompagne la jante d'un bout à l'autre du braquage.** À plat, le
+poignet ne se tord pas et rien ne s'enroule autour du tube : les butées
+`GRIP_PULL`/`GRIP_PUSH`, qui ne valent que pour un poing fermé, sont élargies à
+toute la course du volant. La main suit donc les 270° au degré près au lieu de
+buter à mi-chemin — mesuré : **+272° de main pour un volant à +270°**.
+
+**Mais on ne conduit à plat que *pendant* qu'on tourne.** Le volant reposé, la
+main libre **referme les doigts sur la jante** et la tient, comme n'importe
+quelle main au volant : on ne reste pas la paume posée dessus à ne rien faire.
+**Les deux sens ne se ressemblent pas**, et c'est voulu :
+
+- **Se raccrocher est une question de temps.** `FLAT_GRAB_DELAY` (0,2 s) sans
+  que la jante bouge, et la main se referme. Le délai évite qu'elle ouvre et
+  referme entre deux corrections ; une demi-seconde, elle, se lisait comme une
+  hésitation — on referme la main sur un volant dès qu'on cesse de le tourner,
+  pas après réflexion. Mesuré, jante arrêtée net : **0,27 s**, fondu compris.
+- **S'ouvrir est une question de CHEMIN.** Une main posée sur un volant ne se
+  remet pas à plat parce qu'il a bougé : elle le fait quand le mouvement
+  s'installe, et une correction de trajectoire n'est pas un mouvement qui
+  s'installe. Il faut donc `FLAT_TURN_TRAVEL` (40°) de jante parcourus depuis
+  qu'elle s'est agrippée, et le compteur repart de zéro dès que la jante se tait
+  — sinon une suite de petites corrections finirait par l'ouvrir. Le fondu
+  d'ouverture est aussi plus lent que celui de fermeture
+  (`FLAT_OPEN_SMOOTH`) : on lâche une prise sans y penser, on la reprend d'un
+  coup.
+
+Réserve sur la mesure : le banc relève **124°** de jante avant l'ouverture, pour
+un seuil de 40. L'écart est du **débit d'images**, pas du réglage — sous le
+rendu complet la machine tombe à quelques images par seconde, et à 450°/s de
+braquage une seule image vaut déjà 50 à 100° de jante. C'est `FLAT_TURN_TRAVEL`
+qui fait foi ; monte-le si la main s'ouvre encore trop tôt à l'œil.
+
+Seule la **pose** change alors, jamais la place de la main : les butées restent
+celles de la main à plat tant que l'objet est en main. Les resserrer en même
+temps ramènerait la main de 272° à sa butée d'un coup, c'est-à-dire un saut d'un
+demi-tour de jante. Mesuré : en se raccrochant, elle bouge de **1,3°**.
+
+Cette pose rend gratuite une chose qui était une rustine : une main à plat n'a
+pas besoin de lâcher pour laisser filer la jante. C'est pour ça que le braquage
+complet à une main ne produit aucun changement de prise.
+
+La mesure ne dépend d'aucun état interne, elle se lit sur la transform de la
+main : `palm_tilt()` donne l'angle entre le **dos** de la main et l'axe du volant
+côté conducteur — **0°** à plat, 45° pour un poing refermé autour du tube,
+au-delà la main est retournée. Mesuré, paquet réellement pris (vraie visée, vrai
+clic) : **en tournant**, dos à **0°** et doigts à **0,12** de fermeture ;
+**volant reposé**, dos à **45°** et doigts à **1,00** — elle s'est raccrochée.
+
+Mesuré (`godot --path . -- wheeltest`), braquage complet dans les deux sens
+puis retour au centre :
+
+| | relevé |
+|---|---|
+| virage de route (volant à 50°) | **0 prise** — on ne lâche pas pour une correction |
+| braquage à fond (270°) | **2 prises**, alternées |
+| au moins une main sur la jante | **toujours** (minimum observé : 1) |
+| écart minimum entre les deux mains | **0,117 m** |
+| portée de la prise la plus tendue | **+0,056 m** sur la pose 10 h 10 (l'ancien suivi saturé : +0,08 m) |
+| main droite au levier, braquage à fond | **0 prise**, main gauche bornée à 135° |
+| volant rendu (rappel seul) | **0 prise** — la jante glisse, les mains font 10 % du chemin |
+| volant figé à 162°, 2,5 s | les mains bougent de **0,0°** — elles restent agrippées |
+| paquet en main, braquage à fond | **0 prise**, dos de la main à **0°** de l'axe, main à **+272°** |
 
 ## Prendre et reposer les objets
 
@@ -215,6 +390,55 @@ défaut donc sans effet sur le reste. Elle pulse lentement : dans le noir, un
 Banc d'essai : `godot --path . -- packtest` vise, prend, déplace et repose le
 paquet en injectant de vrais clics, et vérifie qu'il redevient attrapable.
 
+### Lancer
+
+**Clic molette**, et ce qu'on tient part **dans l'axe du regard** à 4,5 m/s.
+Poser vise une surface, montre un fantôme et fait faire tout un geste au bras ;
+lancer ne vise rien et est immédiat. C'est le même objet, ce n'est pas le même
+geste — on jette une canette sans regarder où elle tombe.
+
+L'objet part avec sa vitesse **en espace voiture**, là où il vit déjà : jeté
+vers le pare-brise à 170 km/h il traverse l'habitacle exactement comme à
+l'arrêt. La voiture ne le rattrape pas, elle l'emmène.
+
+Il **culbute** en vol, autour d'un axe perpendiculaire au lancer (un tour par
+seconde à la vitesse de consigne), puis se **remet d'aplomb** en se posant. Sans
+ça il garderait son inclinaison au sol et s'enfoncerait dans le siège : sa boîte
+de collision est alignée sur les axes, elle ne tourne pas avec lui. Il revient
+donc à la pose de repos du jeu, celle-là même que donne une dépose au viseur.
+
+**Le même bouton passe au point mort** (`car.gd`). Les deux ne se marchent pas
+dessus : `interaction.gd` est un *enfant* de la voiture dans l'arbre, et
+l'entrée non gérée remonte des feuilles vers la racine. Il consomme donc le clic
+quand une main est pleine, et le laisse descendre au levier quand elles sont
+vides.
+
+**L'habitacle était ouvert au-dessus de la ceinture de caisse.** Tant que les
+objets ne faisaient que tomber et glisser, personne n'y montait jamais. Un objet
+*lancé*, si : jeté vers le haut du pare-brise il passait par-dessus le tablier,
+sortait de la caisse, et le filet de sécurité le reposait sur le siège — une
+canette qui disparaît dans la vitre et réapparaît sur vos genoux. `cabin.gd`
+ferme maintenant le pare-brise (**trois marches** de 10 cm, il est incliné du
+bas de baie à 0,93 m au haut de baie à 1,28 m), le pavillon, la lunette arrière
+et les glaces latérales.
+
+Mesuré (`godot --path . -- throwtest`), paquet pris puis jeté au clic molette :
+
+| | |
+|---|---|
+| écart entre la vitesse de départ et le regard | **0,00°** |
+| vitesse de départ | **4,50 m/s** (consigne 4,50) |
+| rapport engagé avant le lancer | **intact** (le clic n'a pas débrayé) |
+| jeté droit dans le haut du pare-brise | monte à **1,29 m**, arrêté sous le pavillon (1,30) |
+| bond inexpliqué par la vitesse (= fuite) | **0,039 m** |
+| inclinaison une fois posé | **0,00°** de la verticale |
+| mains vides, même clic | **point mort** |
+
+L'écart mesuré est un **angle**, pas un point de chute : une vitesse de la bonne
+longueur mais tournée de quinze degrés donnerait un point d'arrivée
+parfaitement plausible dans l'habitacle, et un lancer qui part de travers, ce
+qui se voit du premier coup d'œil.
+
 ## Les rétroviseurs
 
 Les trois glaces — l'intérieure et les deux de portière — sont de **vrais
@@ -333,11 +557,29 @@ tige** (donc vers le joueur) et dépasse de **13 mm** sous la garniture.
 
 Une Civic de 1990 n'a pas de lève-vitres électriques : c'est **la manivelle**
 qu'on manipule. Vise-la sur la contre-porte et **maintiens le clic gauche** :
-la main saisit la poignée et y reste. **E** ouvre, **A** ferme, tant que tu tiens
-la touche. Lâche le clic et la main lâche la poignée — la vitre reste où elle en
-est, à mi-course si c'est là que tu t'es arrêté. **Trois tours** pour la course
-complète : ce que demande une vraie, et ça reste lisible ; un seul tour ferait
-jouet.
+la main saisit la poignée et y reste. **Roule ensuite la molette** — vers le bas
+la vitre descend, vers le haut elle remonte. Lâche le clic et la main lâche la
+poignée — la vitre reste où elle en est, à mi-course si c'est là que tu t'es
+arrêté. **Trois tours** pour la course complète : ce que demande une vraie, et ça
+reste lisible ; un seul tour ferait jouet.
+
+La molette plutôt qu'une touche tenue : c'est le seul geste de la souris qui soit
+**rotatif**, et il est déjà dans la main qui tient la poignée. On roule la
+molette comme on roulerait la manivelle, et la course suit le poignet cran par
+cran au lieu de défiler toute seule tant qu'une touche est enfoncée.
+
+Un cran vaut **0,15 de course** (`step`) : sept crans du haut en bas, la longueur
+d'un coup de molette continu, et assez fin pour s'arrêter sur une vitre
+entrouverte de deux doigts. Les crans ne sautent pas à la vitre, ils s'empilent
+et la manivelle les **rattrape** à `open_rate` (0,5 de course par seconde) — un
+coup de molette rapide donne une manivelle qui tourne, pas une glace qui se
+téléporte. Lâcher le clic **oublie** ce qui restait à rattraper, sinon la
+manivelle finirait sa course poignée lâchée.
+
+Le même cran **passe les rapports**. Les deux cohabitent comme le clic molette et
+le lancer : `interaction.gd` est enfant de `car.gd` dans l'arbre, il voit
+l'événement le premier et ne le consomme que la main *posée sur la poignée*.
+Ailleurs, le cran redescend jusqu'au levier.
 
 **La caméra reste libre**, contrairement au rétroviseur et aux pare-soleil. Ce
 n'est pas une incohérence : ceux-là, on les *regarde* en les réglant, donc bloquer
@@ -345,9 +587,6 @@ le regard est ce qui rend le geste possible. Une manivelle, au contraire, on la
 tourne **sans la regarder**, les yeux sur la route — la bloquer aurait retiré au
 geste ce qui en fait l'intérêt. La souris ne commande donc rien pendant ce
 temps-là, elle continue simplement de regarder autour.
-
-`A` et `E` sont mappées en *physical keycode*, comme le reste : sur AZERTY ce
-sont bien les touches marquées A et E ; sur QWERTY, ce sont Q et E.
 
 `cabin.gd` monte deux pivots par portière :
 
@@ -368,16 +607,19 @@ elles retrouvent les axes de la voiture.
 La course est de **26,5 cm**, la hauteur de la glace : baissée à fond, son bord
 supérieur passe sous l'enjoliveur de ceinture et elle a disparu dans la portière.
 
-Vérifié (`godot --path . -- windowtest`), en injectant de vrais clics, touches
-et mouvements de souris : poignée en main, la tête tourne de **0,264 rad**
-pendant la manœuvre et la souris ne fait **rien** tourner ; `E` tenu donne
-**3,0 tours** de manivelle, la glace descend de **265 mm** et son haut passe à
-0,970 sous une ceinture à 0,998 ; les **deux** glaces bougent du même nombre de
-millimètres ; `A` la remonte exactement d'où elle vient.
+Vérifié (`godot --path . -- windowtest`), en injectant de vrais clics, crans de
+molette et mouvements de souris : poignée en main, la tête tourne de **0,264
+rad** pendant la manœuvre et la souris ne fait **rien** tourner ; huit crans vers
+le bas donnent **3,0 tours** de manivelle, la glace descend de **265 mm** et son
+haut passe à 0,970 sous une ceinture à 0,998 ; les **deux** glaces bougent du
+même nombre de millimètres ; huit crans vers le haut la remontent exactement d'où
+elle vient. La **boîte ne bouge pas** pendant ce temps-là, embrayage pourtant
+enfoncé : le cran s'arrête à la poignée.
 
-Le relâchement est vérifié **à mi-course**, pas vitre fermée : lâcher le clic à
-0,50 laisse la vitre à 0,50, et `E` appuyé ensuite ne fait plus rien. Vérifier ça
-en butée n'aurait rien prouvé.
+Le relâchement est vérifié **à mi-course**, pas vitre fermée ni course finie :
+six crans demandés, le clic lâché à 0,51 laisse la vitre à 0,51 — le reste des
+crans est oublié — et la molette ensuite ne lui fait plus rien. En butée, ou une
+fois la course rattrapée, il n'y aurait rien eu à prouver.
 
 ## Regarder derrière
 
@@ -405,6 +647,140 @@ la tête, on ne voit que de la tôle.
 Réglages dans [car.gd](scripts/car.gd) : `HEAD_BACK`, `HEAD_OUT`,
 `look_back_start`, `lean_out_start`, `yaw_limit_left`, `yaw_limit_right`, et
 `TWIST_MAX` dans [driver.gd](scripts/driver.gd) pour la torsion du buste.
+
+## Se pencher
+
+Se retourner et sortir la tête sont **déduits** de l'angle du regard. Se pencher
+est le seul mouvement que le joueur **décide** : **clic droit maintenu**, et le
+buste part dans la direction de la caméra.
+
+Un seul geste, trois usages : se pencher au pare-brise à un feu, fouiller devant
+le siège passager, et aller chercher ce qui traîne sur la banquette arrière.
+
+**On avance exactement le long du regard.** C'est ce qui rend le geste
+pilotable : ce qu'on a sous le viseur y reste, puisqu'on se déplace sur son
+rayon. La première version n'en prenait que la composante horizontale, la
+verticale réduite — et le buste passait *au-dessus* de ce qu'il visait. Une
+canette posée à l'arrière finissait sous le menton, à 70° de plongée pour 62° de
+débattement de nuque : plus moyen de la viser, donc plus moyen de la prendre.
+
+**La longueur est constante** (`lean_reach`). Une version l'écourtait le long du
+regard pour s'arrêter court de la première surface rencontrée : très bien tant
+qu'on ne bouge pas la tête, catastrophique dès qu'on tourne. En balayant la vue,
+la distance à la surface visée change en permanence — la planche est à 90 cm, la
+console à 60, le vide à l'infini — donc la longueur du mouvement avec elle. La
+caméra avançait et reculait le long de son propre axe : **un zoom**, et rien
+d'autre.
+
+Deux garde-fous, tous deux positionnels :
+
+- `lean_clear` (0,25 m) — de combien la tête reste **au-dessus** de ce qui est
+  posé sous elle (assises, banquette, console, planche, plancher). Une
+  correction verticale : on remonte la tête, on ne raccourcit pas le mouvement.
+- `LEAN_MIN`/`LEAN_MAX` — la boîte de l'habitacle, plus `LEAN_WHEEL_Y` :
+  au-dessus du volant, la tête ne descend pas sous sa jante. En fondu, pas par
+  un test franc, sinon la caméra sauterait de 15 cm en passant la console. La
+  boîte est volontairement large — dès qu'une borne mord, elle pousse la tête
+  *hors* du rayon du regard et casse la propriété ci-dessus.
+
+Le corps suit : le buste à 85 % (le cou fait le reste), le bassin à 25 % — on
+glisse sur l'assise, on ne quitte pas le siège. Les pieds restent aux pédales.
+
+**Les mains ne quittent pas le volant** — elles changent de prise *dessus*
+(« Tourner le volant »), mais ne vont se retenir nulle part ailleurs. Une
+version l'a essayé — passé un
+certain débattement, la main lâchait la jante pour se retenir à la console ou au
+dossier passager, au motif que l'épaule s'en éloigne. Mais on *conduit* : une
+main qui quitte le volant dès qu'on se penche coûte plus cher que les quelques
+centimètres d'allonge qu'elle économise. Et le prix mesuré s'est révélé nul —
+`-- leantest` relève **×1.000 d'allongement sur les deux avant-bras** dans
+toutes les poses, parce que le buste emmène les épaules avec la tête au lieu de
+la laisser partir seule.
+
+### S'enrouler autour du siège
+
+Se tourner franchement à droite **et plonger le regard**, c'est aller chercher
+quelque chose derrière soi. Le buste quitte alors le dossier **de lui-même** —
+pas besoin du clic droit, c'est le geste qui déclenche (`wrap_yaw` 105°,
+`wrap_pitch` 12°). La plongée compte autant que le lacet : on se retourne *aussi*
+pour reculer, plein arrière mais le regard à l'horizontale, et la tête ne doit
+surtout pas partir se glisser entre les sièges à ce moment-là.
+
+On ne se vrille pas sur place, on **contourne le dossier**.
+
+**L'enroulement vise une pose fixe** (`HEAD_WRAP`), et c'est tout l'intérêt.
+Il est déclenché par la rotation de la tête ; s'il déplaçait la tête *le long du
+regard* comme le fait le clic droit, tourner ferait avancer et reculer la caméra
+sur son propre axe — un zoom. Une fois la place prise, entre les deux dossiers,
+**tourner la tête ne déplace plus rien** : `-- leantest` balaie toute la
+banquette et relève **0 mm** de déplacement. On regarde autour de soi depuis une
+place qu'on a prise, comme quand on s'est vraiment retourné dans une voiture.
+
+Les marges de relâchement (`WRAP_YAW_RELEASE` 55°, `WRAP_PITCH_RELEASE` 25°) sont
+larges, et pas par prudence : s'enrouler déplace la tête d'un demi-mètre, ce qui
+change de plusieurs dizaines de degrés le relevé de ce qu'on regarde. Une canette
+visée à 123° depuis le siège n'est plus qu'à 68° une fois entre les dossiers.
+Avec une marge étroite, la suivre des yeux faisait sortir de la zone, donc
+revenir au siège, donc la renvoyer à 123° : le buste faisait la navette et
+l'objet devenait inattrapable. On s'enroule sur un geste franc, on se déroule
+quand on revient vers l'avant ou qu'on relève les yeux — pas entre les deux.
+
+Le clic droit garde son rôle : c'est lui qui penche vers l'**avant** (boîte à
+gants, plancher), là où l'enroulement ne se déclenche pas.
+
+- `TWIST_MAX_LEAN` — 95° de torsion contre 40° assis. C'est le chiffre qui fait
+  passer l'épaule droite *derrière* le plan du dossier (z 0,53) au lieu de la
+  laisser coincée devant, où le bras bute dessus.
+- `SPINE_WRAP` — l'axe du mouvement recule de 0,44 à 0,56, vers le dossier. Sans
+  ce recul, l'épaule tourne autour d'un axe placé *devant* le dossier et revient
+  vers l'avant au lieu de passer derrière.
+
+Les deux conditions comptent : se retourner seul garde le dos calé contre le
+dossier — ce qui est justement ce qui empêche de s'enrouler ; se pencher seul,
+vers l'avant, n'a aucune raison de déplacer l'axe. Le mélange est
+`look_back × lean_amt`.
+
+Mesuré, enroulé : **épaule droite à z = 0,80 à 1,07** selon l'angle, largement
+derrière le dossier (0,53), et la canette arrière à **0,48 m** de cette épaule
+pour 0,58 m de bras — attrapée **sans toucher au clic droit**.
+
+### Ce que ça débloque : la banquette arrière
+
+Assis, une canette posée à l'arrière est à **0,78 m de l'épaule pour 0,58 m de
+bras**. Le geste existait — mais `_set_bone` allongeait l'avant-bras pour arriver
+au bout, et un bras de gorille se voit immédiatement. Penché, la même canette est
+à **0,24 m** : elle se prend pour de bon, avant-bras au repos.
+
+Trois réglages accompagnent le mouvement :
+
+- `REACH_LEAN_OFF_SEAT` (0,30 contre 0,13 assis) — déjà penché, le dos a quitté
+  le dossier : le buste est en porte-à-faux, libre d'aller chercher les derniers
+  centimètres.
+- `lean_yaw_bonus` (+30°, soit 190°) — les 160° assis sont la limite d'un dos
+  calé contre son dossier. Il s'applique **des deux côtés**, et pas par symétrie
+  décorative : la direction du regard est un seul nombre, et les deux butées en
+  découpent un intervalle. Tant qu'il ne couvre pas le tour complet, il reste un
+  secteur — juste derrière — qu'on ne peut atteindre par aucun des deux côtés
+  alors qu'il est physiquement devant les yeux.
+- `pitch_limit` 70° et non 62° — enroulé, on est *au-dessus* de ce qu'on va
+  chercher et le regard y plonge de plus de 60°. À 62, une canette derrière son
+  propre siège demandait 63° : un de trop, et elle devenait impossible à viser
+  donc à prendre.
+
+Banc d'essai : `-- leantest`, **avec une fenêtre** (se pencher demande la souris
+capturée, que `--headless` ne fournit pas). Il mesure épaule → objet assis puis
+penché, l'allongement des deux avant-bras, la position de l'épaule droite par
+rapport au dossier, vérifie que la tête reste dans la caisse, et **balaie le
+regard enroulé pour contrôler que la caméra ne bouge pas** — c'est le test
+anti-zoom, seuil 20 mm sur l'axe du regard.
+
+Réserve honnête : sa boucle de visée ne se cale pas sur ce qui est pratiquement
+**plein arrière**. À un demi-tour de là, le lacet requis bascule d'un bord à
+l'autre pour quelques centimètres de tête, et le banc part du mauvais côté. Ce
+qu'il établit sur ces points-là, c'est la **pose** — portée, enroulement,
+allongement — et elle est bonne. La *prise* n'y est prouvée que pour l'arrière
+côté passager, où elle passe de bout en bout. Une souris n'a pas cette
+discontinuité, mais ça reste à confirmer manette en main.
 
 ## Le son du moteur
 
@@ -661,7 +1037,9 @@ d'asset restent disponibles via `civic_hand.arm_part()` et `driver.gd` les
 anime s'ils sont présents dans le `.glb`). La texture est embarquée dans le
 `.glb` et filtrée en « nearest » par `driver.gd`. Le buste n'a ni cou ni
 tête : la caméra est à leur place.
-Mains à 10 h 10 (`GRIP_ANGLE`). Un objet tenu ne fixe plus un angle de main :
+Mains à 10 h 10 (`GRIP_ANGLE`) — position de *repos* : elles la quittent dès
+qu'on braque et s'enchaînent sur la jante, voir « Tourner le volant ». Un objet
+tenu ne fixe plus un angle de main :
 `_aligned_grip()` oriente la main d'après le coude (poignet vers le coude,
 pouce en haut) et l'objet se couche sur l'axe de prise du poing.
 
@@ -774,6 +1152,15 @@ avant) et `18_police_exterieur.png` (de côté, sous ses gyrophares et nos phare
   doit rester au-dessus du pire cas de conduite (frein + frein moteur, 20,4 m/s²)
   et sous le plafond de `frame_accel` dans `car.gd` (60), sinon plus rien ne peut
   décrocher.
+- **Prises sur le volant** — `driver.gd` : `GRIP_PULL` et `GRIP_PUSH` (jusqu'où
+  une main suit la jante avant de lâcher, en tirant et en poussant),
+  `REGRIP_TIME` / `REGRIP_LIFT` (durée et hauteur du passage de main),
+  `GRIP_SEPARATION` (écart minimum entre les deux mains),
+  `SLIP_HOME` / `SLIP_OPEN` (volant rendu : vitesse de retour des mains et
+  desserrage des doigts), `PALM_LIFT` / `FLAT_CLOSE` (pose à plat, une main
+  prise).
+  Baisser `GRIP_PUSH` fait lâcher dans des virages ordinaires ; le monter fait
+  traverser un avant-bras qu'on ne voit pas. `-- wheeltest` mesure les deux.
 - **Position de conduite** — `driver.gd` : `SHOULDER_L/R`, `SPINE`, `HIP_L/R`,
   `UPPER_ARM` + `FOREARM`. Attention : si le volant est plus loin de l'épaule
   que `UPPER_ARM + FOREARM`, `_solve_elbow` bute en butée et `_set_bone` étire
@@ -845,7 +1232,9 @@ l'essayer (voir l'entête du fichier).
 godot --path . -- shot
 ```
 
-Sept autres bancs d'essai en ligne de commande :
+Autres bancs d'essai en ligne de commande, dont `-- wheeltest` (enchaînement de
+prises sur le volant : une main tient toujours, les mains ne se traversent pas,
+aucune ne va chercher plus loin que le bras) :
 `-- geartest` (vitesse maxi par rapport et 0-100), `-- hbtest` (frein à main :
 bascule, filtrage des répétitions clavier, efficacité), `-- audiotest` (son du
 moteur), `-- packtest` (prise, dépose, et ce qui reste en place en accélérant,
@@ -853,7 +1242,9 @@ en virage, au freinage et au choc) , `-- mirrortest` (réglage du rétroviseur :
 regard bloqué, glace orientée, caméra virtuelle qui suit) et `-- visortest`
 (pare-soleil : déployé sous la ligne des yeux, rangé à plat vers le joueur et
 non enterré dans la garniture) et `-- windowtest` (vitre : manivelle qui tourne,
-glace qui disparaît sous la ceinture, et les deux panneaux qui suivent). Ils injectent de vrais
+glace qui disparaît sous la ceinture, et les deux panneaux qui suivent) et
+`-- throwtest` (lancer : départ dans l'axe du regard, clic molette qui ne
+débraye pas, objet qui reste dans la caisse et se repose d'aplomb). Ils injectent de vrais
 événements d'entrée, ils ne rejouent pas la logique en double.
 
 Roule 2 secondes puis écrit plusieurs images dans

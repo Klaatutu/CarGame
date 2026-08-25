@@ -55,6 +55,10 @@ const DIR := "res://assets/audio/engine/"
 
 var idle_rpm := 850.0
 var redline_rpm := 6800.0
+## Bus des lectures. Le moteur est DEHORS : car.gd l'envoie sur le bus de
+## l'habitacle, qui porte le passe-bas de la vitre et l'attenuation de la
+## caisse. A poser avant l'entree dans l'arbre, _ready() cree les lectures.
+var bus := "Master"
 
 var _points: Array[float] = []
 var _on: Array[AudioStreamPlayer] = []
@@ -229,6 +233,7 @@ func _make_player(path: String) -> AudioStreamPlayer:
 	var p := AudioStreamPlayer.new()
 	p.stream = stream
 	p.volume_db = -80.0
+	p.bus = bus
 	add_child(p)
 	return p
 

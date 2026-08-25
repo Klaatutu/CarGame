@@ -11,8 +11,18 @@ extends Node3D
 ##
 ##   - clic gauche MAINTENU : la main saisit la poignee et y reste ;
 ##   - la camera reste LIBRE, on continue de regarder ou on veut ;
-##   - E ouvre, A ferme, tant qu'on tient la touche ;
+##   - la MOLETTE tourne la manivelle : vers le bas la vitre descend, vers le
+##     haut elle remonte ;
 ##   - relacher le clic lache la poignee, la vitre reste ou elle en est.
+##
+## La molette plutot qu'une touche tenue : c'est le seul geste de la souris qui
+## soit ROTATIF, et il est deja dans la main qui tient la poignee. On roule la
+## molette comme on roule la manivelle, la course suit le poignet cran par cran
+## au lieu de defiler toute seule tant qu'une touche est enfoncee.
+##
+## Les crans ne sautent pas a la vitre : ils s'empilent dans `_pending` et la
+## manivelle les rembobine a `open_rate`. Un coup de molette rapide donne donc
+## une manivelle qui tourne, pas une glace qui se teleporte.
 ##
 ## Le noeud se place SUR LA POIGNEE de la manivelle : c'est ce qu'on vise et
 ## c'est la que la main vient se poser.
@@ -26,9 +36,13 @@ extends Node3D
 ## Tours de manivelle pour la course complete. Trois : c'est ce que demande une
 ## vraie, et ca reste lisible a l'oeil. Un seul tour ferait jouet.
 @export var turns := 3.0
-## Course par seconde de touche tenue. 0.5 : deux secondes du haut en bas, soit
-## une vitre et demie de tour par seconde. C'est le rythme ou on tourne une
-## manivelle sans forcer.
+## Course gagnee par cran de molette. 0.15 : sept crans du haut en bas, la
+## longueur d'un coup de molette continu. Assez fin, aussi, pour s'arreter sur
+## une vitre entrouverte de deux doigts.
+@export var step := 0.15
+## Course par seconde, la vitesse a laquelle la manivelle rattrape les crans.
+## 0.5 : deux secondes du haut en bas, soit une vitre et demie de tour par
+## seconde. C'est le rythme ou on tourne une manivelle sans forcer.
 @export var open_rate := 0.5
 ## Surbrillance quand on vise la manivelle.
 @export var highlight_color := Color(1.0, 0.62, 0.30)
@@ -47,6 +61,11 @@ var _mats: Array[BaseMaterial3D] = []
 var _glow := 0.0
 var _pulse := 0.0
 var _want := false
+## Course qu'il reste a rattraper, signee. Les crans de molette s'y empilent,
+## `wind()` les rembobine image par image. Bornee pour que `open + _pending`
+## reste dans [0, 1] : sinon molette a fond en butee, et il faudrait ensuite
+## rembobiner tout le surplus avant que la vitre reparte dans l'autre sens.
+var _pending := 0.0
 
 
 ## `crank` porte bras et bouton, `panes` porte les deux glaces, `knob` est le
@@ -94,17 +113,34 @@ func _process(delta: float) -> void:
 
 # --- interface pour interaction.gd -----------------------------------------
 
-## Un tour de manivelle. `dir` vaut +1 (on ouvre), -1 (on ferme) ou 0.
-## Appele chaque image par interaction.gd tant que la poignee est tenue.
-func wind(dir: float, delta: float) -> void:
-	if dir == 0.0:
+## Un cran de molette. `notches` vaut +1 (on descend la vitre) ou -1 (on la
+## remonte). Appele par interaction.gd tant que la poignee est tenue.
+##
+## Ne bouge rien : il inscrit seulement de la course a faire. C'est `wind()` qui
+## la donne a la manivelle, et c'est ce qui separe la vitesse du GESTE (des crans
+## envoyes aussi vite que le poignet veut) de celle du MECANISME.
+func crank(notches: float) -> void:
+	_pending = clampf(_pending + notches * step, -open, 1.0 - open)
+
+
+## Rattrape ce que les crans ont demande. Appele chaque image par interaction.gd
+## tant que la poignee est tenue.
+func wind(delta: float) -> void:
+	if is_zero_approx(_pending):
 		return
-	var was := open
-	open = clampf(open + dir * open_rate * delta, 0.0, 1.0)
-	if open == was:
-		return                     # en butee : la manivelle ne tourne plus
+	var d := clampf(_pending, -open_rate * delta, open_rate * delta)
+	_pending -= d
+	open = clampf(open + d, 0.0, 1.0)
 	_crank.rotation.x = open * turns * TAU * side
 	_panes.position.y = -travel * open
+
+
+## La main lache la poignee. Ce qui restait a rattraper est OUBLIE : sans ca la
+## manivelle finirait de tourner toute seule, poignee lachee, ou pire reprendrait
+## sa course a la prochaine prise — la vitre bougerait alors avant qu'on l'ait
+## demande.
+func release_grip() -> void:
+	_pending = 0.0
 
 
 ## La main se pose sur la POIGNEE, qui tourne : elle la suit donc au lieu de
@@ -119,11 +155,15 @@ func grip_hint() -> String:
 
 
 func held_hint() -> String:
-	if open <= 0.0:
-		return "E : ouvrir"
-	if open >= 1.0:
-		return "A : fermer"
-	return "E : ouvrir     A : fermer"
+	# La consigne, pas la position : molette a fond puis indice relu aussitot, la
+	# vitre est encore en haut alors qu'elle a deja toute sa course a faire.
+	# C'est `open + _pending` qui dit ou elle VA, donc quel cran a encore un sens.
+	var goal := open + _pending
+	if goal <= 0.0:
+		return "Molette bas : descendre la vitre"
+	if goal >= 1.0:
+		return "Molette haut : remonter la vitre"
+	return "Molette bas : descendre     molette haut : remonter"
 
 
 func set_highlight(want: bool) -> void:

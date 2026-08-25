@@ -49,10 +49,35 @@ const CAN_SPAWNS := [
 	["cariboon", true, Vector3(0.32, 0.42, 0.72), 70.0],
 ]
 
+## Le revolver (revolver.gd), sur l'assise passager, dans le creux laisse entre
+## le paquet (z 0.10) et la canette (z 0.30). Couche en travers, bouche vers la
+## portiere passager : ni vers le conducteur, ni vers le pare-brise.
+const REVOLVER_SPAWN := Vector3(0.40, 0.62, 0.20)
+const REVOLVER_YAW := -95.0
+
 const SEAT_X := -0.33
 ## Facteur applique aux albedos du .glb pour les ramener dans la palette de nuit.
 const INTERIOR_DIM := 0.62
 const EXTERIOR_DIM := 0.85
+## Nom du materiau de vitrage dans les DEUX .glb (assets/blender/civic_materials.py).
+## Les glaces de retroviseur sont en chrome, le verre de compteur et celui des
+## phares ont chacun le leur : aucun ne porte ce nom, aucun n'est touche.
+const GLASS_MATERIAL := "CIV_Window_Glass"
+## Ce que la glace RETIENT de la lumiere qui la traverse. Chaque baie est vitree
+## deux fois — la glace de l'habitacle double celle de la carrosserie — donc le
+## paysage est attenue deux fois : 0,04 par glace, soit 8 % en tout. C'est le
+## seul nombre a bouger pour rendre le vitrage plus ou moins present.
+const GLASS_ALPHA := 0.04
+## Teinte PROPRE de la glace, celle qu'elle ajoute par-dessus le paysage.
+##
+## Le .glb la sort presque BLANCHE (0,88 0,92 0,95). Eclairee par le plafonnier
+## et le retour des phares, une surface blanche se comporte en depoli laiteux :
+## mesure faite, elle ajoutait a elle seule +16 niveaux de luminance sur ce qu'on
+## voit au travers (36 au lieu de 20) et rabotait le contraste de 17 a 14,6 —
+## d'ou la route grise et les arbres delaves. Une vitre n'a pas de couleur a
+## elle : au quasi-noir elle ne delave plus rien, et c'est le reflet qui la rend
+## visible. Ne pas remonter ces trois valeurs sans re-tirer `-- shot`.
+const GLASS_TINT := Color(0.02, 0.025, 0.035)
 ## Braquage maxi des roues avant, en degres.
 const WHEEL_STEER_MAX := 30.0
 ## Roues du modele exterieur : nom -> [cote (-1 gauche / +1 droite), directrice].
@@ -132,6 +157,37 @@ const TACHO_MAX_RPM := 8000.0
 var surfaces: Array = []
 ## Boites pleines de l'habitacle, en espace voiture (collision des objets).
 var solids: Array = []
+
+## COQUE DE L'HABITACLE : le volume dont un objet ne sort JAMAIS.
+##
+## Les `solids` ci-dessus sont du MOBILIER — sieges, planche, console, portieres.
+## Ils donnent les bons rebonds, mais ils ne ferment rien : c'est une dizaine de
+## boites posees cote a cote, et entre elles il reste des fentes (sous la
+## portiere, devant le tablier, au bord du plancher). Tant que les objets se
+## contentaient de tomber et de glisser, aucun n'allait les chercher.
+##
+## Un objet LANCE, si. Sur un balayage de toutes les directions de lancer, deux
+## sur trois trouvaient une fente, sortaient de la caisse, et le filet de
+## securite de prop.gd les ramenait a leur point de depart : "l'objet disparait
+## et reapparait au meme endroit".
+##
+## D'ou cette coque, testee EN DERNIER et pas comme les autres : les solides
+## repoussent l'objet DEHORS, la coque le retient DEDANS. Une contrainte qui
+## borne, pas un recouvrement a detecter — elle ne peut donc pas fuir, quels que
+## soient la vitesse, le pas de temps ou l'angle. Ajouter du mobilier ne la
+## rouvre pas.
+##
+## Ses faces sont celles du mobilier qui les borde, au millimetre : dessus du
+## plancher (0,35), dessous du pavillon (1,30), faces internes des portieres
+## (0,76), du tablier (-0,92) et du fond de coffre (1,43). Un objet arrete par
+## la coque s'arrete donc exactement la ou la geometrie visible l'arreterait,
+## et le joueur ne voit pas la difference : il voit le plancher.
+##
+## Le pare-brise est INCLINE : il reste fait de marches dans `solids`, qui
+## renvoient l'objet selon la bonne pente. La coque n'est la que derriere elles,
+## au plan du tablier, pour le cas ou un lancer rapide passerait entre deux.
+const HULL_MIN := Vector3(-0.76, 0.35, -0.92)
+const HULL_MAX := Vector3(0.76, 1.30, 1.43)
 
 ## Pivots exposes a driver.gd.
 var wheel_tilt: Node3D            # STR_Root, deja incline de 68 degres
@@ -392,6 +448,28 @@ func _build_walls() -> void:
 	for x in [SEAT_X, -SEAT_X]:
 		_solid(Vector3(0.48, 0.55, 0.10), Vector3(x, 0.72, 0.58))    # dossiers
 
+	# Au-dessus de la ceinture de caisse, l'habitacle etait OUVERT. Tant que les
+	# objets ne faisaient que tomber et glisser, personne n'y montait jamais.
+	#
+	# Un objet LANCE, si (interaction.gd, clic molette) : jete vers le haut du
+	# pare-brise il passait par-dessus le tablier, sortait de la caisse, et le
+	# filet de securite de prop.gd le ramenait sur le siege. Une canette qui
+	# disparait dans la vitre et reapparait sur vos genoux.
+	#
+	# Le pare-brise est INCLINE — bas de caisse a (0.93, -0.92), haut de baie a
+	# (1.28, -0.34). Trois marches de 10 cm le ferment au centimetre pres, ce
+	# qui est plus fin que le rebond qu'on y voit.
+	_solid(Vector3(1.52, 0.10, 0.06), Vector3(0.0, 1.05, -0.72))     # pare-brise, bas
+	_solid(Vector3(1.52, 0.10, 0.06), Vector3(0.0, 1.15, -0.56))     # pare-brise, milieu
+	_solid(Vector3(1.52, 0.10, 0.06), Vector3(0.0, 1.25, -0.39))     # pare-brise, haut
+	# Le pavillon deborde vers l'avant au-dessus du pare-brise : la ou il n'y a
+	# plus de caisse, il n'y a plus rien a heurter non plus, et un objet monte
+	# tout droit s'echapperait par la derniere marche.
+	_solid(Vector3(1.52, 0.06, 1.86), Vector3(0.0, 1.33, 0.13))      # pavillon
+	_solid(Vector3(1.52, 0.10, 0.37), Vector3(0.0, 1.25, 1.245))     # lunette arriere
+	for x in [-0.79, 0.79]:
+		_solid(Vector3(0.06, 0.30, 3.00), Vector3(x, 1.15, 0.20))    # glaces laterales
+
 
 ## Une surface horizontale : on en garde le dessus pour la visee analytique, et
 ## on lui donne un corps pour que les objets s'y posent vraiment.
@@ -581,9 +659,26 @@ func _dim(n: Node, factor: float, cache: Dictionary) -> void:
 				if not cache.has(src):
 					var copy := src.duplicate()
 					if copy is BaseMaterial3D:
-						var c: Color = (copy as BaseMaterial3D).albedo_color
-						(copy as BaseMaterial3D).albedo_color = Color(
-							c.r * factor, c.g * factor, c.b * factor, c.a)
+						var mine := copy as BaseMaterial3D
+						var c: Color = mine.albedo_color
+						if src.resource_name == GLASS_MATERIAL:
+							# Une vitre ne se rabat pas sur la palette de nuit :
+							# elle n'a pas de couleur a elle, elle laisse passer
+							# celle de ce qu'il y a derriere. On lui donne donc sa
+							# teinte propre au lieu d'assombrir la sienne.
+							mine.albedo_color = Color(
+								GLASS_TINT.r, GLASS_TINT.g, GLASS_TINT.b, GLASS_ALPHA)
+							# En melange normal, Godot multiplie TOUT le rendu de la
+							# surface — reflet compris — par l'alpha : une vitre
+							# transparente perdait donc 96 % de ses reflets et
+							# devenait terne. En alpha premultiplie le fond est
+							# attenue par l'alpha mais la lumiere de la vitre s'AJOUTE
+							# a pleine force. C'est ce que fait une vraie glace :
+							# elle transmet presque tout et pose son reflet dessus.
+							mine.blend_mode = BaseMaterial3D.BLEND_MODE_PREMULT_ALPHA
+						else:
+							mine.albedo_color = Color(
+								c.r * factor, c.g * factor, c.b * factor, c.a)
 					cache[src] = copy
 				mi.set_surface_override_material(s, cache[src])
 	for c in n.get_children():

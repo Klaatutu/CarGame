@@ -7,16 +7,49 @@ extends Node3D
 const CarScript := preload("res://scripts/car.gd")
 const RoadScript := preload("res://scripts/road.gd")
 const Retro := preload("res://scripts/retro.gd")
+const DriverScript := preload("res://scripts/driver.gd")
 
 @export_group("Ambiance")
 ## Densite du brouillard : plus c'est haut, moins on voit loin.
 @export var fog_density := 0.030
 @export var volumetric := true
-@export var moon_energy := 0.05
+## Le clair de lune pose sur le decor.
+##
+## C'etait 0,05 quand la lune etait a 52 degres de hauteur. A 9 degres le rayon
+## est rasant : le sol ne recoit plus que sin(9) = 0,16 de l'energie au lieu de
+## 0,79, tandis qu'un tronc, une face verticale tournee vers elle, en prend 0,99
+## au lieu de 0,62. Aucune valeur ne peut donc rendre exactement la nuit d'avant
+## — a 0,15 le sol est un peu plus sombre qu'il ne l'etait et les troncs, eux,
+## se detachent nettement. C'est ce que fait une lune basse : elle rase.
+## Premier bouton a baisser si la nuit parait trop claire.
+@export var moon_energy := 0.15
+## Hauteur de la lune au-dessus de l'horizon, en degres.
+##
+## Mesure faite au pare-brise (fov 50, 720 px) : le pavillon coupe le ciel a
+## 11 degres et la cime des sapins monte a 10 — il ne reste qu'une bande etroite
+## ou la lune se voit en roulant. Au-dela de 12 on ne la trouve plus qu'en se
+## penchant a la portiere ; a 9 elle est dans la bande, et les arbres qui
+## passent devant ne font que la voiler par intermittence.
+@export var moon_elevation := 9.0
+## Ecart avec l'axe de la route au depart, en degres. Negatif = a gauche.
+@export var moon_azimuth := -16.0
+## Diametre apparent, en degres. La vraie lune fait 0,5 : on triche d'un facteur
+## six, sinon elle ne pese rien a l'ecran une fois tramee — et surtout elle ne
+## se lit plus dans les trouees entre les sapins, qui la cachent la moitie du
+## temps. 3,2 degres font une lune basse de fin de nuit, un peu grosse.
+@export var moon_apparent_size := 3.2
+
+# Dans les 400 m du plan lointain de la camera, et bien au-dela du decor.
+const MOON_DISTANCE := 260.0
+# Le quad est plus large que le disque : le surplus loge le halo. A 3.6 le halo
+# s'arretait net et faisait une boule de brume posee sur le ciel ; il lui faut
+# de la place pour mourir loin du limbe.
+const MOON_HALO_RATIO := 6.0
 
 var car
 var road
 var _ground: MeshInstance3D
+var _moon: Node3D
 var _env: Environment
 var _auto_shot := -1
 
@@ -24,6 +57,7 @@ var _auto_shot := -1
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	_build_environment()
+	_build_moon()
 	_build_ground()
 	_build_dither_overlay()
 
@@ -54,12 +88,29 @@ func _ready() -> void:
 		_visor_test()
 	elif "windowtest" in OS.get_cmdline_user_args():
 		_window_test()
+	elif "revolvertest" in OS.get_cmdline_user_args():
+		_revolver_test()
+	elif "leantest" in OS.get_cmdline_user_args():
+		_lean_test()
+	elif "wheeltest" in OS.get_cmdline_user_args():
+		_wheel_test()
+	elif "wraptest" in OS.get_cmdline_user_args():
+		_wrap_test()
+	elif "moontest" in OS.get_cmdline_user_args():
+		_moon_test()
+	elif "throwtest" in OS.get_cmdline_user_args():
+		_throw_test()
 
 
 func _process(_delta: float) -> void:
 	# Le sol suit la voiture : on ne voit jamais son bord dans le brouillard.
 	if is_instance_valid(car):
 		_ground.global_position = Vector3(car.global_position.x, -0.04, car.global_position.z)
+		# La lune suit aussi, mais en translation seulement : son orientation
+		# reste celle du monde. On ne s'en rapproche donc jamais (pas de
+		# parallaxe a 260 m), et la route serpente librement dessous — elle
+		# passe devant, puis sur le cote, puis dans le retroviseur.
+		_moon.global_position = Vector3(car.global_position.x, 0.0, car.global_position.z)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -298,11 +349,20 @@ func _window_test() -> void:
 	print("  RIEN N'A TOURNE   : %s   (la souris ne commande pas la manivelle)" % [
 		absf(win._crank.rotation.x - crank0) < 0.0001])
 
-	# E, tenu : la vitre descend.
-	Input.action_press("crank_open")
+	# Le cran ne doit pas descendre au levier tant que la poignee est tenue. On
+	# DEBRAYE avant de le verifier : pedale relevee la boite refuserait de toute
+	# facon, et un rapport inchange ne prouverait rien.
+	await _act("clutch", true)
+	var gear0: int = car.gear
+
+	# Molette vers le bas : la vitre descend. Huit crans a 0,15 couvrent la
+	# course entiere, et on laisse a la manivelle le temps de les rattraper —
+	# elle ne saute pas a la butee, elle y va a `open_rate`.
+	await _wheel(8, MOUSE_BUTTON_WHEEL_DOWN)
 	await get_tree().create_timer(2.6).timeout
-	Input.action_release("crank_open")
-	await get_tree().process_frame
+	print("  BOITE INTACTE     : %s   (rapport %d, etait %d)" % [
+		car.gear == gear0, car.gear, gear0])
+	await _act("clutch", false)
 	print("baissee a fond      : ouverture=%.2f   manivelle %.1f tours" % [
 		win.open, absf(win._crank.rotation.x - crank0) / TAU])
 	print("  ELLE A TOURNE     : %s" % (absf(win._crank.rotation.x - crank0) > TAU))
@@ -322,35 +382,37 @@ func _window_test() -> void:
 	await get_tree().create_timer(0.4).timeout
 	await _shot("18_vitre_baissee.png")
 
-	# A, tenu : elle remonte exactement d'ou elle vient.
-	Input.action_press("crank_close")
+	# Molette vers le haut : elle remonte exactement d'ou elle vient.
+	await _wheel(8, MOUSE_BUTTON_WHEEL_UP)
 	await get_tree().create_timer(2.6).timeout
-	Input.action_release("crank_close")
-	await get_tree().process_frame
 	print("remontee            : ouverture=%.2f   haut y=%.3f" % [
 		win.open, _panel_box(inner).end.y])
 	print("  ELLE EST FERMEE   : %s" % (
 		absf(_panel_box(inner).end.y - up_in.end.y) < 0.002))
 
-	# On la rouvre a moitie, puis on LACHE LE CLIC en cours de route : la main
-	# doit lacher, et la vitre rester ou elle en est. Verifier le relachement
-	# vitre fermee ne prouverait rien, elle serait deja en butee.
-	Input.action_press("crank_open")
-	await get_tree().create_timer(1.0).timeout
-	Input.action_release("crank_open")
-	await get_tree().process_frame
-	var mid: float = win.open
+	# On la rouvre a fond, puis on LACHE LE CLIC EN COURS DE ROUTE : la main doit
+	# lacher, la vitre rester ou elle en est, et les crans pas encore rattrapes
+	# etre oublies. Verifier le relachement vitre fermee ne prouverait rien, elle
+	# serait deja en butee ; le verifier une fois la course finie non plus, il ne
+	# resterait rien a oublier. D'ou les 0,5 s : six crans demandes, un quart de
+	# la course faite.
+	await _wheel(6, MOUSE_BUTTON_WHEEL_DOWN)
+	await get_tree().create_timer(0.5).timeout
 	await _mouse(false)
-	await get_tree().create_timer(0.4).timeout
+	var mid: float = win.open
+	await get_tree().create_timer(0.6).timeout
 	print("clic relache a %.2f  : la main a lache=%s   ouverture=%.2f" % [
 		mid, inter._state == State_IDLE, win.open])
-	print("  ELLE RESTE LA     : %s" % (absf(win.open - mid) < 0.001))
+	print("  A MI-COURSE       : %s   (ni fermee ni en butee)" % (
+		mid > 0.02 and mid < 0.98))
+	print("  ELLE RESTE LA     : %s   (les crans en attente sont oublies)" % (
+		absf(win.open - mid) < 0.001))
 
-	# Et E ne doit plus rien faire : la poignee n'est plus en main.
-	Input.action_press("crank_open")
-	await get_tree().create_timer(0.8).timeout
-	Input.action_release("crank_open")
-	print("  E SANS LA POIGNEE : %s   (ouverture toujours %.2f)" % [
+	# Et la molette ne doit plus rien faire a la vitre : la poignee n'est plus en
+	# main, le cran est redescendu au levier de vitesses.
+	await _wheel(3, MOUSE_BUTTON_WHEEL_DOWN)
+	await get_tree().create_timer(0.5).timeout
+	print("  MOLETTE SANS MAIN : %s   (ouverture toujours %.2f)" % [
 		absf(win.open - mid) < 0.001, win.open])
 	get_tree().quit()
 
@@ -528,8 +590,8 @@ func _pack_test() -> void:
 	await _aim_at(Vector3(-0.20, 0.952, -0.84))
 	await _mouse(true)
 	await get_tree().create_timer(0.3).timeout
-	print("clic maintenu      : fantome=%s   surface=%s" % [
-		inter.ghost_visible(), inter.has_surface()])
+	print("clic maintenu      : fantome=%s   surface=%s   etat=%d   pieces=%d" % [
+		inter.ghost_visible(), inter.has_surface(), inter._state, inter.ghost_parts()])
 	await _mouse(false)
 	await get_tree().create_timer(1.0).timeout
 	local = car.to_local(pack.global_position)
@@ -586,6 +648,269 @@ func _pack_test() -> void:
 	get_tree().quit()
 
 
+## Banc d'essai du lancer : prendre le paquet, le jeter au clic molette, et
+## verifier qu'il part VRAIMENT PAR LA OU ON REGARDE.
+##
+## Ce qui se mesure ici est un ANGLE, pas une position d'arrivee. Une vitesse de
+## depart de la bonne longueur mais tournee de quinze degres donnerait un point
+## de chute parfaitement plausible dans l'habitacle — et un lancer qui part de
+## travers, ce qui se voit du premier coup d'oeil et ne se lirait dans aucune
+## coordonnee.
+##
+## Le CAP (l'angle a plat) est mesure a part du reste : c'est le seul que la
+## gravite ne touche jamais. Le temps que le banc relise la vitesse, l'objet a
+## deja pris une image ou deux de chute, et l'angle a trois dimensions en garde
+## la trace — pas le cap.
+##
+## On verifie aussi que le meme bouton n'a PAS passe le point mort au passage :
+## la molette appartient a la boite de vitesses quand les mains sont vides.
+func _throw_test() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	# Par defaut Godot met les evenements injectes en file et ne les distribue
+	# qu'a l'image suivante : la vitesse de depart ne serait alors plus lisible
+	# nulle part, l'objet ayant deja vole. Ici l'evenement part tout de suite.
+	Input.use_accumulated_input = false
+	await get_tree().create_timer(0.9).timeout
+	var inter = car.interaction
+	var pack: Node3D = inter.grabbables[0]
+	print("paquet trouve      : %s" % (pack != null))
+
+	# --- le prendre --------------------------------------------------------
+	var local: Vector3 = car.to_local(pack.global_position)
+	var aimed := false
+	for i in 3:
+		await _aim_at(local)
+		aimed = inter.target == pack
+		if aimed:
+			break
+	print("  VISE             : %s" % aimed)
+	await _click()
+	var took: bool = await _until(func(): return inter.held == pack)
+	print("  PRIS EN MAIN     : %s   (fige=%s)" % [took, pack.held])
+	if not took:
+		print("ABANDON : rien en main, il n'y a rien a lancer")
+		get_tree().quit()
+		return
+
+	# --- viser ailleurs, en l'air, et lancer -------------------------------
+	# Vers le haut du pare-brise, cote passager : de la place devant, et une
+	# direction qui n'est parallele a aucun axe — un lancer qui partirait de
+	# travers ne pourrait pas passer inapercu.
+	await _aim_at(Vector3(0.30, 1.35, -1.10))
+	var eye: Transform3D = car.global_transform.affine_inverse() * car.cam.global_transform
+	var dir: Vector3 = (-eye.basis.z).normalized()
+	var from: Vector3 = car.to_local(pack.global_position)
+	# Un rapport engage AVANT le lancer : s'il tient, c'est que le clic molette
+	# ne s'est pas propage jusqu'au levier.
+	car.gear = 2
+	await _shot("40_lancer_en_main.png")
+
+	# L'evenement est distribue DANS parse_input_event : la vitesse est donc
+	# lisible avant toute attente. Et il faut la lire la — deux images de vol
+	# suffisent a lui faire cogner le pare-brise, et on mesurerait le rebond au
+	# lieu du lancer.
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_MIDDLE
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	var v: Vector3 = pack.vel
+	var spin: float = pack.spin.length()
+	var empty: bool = inter.held == null
+	var loose: bool = not pack.held
+	var st: int = inter._state
+	await _mouse(false, MOUSE_BUTTON_MIDDLE)
+
+	var flat_v := Vector3(v.x, 0.0, v.z)
+	var flat_d := Vector3(dir.x, 0.0, dir.z)
+	print("lance              : regard=%s   du poing %s" % [
+		dir.snappedf(0.001), from.snappedf(0.001)])
+	print("  LACHE            : main vide=%s   fige=%s   etat=%d (0=IDLE)" % [
+		empty, not loose, st])
+	print("  DANS L'AXE       : %.2f deg d'ecart avec le regard" %
+		rad_to_deg(v.angle_to(dir)))
+	print("     cap a plat    : %.2f deg" % rad_to_deg(flat_v.angle_to(flat_d)))
+	print("  VITESSE          : %.2f m/s   (consigne %.2f)" % [v.length(), inter.throw_speed])
+	print("  il tourne        : %.1f rad/s" % spin)
+	print("  RAPPORT INTACT   : %s   (gear=%d, la molette n'a pas debraye)" % [
+		car.gear == 2, car.gear])
+
+	# --- il vole, il retombe, il se remet d'aplomb -------------------------
+	# On le SUIT pendant le vol au lieu de ne regarder que le point d'arrivee :
+	# un objet qui sort de la caisse et que le filet de securite de prop.gd
+	# rapatrie sur le siege se pose exactement comme un objet qui n'en est
+	# jamais sorti. Seule la trajectoire les distingue.
+	# La trajectoire part du poing : le point de lancer en fait partie, et c'est
+	# souvent lui le plus haut de tout le vol.
+	var high := from.y
+	var fore := from.z
+	var far := 0.0
+	var jump := 0.0
+	var prev := Vector3.INF
+	var was := 0.0
+	var t := 1.8
+	var shot := 0.14
+	while t > 0.0:
+		await get_tree().process_frame
+		var dt := get_process_delta_time()
+		t -= dt
+		high = maxf(high, pack.position.y)
+		fore = minf(fore, pack.position.z)
+		far = maxf(far, pack.position.distance_to(from))
+		# Un deplacement que la VITESSE N'EXPLIQUE PAS n'est pas un vol : c'est
+		# le rapatriement de prop.gd, donc une fuite hors de l'habitacle. Le
+		# comparer a une distance fixe ne dirait rien — a 20 images par seconde
+		# un lancer en parcourt deja 22 cm.
+		#
+		# La vitesse a retenir est celle d'AVANT le pas : c'est elle qui a fait
+		# le deplacement. Celle d'apres, sur l'image du rebond, est dix fois
+		# plus petite et ferait passer le choc pour une teleportation.
+		if prev.is_finite():
+			jump = maxf(jump, pack.position.distance_to(prev) - was * dt)
+		prev = pack.position
+		was = pack.vel.length()
+		shot -= dt
+		if shot <= 0.0 and shot > -900.0:
+			shot = -1000.0
+			await _shot("41_lancer_en_vol.png")
+	print("  IL PART VRAIMENT : %s   (%.2f m parcourus)" % [far > 0.30, far])
+	print("  RESTE DEDANS     : %s   (monte a y=%.2f, avance a z=%.2f)" % [
+		high < 1.34 and fore > -1.05, high, fore])
+	print("  PAS DE FUITE     : %s   (plus grand bond inexplique : %.3f m)" % [
+		jump < 0.15, jump])
+
+	var still: bool = await _until(func(): return pack.vel.length() < 0.05, 4.0)
+	await get_tree().create_timer(1.0).timeout
+	local = car.to_local(pack.global_position)
+	var up: Vector3 = (car.global_transform.basis.inverse() * pack.global_transform.basis).y
+	print("pose               : immobile=%s   pos voiture=%s" % [still, local.snappedf(0.001)])
+	print("  REMIS D'APLOMB   : %s   (%.2f deg de la verticale)" % [
+		up.angle_to(Vector3.UP) < deg_to_rad(1.0), rad_to_deg(up.angle_to(Vector3.UP))])
+	print("  toujours dedans  : %s" % (local.y > -0.4 and local.y < 2.0))
+	await _shot("42_lancer_pose.png")
+
+	# --- les parois hautes de l'habitacle ----------------------------------
+	# Le lancer precedent est reste sous la ceinture de caisse. On envoie
+	# maintenant le paquet DROIT DANS LE HAUT DU PARE-BRISE, la ou l'habitacle
+	# n'avait aucune paroi : il passait par-dessus le tablier, sortait de la
+	# caisse, et le filet de securite de prop.gd le reposait sur le siege comme
+	# si de rien n'etait. On le jette a la main plutot qu'au clic — ce qui est
+	# eprouve ici est la GEOMETRIE, pas le bouton.
+	pack.position = Vector3(0.0, 0.95, -0.20)
+	pack.throw(Vector3(0.0, 3.0, -2.6))
+	var high2: float = pack.position.y
+	var fore2: float = pack.position.z
+	var jump2 := 0.0
+	var prev2 := Vector3.INF
+	var was2 := 0.0
+	var t2 := 1.6
+	while t2 > 0.0:
+		await get_tree().process_frame
+		var dt2 := get_process_delta_time()
+		t2 -= dt2
+		high2 = maxf(high2, pack.position.y)
+		fore2 = minf(fore2, pack.position.z)
+		if prev2.is_finite():
+			jump2 = maxf(jump2, pack.position.distance_to(prev2) - was2 * dt2)
+		prev2 = pack.position
+		was2 = pack.vel.length()
+	print("jete au pare-brise : monte a y=%.2f   avance a z=%.2f" % [high2, fore2])
+	print("  LA GLACE L'ARRETE: %s   (pavillon a 1.30, bas de baie a -0.92)" %
+		(high2 < 1.34 and fore2 > -1.05))
+	print("  PAS DE FUITE     : %s   (bond inexplique %.3f m)" % [jump2 < 0.15, jump2])
+	print("  retombe a        : %s" % pack.position.snappedf(0.001))
+
+	# --- l'habitacle tient DANS TOUTES LES DIRECTIONS ----------------------
+	# Les deux lancers ci-dessus partent droit devant. C'est ce qui a laisse
+	# passer la fuite : ils passaient tous les deux pendant que deux lancers sur
+	# trois sortaient de la caisse. Un objet ne s'echappe pas par ou on regarde,
+	# il s'echappe par les cotes — sous la portiere, au bord du plancher, devant
+	# le tablier, la ou les boites de cabin.gd ne se rejoignent pas.
+	#
+	# On balaie donc l'eventail, y compris derriere et a la verticale : ce qui
+	# est verifie n'est plus un point de chute mais un INVARIANT, "le paquet
+	# reste dans la coque", et il ne vaut que s'il tient partout.
+	await _leak_scan(pack)
+
+	# --- mains vides, la molette redevient le point mort --------------------
+	# Embraye d'abord : la boite refuse tout changement pedale relevee, et un
+	# refus ressemblerait ici a un clic avale par interaction.gd.
+	await _act("clutch", true)
+	await _mouse(true, MOUSE_BUTTON_MIDDLE)
+	await _mouse(false, MOUSE_BUTTON_MIDDLE)
+	await _act("clutch", false)
+	print("mains vides        : gear=%d" % car.gear)
+	print("  POINT MORT       : %s   (le clic est redescendu au levier)" %
+		(car.gear == car.GEAR_N))
+	get_tree().quit()
+
+
+## Jette le paquet dans tout l'eventail des directions et verifie qu'aucune ne
+## le sort de l'habitacle.
+##
+## DEUX MESURES, parce qu'elles ne disent pas la meme chose.
+##
+## Le DEPASSEMENT dit que la coque de cabin.gd est bien branchee. Elle borne la
+## position a chaque sous-pas, donc un objet dehors, meme d'un millimetre, veut
+## dire qu'on ne la teste plus — _contain() debranche, un derive de prop.gd qui
+## redefinit _resolve() sans elle.
+##
+## Le BOND INEXPLIQUE dit ce que le joueur, lui, voyait : un deplacement que la
+## vitesse ne justifie pas, c'est le filet de securite qui rapatrie l'objet.
+## C'est le symptome d'origine — "il disparait et reapparait au meme endroit" —
+## et c'est le seul des deux qui se serait vu a l'ecran.
+func _leak_scan(pack: Node3D) -> void:
+	var lo: Vector3 = car.cabin.HULL_MIN + pack.half
+	var hi: Vector3 = car.cabin.HULL_MAX - pack.half
+	var from := Vector3(-0.21, 0.93, 0.0)          # le poing (interaction.gd, HOLD_POINT)
+	var speed: float = car.interaction.throw_speed
+	var tries := 0
+	var leaks := 0
+	var over := 0.0
+	var jump := 0.0
+	var worst := Vector3.ZERO
+
+	for yaw in range(-180, 180, 30):
+		for pitch in [-60, -30, 0, 30, 60]:
+			var a := deg_to_rad(float(yaw))
+			var b := deg_to_rad(float(pitch))
+			var dir := Vector3(sin(a) * cos(b), sin(b), -cos(a) * cos(b)).normalized()
+			pack.position = from
+			pack.throw(dir * speed)
+			tries += 1
+			var out := 0.0
+			var prev := Vector3.INF
+			var was := 0.0
+			var t := 0.6
+			while t > 0.0:
+				await get_tree().process_frame
+				var dt := get_process_delta_time()
+				t -= dt
+				var q: Vector3 = pack.position
+				out = maxf(out, _outside(q, lo, hi))
+				if prev.is_finite():
+					jump = maxf(jump, q.distance_to(prev) - was * dt)
+				prev = q
+				was = pack.vel.length()
+			if out > 0.001:
+				leaks += 1
+			if out > over:
+				over = out
+				worst = dir
+
+	print("balayage de fuite  : %d lancers, tout l'eventail" % tries)
+	print("  COQUE ETANCHE    : %s   (%d fuites, depassement maxi %.3f m%s)" % [
+		leaks == 0, leaks, over,
+		"" if worst == Vector3.ZERO else ", vers %s" % str(worst.snappedf(0.01))])
+	print("  AUCUN RAPATRIEMENT: %s   (plus grand bond inexplique : %.3f m)" % [
+		jump < 0.15, jump])
+
+
+## De combien un point sort de la boite [lo, hi]. Negatif ou nul : il est dedans.
+func _outside(q: Vector3, lo: Vector3, hi: Vector3) -> float:
+	return maxf(maxf(maxf(lo.x - q.x, q.x - hi.x), maxf(lo.y - q.y, q.y - hi.y)),
+		maxf(lo.z - q.z, q.z - hi.z))
+
+
 ## Oriente la tete vers un point exprime dans l'espace de la voiture. Deux
 ## passes : la camera se decale quand on tourne la tete, donc le premier calcul
 ## vise a cote.
@@ -603,13 +928,981 @@ func _click() -> void:
 	await get_tree().create_timer(0.25).timeout
 
 
-func _mouse(pressed: bool) -> void:
+func _mouse(pressed: bool, button := MOUSE_BUTTON_LEFT) -> void:
 	var ev := InputEventMouseButton.new()
-	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.button_index = button
 	ev.pressed = pressed
 	Input.parse_input_event(ev)
 	await get_tree().process_frame
 	await get_tree().process_frame
+
+
+## Des crans de molette, envoyes comme la souris les envoie : un appui suivi
+## d'un relachement, cran par cran. Un seul evenement "pressed" tenu ne
+## ressemblerait a rien de ce que produit une vraie molette, et la manivelle ne
+## lit QUE les appuis.
+func _wheel(notches: int, button := MOUSE_BUTTON_WHEEL_DOWN) -> void:
+	for i in notches:
+		await _mouse(true, button)
+		await _mouse(false, button)
+
+
+## Une action du projet, poussee comme si la touche avait ete pressee. On ecrit
+## l'etat ET on envoie l'evenement : interaction.gd lit les deux, l'evenement
+## pour basculer d'etat et l'etat pour savoir si le bouton est toujours tenu.
+func _act(action: String, pressed: bool) -> void:
+	if pressed:
+		Input.action_press(action)
+	else:
+		Input.action_release(action)
+	var ev := InputEventAction.new()
+	ev.action = action
+	ev.pressed = pressed
+	Input.parse_input_event(ev)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+
+## Attend qu'une condition devienne vraie, plutot que de dormir une duree fixe.
+##
+## Un banc qui dort ne mesure pas le jeu, il mesure la machine : a 6 images par
+## seconde les deux images d'attente de _mouse() durent deja 0,33 s, et tout ce
+## qui devait etre observe entre-temps est passe. C'est comme ca que ce banc a
+## commence par annoncer un eclair de bouche mort alors qu'il fonctionnait.
+func _until(check: Callable, timeout := 3.0) -> bool:
+	var left := timeout
+	while left > 0.0:
+		await get_tree().process_frame
+		left -= get_process_delta_time()
+		if check.call():
+			return true
+	return false
+
+
+## Banc d'essai du revolver : le ramasser, le lever, tirer six coups, recharger,
+## le reposer. Ce qu'on verifie surtout, c'est que la bouche pointe VRAIMENT ou
+## on regarde — une arme levee qui vise a cote se voit tout de suite.
+func _revolver_test() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	await get_tree().create_timer(1.2).timeout
+	var inter = car.interaction
+	var gun: Node3D = null
+	for obj in inter.grabbables:
+		if obj.name == "Revolver":
+			gun = obj
+	if gun == null:
+		print("REVOLVER ABSENT des ramassables")
+		get_tree().quit()
+		return
+
+	var local: Vector3 = car.to_local(gun.global_position)
+	print("revolver trouve    : pos voiture=%s" % local.snappedf(0.001))
+	print("  POSE SUR L'ASSISE: %s" % (local.y < 0.60))
+	print("  demi-cotes       : %s" % gun.half.snappedf(0.001))
+
+	# Etats de interaction.gd, dans l'ordre de son enum.
+	var HELD := 2
+	var RAISED := 7
+
+	var aimed := false
+	for i in 3:
+		await _aim_at(local)
+		aimed = inter.target == gun
+		if aimed:
+			break
+	print("  VISE             : %s" % aimed)
+	await _shot("20_revolver_pose.png")
+
+	await _click()
+	var took: bool = await _until(func(): return inter.held == gun)
+	print("  PRIS EN MAIN     : %s   (fige=%s)" % [took, gun.held])
+	await _shot("21_revolver_en_main.png")
+	if not took:
+		print("ABANDON : rien en main, la suite n'aurait aucun sens")
+		get_tree().quit()
+		return
+
+	# --- la prise est-elle REPRODUCTIBLE ? --------------------------------
+	# On repose l'arme et on la reprend, en variant le regard a chaque fois :
+	# c'est ce transitoire-la dont la pose dependait quand l'arme lisait
+	# l'orientation du poing qu'elle orientait elle-meme. Bouche vers le ciel a
+	# chaque coup, ou rien ne va.
+	var looks := [Vector3(0.90, 0.75, 0.30), Vector3(-0.20, 1.30, -0.90),
+		Vector3(0.50, 0.55, 0.80)]
+	var worst := 0.0
+	for i in looks.size() + 1:
+		await get_tree().create_timer(0.7).timeout      # la pose se stabilise
+		var m: Vector3 = (gun.global_transform.basis * gun.aim_axis()).normalized()
+		var off := rad_to_deg(m.angle_to(Vector3.UP))
+		worst = maxf(worst, off)
+		print("  prise %d : bouche a %.1f deg de la verticale" % [i + 1, off])
+		if i >= looks.size():
+			break
+		await _aim_at(Vector3(-0.20, 0.952, -0.84))     # reposer sur la planche
+		await _mouse(true)
+		await _until(func(): return inter.ghost_visible())
+		await _mouse(false)
+		await _until(func(): return inter.held == null, 4.0)
+		await _aim_at(looks[i])                          # detour du regard
+		await _aim_at(car.to_local(gun.global_position))
+		await _click()
+		await _until(func(): return inter.held == gun)
+	print("  CANON VERS LE HAUT: %s   (pire ecart %.1f deg)" % [worst < 8.0, worst])
+
+	# --- on leve ----------------------------------------------------------
+	await _aim_at(Vector3(1.20, 1.05, -0.60))          # par la vitre passager
+	await _act("aim_weapon", true)
+	var up: bool = await _until(func(): return inter._state == RAISED)
+	print("  ARME LEVEE       : %s" % up)
+	await _shot("22_revolver_leve.png")
+
+	# Le bras met un instant a monter : mesurer avant qu'il soit arrive donnerait
+	# une distance oeil-poing prise en cours de route.
+	await get_tree().create_timer(0.8).timeout
+
+	# La bouche suit-elle le regard ? Comparaison en repere MONDE.
+	var bore: Vector3 = (gun.global_transform.basis * gun.aim_axis()).normalized()
+	var look: Vector3 = -car.cam.global_transform.basis.z
+	print("  ECART BOUCHE/VISEE: %.2f deg" % rad_to_deg(bore.angle_to(look)))
+	# ... et l'arme est-elle a l'endroit ? Son dessus doit regarder le ciel :
+	# une arme parfaitement pointee mais couchee sur le flanc passe le test
+	# ci-dessus sans broncher.
+	var top: Vector3 = (gun.global_transform.basis * gun.up_axis()).normalized()
+	print("  ROULIS           : %.2f deg  (dessus vs verticale)" %
+		rad_to_deg(top.angle_to(Vector3.UP)))
+	# Distance oeil-poing et oeil-bouche : c'est ce qui fait le cadrage.
+	var eye: Vector3 = car.cam.global_position
+	print("  poing a %.2f m, bouche a %.2f m de l'oeil" % [
+		eye.distance_to(car.driver.hand_right().global_position),
+		eye.distance_to(gun.global_transform * gun._muzzle)])
+
+	# --- six coups --------------------------------------------------------
+	print("%.0f ips" % Engine.get_frames_per_second())
+	var flashes := 0
+	var kicks := 0
+	for i in 6:
+		var before: int = gun.rounds
+		# Sommets remis a zero AVANT le clic : le chien tombe 0,13 s apres, et
+		# les deux images d'attente de _mouse() peuvent deja durer plus.
+		gun.take_peaks()
+		await _mouse(true)
+		await _mouse(false)
+		var gone: bool = await _until(func(): return gun.rounds == before - 1)
+		if i == 0:
+			await _shot("23_revolver_tir.png")
+		var peaks: Vector2 = gun.take_peaks()
+		if peaks.y > 1.0:
+			flashes += 1
+		if peaks.x > 0.5:
+			kicks += 1
+		print("  coup %d : parti=%s  %d->%d  recul %.2f  eclair %.1f" % [
+			i + 1, gone, before, gun.rounds, peaks.x, peaks.y])
+		await _until(func(): return not gun.busy())
+	print("  BARILLET VIDE    : %s   (%d/6)" % [gun.rounds == 0, gun.rounds])
+	print("  SIX ECLAIRS      : %s   (%d/6)" % [flashes == 6, flashes])
+	print("  SIX RECULS       : %s   (%d/6)" % [kicks == 6, kicks])
+
+	# Chambre vide : le chien tombe, le barillet tourne, rien ne part.
+	gun.take_peaks()
+	await _click()
+	await _until(func(): return not gun.busy())
+	var dry: Vector2 = gun.take_peaks()
+	print("  RIEN SOUS ZERO   : %s   (%d/6, eclair %.1f)" % [
+		gun.rounds == 0 and dry.y < 0.01, gun.rounds, dry.y])
+
+	# --- rechargement -----------------------------------------------------
+	await _act("reload", true)
+	await _act("reload", false)
+	var opened: bool = await _until(func(): return gun.open_amount() > 0.9)
+	print("  CANON OUVERT     : %s" % opened)
+	await _shot("24_revolver_ouvert.png")
+	var full: bool = await _until(
+		func(): return gun.rounds == 6 and not gun.reloading(), 4.0)
+	print("  SIX EN CHAMBRE   : %s   (%d/6)" % [full, gun.rounds])
+
+	# --- on rabaisse et on repose ----------------------------------------
+	await _act("aim_weapon", false)
+	var lowered: bool = await _until(func(): return inter._state == HELD)
+	print("  ARME BAISSEE     : %s" % lowered)
+
+	await _aim_at(Vector3(-0.20, 0.952, -0.84))        # la planche de bord
+	await _mouse(true)
+	var ghost: bool = await _until(func(): return inter.ghost_visible())
+	print("  FANTOME NON VIDE : %s   (surface %s)" % [ghost, inter.has_surface()])
+	await _shot("25_revolver_fantome.png")
+	await _mouse(false)
+	var placed: bool = await _until(func(): return inter.held == null, 4.0)
+	print("  REPOSE           : %s   pos=%s" % [
+		placed, car.to_local(gun.global_position).snappedf(0.001)])
+	await _shot("26_revolver_repose.png")
+	get_tree().quit()
+
+
+## Banc d'essai du volant : l'ENCHAINEMENT DE PRISES.
+##
+## Ce qu'on verifie n'est pas que les mains bougent — ca se voit — mais les
+## trois choses sans lesquelles un braquage complet ne tient pas debout :
+##
+##  * il reste TOUJOURS au moins une main sur la jante. Deux mains en l'air en
+##    meme temps, c'est un volant qui tourne tout seul ;
+##  * aucune main ne va chercher plus loin que le bras (epaule -> poignet contre
+##    `arm_span`). Le modele n'ayant plus de bras, rien ne le montrerait a
+##    l'ecran : l'avant-bras invisible traverserait le buste en silence ;
+##  * les deux mains ne se traversent pas en se croisant.
+##
+## Plus le releve des prises elles-memes : a quel angle de volant chacune lache,
+## et ou elle se repose.
+func _wheel_test() -> void:
+	await get_tree().create_timer(0.6).timeout
+	var drv = car.driver
+	# En roulant : sans vitesse le volant ne se rappelle pas au centre, et on ne
+	# verrait jamais les prises du RETOUR, qui sont la moitie du sujet.
+	car.speed = 12.0
+	car.gear = 4
+	print("bras %.3f m   butee de volant %.0f deg   prise : tirer %.0f deg, pousser %.0f deg" % [
+		drv.arm_span(), DriverScript.WHEEL_MAX_ANGLE,
+		DriverScript.GRIP_PULL, DriverScript.GRIP_PUSH])
+
+	# --- profil de portee --------------------------------------------------
+	# Ou peut aller une main sans que le bras ait a s'allonger. C'est ce tableau
+	# qui cale GRIP_PULL et GRIP_PUSH : la portee au repos (10 h 10) est deja de
+	# 0,65 m pour 0,58 m de bras — position de conduite d'une Civic dont le siege
+	# du modele est 15 cm trop loin (voir le README). Ce qu'on surveille n'est
+	# donc pas une portee absolue, c'est de combien la prise EMPIRE en s'ecartant.
+	var line := "  angle    "
+	var g := "  gauche   "
+	var d := "  droite   "
+	for k in 11:
+		var a := -125.0 + 25.0 * k
+		line += "%6.0f" % a
+		g += "%6.3f" % drv.reach_at(false, a)
+		d += "%6.3f" % drv.reach_at(true, a)
+	print("\nportee epaule -> poignet selon l'angle de la main (m) :")
+	print(line)
+	print(g)
+	print(d)
+
+	# --- un virage ordinaire ne fait rien lacher ---------------------------
+	# Le defaut inverse de celui qu'on corrige : des mains qui se repositionnent
+	# pour une correction de trajectoire. On ne lache pas le volant a 50 degres.
+	print("\n-- virage de route, volant a ~50 deg --")
+	car.speed = 12.0
+	car.debug_full_steer = 0.18
+	await _wheel_watch(3.0, "virage ordinaire", false)
+	car.debug_full_steer = 0.0
+	car.steer = 0.0
+	await get_tree().create_timer(1.2).timeout
+
+	for i in 2:
+		var action := "steer_left" if i == 0 else "steer_right"
+		print("\n-- %s a fond --" % action)
+		car.speed = 12.0
+		await _act(action, true)
+		await _wheel_watch(2.4, "braquage", i == 0)
+		await _act(action, false)
+		car.speed = 12.0       # le rappel du volant depend de la vitesse
+		await _wheel_watch(2.6, "retour au centre", false)
+		# Le volant a fini de rentrer : les mains doivent etre revenues a 10 h 10.
+		# Ce n'est pas un rangement — il n'y en a plus — c'est le glissement qui
+		# les y a ramenees pendant que la jante filait dessous.
+		car.speed = 12.0
+		await get_tree().create_timer(2.0).timeout
+		print("  repos             : volant %+.0f deg   mains G %+.0f  D %+.0f deg   A 10 H 10: %s" % [
+			car.steer * DriverScript.WHEEL_MAX_ANGLE,
+			drv.grip_angle(false), drv.grip_angle(true),
+			maxf(absf(drv.grip_angle(false)), absf(drv.grip_angle(true))) < 25.0])
+
+		# ... ET ELLES N'Y BOUGENT PLUS. Volant immobile, une main reste agrippee
+		# ou elle tient : c'est le defaut inverse de celui qu'on corrige, et il ne
+		# se voit que sur la duree. On braque a la main, on laisse tout se poser,
+		# puis on regarde si quelque chose bouge encore.
+		car.steer = 0.6 if i == 0 else -0.6
+		car.speed = 0.0            # a l'arret, aucun rappel : le volant reste la
+		await get_tree().create_timer(1.5).timeout
+		var still_l: float = drv.grip_angle(false)
+		var still_r: float = drv.grip_angle(true)
+		await get_tree().create_timer(2.5).timeout
+		print("  volant fige a %+.0f  : les mains bougent de G %.1f  D %.1f deg   AGRIPPEES: %s" % [
+			car.steer * DriverScript.WHEEL_MAX_ANGLE,
+			absf(drv.grip_angle(false) - still_l), absf(drv.grip_angle(true) - still_r),
+			maxf(absf(drv.grip_angle(false) - still_l),
+				absf(drv.grip_angle(true) - still_r)) < 1.0])
+		car.steer = 0.0
+
+	# --- le volant qui rentre tout seul ------------------------------------
+	# On braque, on LACHE LA TOUCHE, et le rappel ramene la jante. Le conducteur
+	# ne la ramene pas : il desserre et la laisse filer sous ses paumes. Ce qui
+	# le prouve, c'est l'ecart entre ce que parcourt la JANTE et ce que
+	# parcourent les MAINS pendant ce temps-la.
+	print("\n-- volant rendu : la jante file sous les paumes --")
+	car.speed = 16.0
+	await _act("steer_left", true)
+	await get_tree().create_timer(1.4).timeout
+	await _act("steer_left", false)
+	car.speed = 16.0
+	var rim := 0.0
+	var hands := 0.0
+	var close_min := 1.0
+	var slipping := 0
+	var frames := 0
+	var was_wheel: float = car.steer * DriverScript.WHEEL_MAX_ANGLE
+	var was_l: float = drv.grip_angle(false)
+	var was_r: float = drv.grip_angle(true)
+	while frames < 150 and absf(car.steer) > 0.02:
+		await get_tree().process_frame
+		frames += 1
+		car.speed = 16.0
+		var now: float = car.steer * DriverScript.WHEEL_MAX_ANGLE
+		rim += absf(now - was_wheel)
+		hands += maxf(absf(drv.grip_angle(false) - was_l),
+			absf(drv.grip_angle(true) - was_r))
+		was_wheel = now
+		was_l = drv.grip_angle(false)
+		was_r = drv.grip_angle(true)
+		close_min = minf(close_min, minf(drv.grip_close(false), drv.grip_close(true)))
+		if car.wheel_returning:
+			slipping += 1
+	print("  jante parcourue   : %.0f deg   mains : %.0f deg" % [rim, hands])
+	print("  LA JANTE GLISSE   : %s   (les mains font %.0f %% du chemin, seuil 40)" % [
+		hands < rim * 0.40, 100.0 * hands / maxf(rim, 1.0)])
+	print("  doigts desserres  : %s   (fermeture minimale %.2f)" % [close_min < 0.8, close_min])
+	print("  rappel actif      : %d images sur %d" % [slipping, frames])
+	print("  mains rangees     : G %+.0f  D %+.0f deg" % [
+		drv.grip_angle(false), drv.grip_angle(true)])
+
+	# --- une main prise par un objet ---------------------------------------
+	# On prend vraiment le paquet, avec un vrai clic : l'autre main ne peut plus
+	# enserrer la jante, elle doit se poser A PLAT dessus et tourner par appui.
+	print("\n-- une main prise : l'autre conduit a plat --")
+	car.steer = 0.0
+	await get_tree().create_timer(1.0).timeout
+	var flat_ok := await _take_pack()
+	print("  paquet en main    : %s" % flat_ok)
+	if flat_ok:
+		print("  AVANT de braquer  : paume gauche a %.0f deg de l'axe   fermeture %.2f" % [
+			drv.palm_tilt(false), drv.grip_close(false)])
+		# Capture volant droit : c'est la seule ou la main soit dans le cadre.
+		# A fond de braquage elle est passee sous la jante, hors champ — la photo
+		# ne montrait plus rien du tout.
+		await _shot("27_volant_main_a_plat.png")
+		car.speed = 12.0
+		await _act("steer_left", true)
+		# On releve la pose PENDANT QUE LA JANTE TOURNE : c'est la, et seulement
+		# la, qu'on conduit a plat. Mesurer une fois le volant en butee revenait a
+		# mesurer la main deja raccrochee — le comportement voulu, au mauvais
+		# moment.
+		var tilt := 999.0
+		var open := 1.0
+		var prev: float = car.steer
+		var t := 0.0
+		while t < 2.0:
+			await get_tree().process_frame
+			t += get_process_delta_time()
+			if absf(car.steer - prev) > 0.0005:
+				tilt = minf(tilt, drv.palm_tilt(false))
+				open = minf(open, drv.grip_close(false))
+			prev = car.steer
+		print("  EN TOURNANT       : dos a %.0f deg de l'axe   DOS VERS LE JOUEUR: %s" % [
+			tilt, tilt < 30.0])
+		# Et elle a suivi la jante D'UN BOUT A L'AUTRE, sans buter en chemin : a
+		# plat, le poignet ne se tord pas, rien ne justifie de lacher. La main
+		# doit donc etre au meme angle que le volant, pas coincee a sa butee.
+		var turned: float = car.steer * DriverScript.WHEEL_MAX_ANGLE
+		print("    ELLE ACCOMPAGNE : %s   (main %+.0f deg pour un volant a %+.0f)" % [
+			absf(drv.grip_angle(false) - turned) < 15.0, drv.grip_angle(false), turned])
+		print("    doigts detendus : %s   (fermeture %.2f, seuil 0.35)" % [
+			open < 0.35, open])
+		print("    elle tourne bien le volant : %s   (volant %+.0f deg)" % [
+			absf(car.steer) > 0.5, car.steer * DriverScript.WHEEL_MAX_ANGLE])
+		await _act("steer_left", false)
+
+		# ON ARRETE DE TOURNER : la main libre doit REFERMER LES DOIGTS sur la
+		# jante et la tenir comme n'importe quelle main au volant. On ne reste pas
+		# la paume posee dessus a ne rien faire. Et elle doit le faire SANS SE
+		# DEPLACER : c'est la pose qui change, pas la place de la main.
+		car.speed = 0.0            # a l'arret, pas de rappel : la jante ne bouge plus
+
+		# COMBIEN DE TEMPS met-elle a se raccrocher ? C'est ce delai qui se lit
+		# comme une hesitation s'il traine : on referme la main sur un volant des
+		# qu'on cesse de le tourner.
+		#
+		# La butee de braquage a deja immobilise la jante — la main s'y est donc
+		# raccrochee AVANT qu'on relache la touche, et chronometrer a partir d'ici
+		# donnait 0,00 s sans rien prouver. On la remet en mouvement, puis on
+		# s'arrete net.
+		await _act("steer_right", true)
+		await get_tree().create_timer(0.7).timeout
+		await _act("steer_right", false)
+		# Et on attend qu'elle soit VRAIMENT immobile : la jante a de l'inertie,
+		# elle finit son mouvement apres la touche, et la main la suit pendant ce
+		# temps-la. Relever la position avant ce moment mesurait ce mouvement-la.
+		var prev2: float = car.steer
+		var settle := 0.0
+		while settle < 2.0:
+			await get_tree().process_frame
+			settle += get_process_delta_time()
+			if absf(car.steer - prev2) < 0.0005:
+				break
+			prev2 = car.steer
+		var held_at: float = drv.grip_angle(false)
+		var grabbed := 0.0
+		while grabbed < 2.0 and drv.grip_close(false) < 0.80:
+			await get_tree().process_frame
+			grabbed += get_process_delta_time()
+		print("  se raccroche en   : %.2f s   (delai %.2f + fondu)" % [
+			grabbed, DriverScript.FLAT_GRAB_DELAY])
+		# Releve TANT QU'ELLE EST ENCORE AGRIPPEE : la phase suivante rebraque et
+		# la remet a plat, mesurer apres reviendrait a mesurer ce braquage-la.
+		print("  volant repose     : dos a %.0f deg   fermeture %.2f" % [
+			drv.palm_tilt(false), drv.grip_close(false)])
+		print("    ELLE SE RACCROCHE : %s   (doigts refermes, seuil 0.80)" % [
+			drv.grip_close(false) > 0.80])
+		print("    SANS SE DEPLACER  : %s   (bouge de %.1f deg)" % [
+			absf(drv.grip_angle(false) - held_at) < 2.0,
+			absf(drv.grip_angle(false) - held_at)])
+		await _shot("28_volant_main_raccrochee.png")
+
+		# ... ET COMBIEN DE JANTE avant qu'elle REPASSE a plat ? Une main
+		# agrippee ne se remet pas a plat parce que le volant a bouge : il faut
+		# que le mouvement s'installe. C'est un chemin, pas un delai — sinon une
+		# correction de trajectoire suffirait a ouvrir la main.
+		car.speed = 12.0
+		var from_deg: float = car.steer * DriverScript.WHEEL_MAX_ANGLE
+		var opened := -1.0
+		await _act("steer_left", true)
+		var t2 := 0.0
+		while t2 < 2.5:
+			await get_tree().process_frame
+			t2 += get_process_delta_time()
+			if opened < 0.0 and drv.grip_close(false) < 0.5:
+				opened = absf(car.steer * DriverScript.WHEEL_MAX_ANGLE - from_deg)
+		await _act("steer_left", false)
+		print("  repasse a plat    : apres %.0f deg de jante   (seuil %.0f)   PAS TROP TOT: %s" % [
+			opened, DriverScript.FLAT_TURN_TRAVEL,
+			opened >= DriverScript.FLAT_TURN_TRAVEL])
+		await get_tree().create_timer(1.0).timeout
+		# ON REPOSE LE PAQUET. Sans ca la phase suivante mesurait encore une main
+		# a plat — butees elargies, +296 degres — en croyant mesurer un poing
+		# referme qui sature. Un banc qui garde un objet en main teste autre chose
+		# que ce qu'il annonce.
+		car.interaction.let_go()
+		await get_tree().create_timer(1.2).timeout
+	car.steer = 0.0
+	await get_tree().create_timer(1.0).timeout
+
+	# --- une seule main disponible ----------------------------------------
+	# Embrayage tenu : la main droite est au levier, la gauche ne PEUT plus
+	# lacher. Elle doit alors saturer — la jante file sous la paume — au lieu de
+	# se retourner le coude ou de lacher un volant que personne ne tient.
+	print("\n-- main droite au levier, braquage a fond --")
+	await _act("clutch", true)
+	await get_tree().create_timer(0.5).timeout
+	await _act("steer_left", true)
+	await _wheel_watch(2.4, "une seule main", false)
+	print("  main gauche       : %+.0f deg   BORNEE: %s   (butee %.0f + reserve %.0f)" % [
+		drv.grip_angle(false),
+		absf(drv.grip_angle(false)) <= DriverScript.GRIP_PULL + DriverScript.GRIP_RESERVE + 1.0,
+		DriverScript.GRIP_PULL, DriverScript.GRIP_RESERVE])
+	await _act("steer_left", false)
+	await _act("clutch", false)
+	await get_tree().create_timer(1.0).timeout
+	await _shot("27_volant_repos.png")
+	get_tree().quit()
+
+
+## Prend vraiment le paquet de cigarettes, avec une vraie visee et un vrai clic —
+## comme `-- packtest`. Le banc du volant a besoin d'un objet EN MAIN, pas d'un
+## `item_blend` pose a la main : c'est la chaine complete qui doit mettre l'autre
+## main a plat sur la jante.
+func _take_pack() -> bool:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	var inter = car.interaction
+	if inter.grabbables.is_empty():
+		return false
+	var pack: Node3D = inter.grabbables[0]
+	for attempt in 3:
+		await _aim_at(car.to_local(pack.global_position))
+		await _click()
+		if await _until(func(): return inter.held == pack, 1.5):
+			# Le geste continue apres la prise : le bras ramene l'objet devant
+			# soi. On mesure la pose etablie, pas le trajet.
+			await get_tree().create_timer(0.9).timeout
+			car.head.rotation = Vector3.ZERO
+			await get_tree().create_timer(0.6).timeout
+			return true
+	return false
+
+
+## Suit les deux mains image par image et imprime ce qui leur arrive. Les prises
+## sont relevees sur le CHANGEMENT d'etat, pas echantillonnees : une prise dure
+## un quart de seconde, un releve periodique en manquerait.
+func _wheel_watch(seconds: float, label: String, shots: bool) -> void:
+	var drv = car.driver
+	var span: float = drv.arm_span()
+	var was := [drv.grip_moving(false), drv.grip_moving(true)]
+	var held_min := 2
+	var reach := [0.0, 0.0]
+	var sep_min := 9.0
+	var takes := 0
+	var t := 0.0
+	var shot_at := 0
+	while t < seconds:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		var wheel: float = car.steer * DriverScript.WHEEL_MAX_ANGLE
+		for h in 2:
+			var right := h == 1
+			var moving: bool = drv.grip_moving(right)
+			if moving != was[h]:
+				was[h] = moving
+				if moving:
+					takes += 1
+					print("  %s lache a %+4.0f deg  (volant %+4.0f)" % [
+						"main DROITE " if right else "main GAUCHE ",
+						drv.grip_angle(right), wheel])
+				else:
+					print("               se repose a %+4.0f deg  (volant %+4.0f)" % [
+						drv.grip_angle(right), wheel])
+			reach[h] = maxf(reach[h], drv.hand_reach(right))
+		held_min = mini(held_min, drv.grips_held())
+		sep_min = minf(sep_min,
+			drv.hand_left().position.distance_to(drv.hand_right().position))
+		if shots and shot_at < 3 and t > 0.55 * float(shot_at + 1):
+			shot_at += 1
+			await _shot("27_volant_prise_%d.png" % shot_at)
+	print("  %-16s : %d prises   volant %+.0f deg" % [
+		label, takes, car.steer * DriverScript.WHEEL_MAX_ANGLE])
+	print("    UNE MAIN TIENT TOUJOURS : %s   (minimum observe %d)" % [held_min >= 1, held_min])
+	# La portee au repos vaut deja 0,65 m pour 0,58 m de bras : c'est la position
+	# de conduite du modele, pas l'affaire des prises (README, « Position de
+	# conduite »). Ce qui se juge ici, c'est le SURCOUT d'une prise ecartee — et
+	# il doit rester sous 6 cm, sinon un bras qu'on ne voit pas traverse le buste.
+	var rest: float = maxf(drv.reach_at(false, 0.0), drv.reach_at(true, 0.0))
+	var over: float = maxf(reach[0], reach[1]) - rest
+	print("    epaule -> poignet max   : G %.3f  D %.3f m   (repos %.3f, bras %.3f)" % [
+		reach[0], reach[1], rest, span])
+	# 80 mm, c'est le pire cas STRUCTUREL : une main qui attend son tour va
+	# jusqu'a sa butee plus la reserve (GRIP_PULL + GRIP_RESERVE = 135 degres),
+	# et la portee y vaut 0,73 m. En conduite courante on releve plutot 55 a
+	# 60 mm. Au-dela de 80, ce n'est plus une pose tendue, c'est que la
+	# saturation ne borne plus rien.
+	print("    LE BRAS NE TIRE PAS     : %s   (+%.3f m sur la pose 10 h 10, seuil 0.080)" % [
+		over <= 0.080, over])
+	# Le plancher, c'est le RETRAIT lui-meme (`REGRIP_LIFT`, 85 mm) : au croisement
+	# les deux mains sont l'une au-dessus de l'autre, et c'est lui seul qui les
+	# separe. Exiger davantage reviendrait a interdire le croisement, c'est-a-dire
+	# le geste. En dessous, elles se traversent.
+	print("    MAINS JAMAIS MELEES     : %s   (ecart minimum %.3f m, seuil 0.070)" % [
+		sep_min > 0.070, sep_min])
+
+
+## Banc d'essai du penchement : clic droit maintenu, le buste part dans la
+## direction du regard.
+##
+## Ce qu'on verifie n'est pas que la camera bouge — ca se voit — mais que ca
+## SERT et que ca ne casse rien : que la tete reste dans l'habitacle, et surtout
+## que la banquette arriere passe de HORS de portee du bras a DEDANS. C'est tout
+## le sujet : le geste existait deja, mais l'avant-bras s'allongeait de 40 % pour
+## arriver au bout, et un bras de gorille se voit immediatement.
+##
+## A LANCER AVEC UNE FENETRE, pas en --headless : se pencher demande la souris
+## capturee, et le serveur d'affichage muet ne capture rien. Le clic de prise
+## est dans le meme cas.
+func _lean_test() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	await get_tree().create_timer(1.0).timeout
+	var inter = car.interaction
+	var drv = car.driver
+	var span: float = drv.arm_span()
+	var seated: Vector3 = car.head.position
+	print("assis              : tete=%s   bras=%.3f m" % [seated.snappedf(0.001), span])
+
+	# --- 1. devant le siege passager --------------------------------------
+	# On regarde la boite a gants : la tete doit VENIR dessus, pas se contenter
+	# de tourner vers elle.
+	await _aim_clamped(Vector3(0.45, 0.70, -0.62), null, 6)
+	var before: Vector3 = car.head.position
+	await _act("lean", true)
+	await _until(func(): return car.lean_amount() > 0.97, 2.0)
+	await get_tree().create_timer(0.6).timeout
+	var leaned: Vector3 = car.head.position
+	print("penche a la BAG    : tete=%s   deplacement %.3f m" % [
+		leaned.snappedf(0.001), leaned.distance_to(before)])
+	# Les mains ne lachent plus le volant : c'est donc l'allonge des bras qui
+	# paie le penchement, et elle se surveille des qu'on touche a `lean_reach`.
+	# Au-dela de ~1,10 le segment s'allonge visiblement — bras de gorille.
+	print("  bras au volant    : avant-bras G x%.3f  D x%.3f   (1.000 = pas etire)" % [
+		drv.forearm_stretch_left(), drv.forearm_stretch()])
+	# Le tunnel de console va de -0.13 a 0.13 : le franchir, c'est avoir quitte
+	# sa place pour de bon. Exiger x > 0 serait mesurer un centimetre pres une
+	# amplitude qui, elle, se regle au doigt (`lean_reach`).
+	print("  passe la console  : %s   (x %.3f, il partait de %.3f)" % [
+		leaned.x > -0.13, leaned.x, before.x])
+	print("  dans l'habitacle   : %s" % _in_cabin(leaned))
+
+	await _act("lean", false)
+	await _until(func(): return car.lean_amount() < 0.02, 2.0)
+	await get_tree().create_timer(0.4).timeout
+	print("relache            : revenu a %.3f m de la pose assise" %
+		car.head.position.distance_to(before))
+
+	# --- 2. le volant ne se traverse pas ----------------------------------
+	# Regard aux pieds, cote conducteur : c'est la que la tete plongerait dans
+	# la jante si LEAN_WHEEL_Y ne la retenait pas.
+	await _aim_clamped(Vector3(-0.40, 0.25, -0.55), null, 6)
+	await _act("lean", true)
+	await _until(func(): return car.lean_amount() > 0.97, 2.0)
+	await get_tree().create_timer(0.6).timeout
+	leaned = car.head.position
+	print("plonge au plancher : tete=%s" % leaned.snappedf(0.001))
+	print("  au-dessus du volant: %s   (y %.3f, jante a %.2f)" % [
+		leaned.y >= CarScript.LEAN_WHEEL_Y - 0.01, leaned.y, CarScript.LEAN_WHEEL_Y])
+	await _act("lean", false)
+	await _until(func(): return car.lean_amount() < 0.02, 2.0)
+
+	# --- 2 bis. tourner ne doit PAS zoomer ---------------------------------
+	# Penchement etabli, on balaie tout le debattement du regard et on releve la
+	# LONGUEUR du deplacement. Si elle bouge, la camera avance et recule le long
+	# de son propre axe pendant qu'on tourne — et ca ne se lit pas comme un
+	# corps qui se penche, ca se lit comme un zoom. C'est ce que faisait la
+	# version qui s'arretait court de la surface visee : la planche est a 90 cm,
+	# la console a 60, le vide a l'infini, donc la longueur suivait le regard.
+	car.head.rotation = Vector3.ZERO
+	await get_tree().create_timer(0.6).timeout
+	# On entre dans la zone d'enroulement, CLIC DROIT TENU, et on laisse la pose
+	# s'etablir.
+	#
+	# Le clic est indispensable : se retourner seul ne deplace plus le corps.
+	# Sans lui il n'y aurait aucun penchement a balayer, et ce qu'on mesurerait
+	# serait la translation ordinaire de HEAD_BACK au fil du lacet — qui n'a
+	# rien d'un zoom et ferait echouer le test pour une raison etrangere a ce
+	# qu'il surveille.
+	car.head.rotation = Vector3(deg_to_rad(-30.0), deg_to_rad(-120.0), 0.0)
+	await _act("lean", true)
+	await _until(func(): return car.lean_amount() > 0.99, 3.0)
+	await get_tree().create_timer(1.0).timeout
+
+	var first: Vector3 = car.head.position
+	var worst := 0.0
+	var worst_axial := 0.0
+	for i in 20:
+		# On balaie DANS la zone : le regard fouille la banquette, du cote
+		# passager au cote conducteur, en plongeant plus ou moins.
+		car.head.rotation.y = deg_to_rad(lerpf(-110.0, -185.0, i / 19.0))
+		car.head.rotation.x = deg_to_rad(lerpf(-20.0, -55.0, i / 19.0))
+		await get_tree().create_timer(0.1).timeout
+		var moved: Vector3 = car.head.position - first
+		worst = maxf(worst, moved.length())
+		# La composante LE LONG DU REGARD est celle qui se voit comme un zoom :
+		# se decaler lateralement, c'est de la parallaxe, et ca se lit comme un
+		# corps qui bouge. Avancer sur son axe optique, non.
+		worst_axial = maxf(worst_axial,
+			absf(moved.dot(-car.head.transform.basis.z)))
+	print("balayage enroule   : la tete bouge de %.0f mm   dont %.0f mm sur l'axe du regard" % [
+		worst * 1000.0, worst_axial * 1000.0])
+	print("  PAS DE ZOOM       : %s   (seuil 20 mm sur l'axe)" % (worst_axial < 0.020))
+	car.head.rotation = Vector3.ZERO
+	await _act("lean", false)
+	await _until(func(): return car.lean_amount() < 0.02, 3.0)
+
+	# --- 3. la banquette arriere ------------------------------------------
+	# Les deux canettes ecrasees qui trainent a l'arriere (cabin.CAN_SPAWNS) :
+	# une sur la banquette cote conducteur, une au plancher cote passager. On
+	# mesure les deux, assis puis penche.
+	for wanted in ["Can_cariboon_Crushed", "Can_kombo_Crushed"]:
+		var can: Node3D = null
+		for g in inter.grabbables:
+			if String(g.name).begins_with(wanted):
+				can = g
+		if can == null:
+			print("%-18s : INTROUVABLE" % wanted)
+			continue
+		var local: Vector3 = car.to_local(can.global_position)
+		print("%-18s : pos voiture=%s" % [wanted, local.snappedf(0.001)])
+
+		# Retourne sur son siege, sans se pencher, ET regard remis droit devant.
+		# Repartir de la pose penchee precedente ferait viser depuis un point ou
+		# le joueur ne serait jamais : il se redresse entre deux gestes.
+		await _act("lean", false)
+		await _until(func(): return car.lean_amount() < 0.02, 2.0)
+		car.head.rotation = Vector3.ZERO
+		await get_tree().create_timer(0.7).timeout
+		var seen_seated: bool = await _aim_clamped(local, can, 16)
+		await get_tree().create_timer(0.6).timeout
+		var sh_seated: Vector3 = drv.shoulder_right()
+		var d_seated: float = sh_seated.distance_to(local)
+		print("  retourne, SANS clic droit : tete=%s   visee=%s" % [
+			car.head.position.snappedf(0.001), seen_seated])
+		# SE RETOURNER NE DEPLACE PAS LE CORPS : ces deux lignes doivent rester a
+		# false. Le buste se vrille sur place, le dos cale contre le dossier,
+		# l'epaule reste DEVANT son plan. C'est voulu — un mouvement de tete
+		# ordinaire ne doit pas emmener le joueur sur la banquette.
+		print("    corps immobile   : %s   (penche a %.2f, enroule=%s)" % [
+			car.lean_amount() < 0.02, car.lean_amount(), car.wrapping()])
+		print("    epaule droite    : %s   derriere le dossier: %s (attendu false)" % [
+			sh_seated.snappedf(0.001), sh_seated.z > 0.53])
+		print("    epaule -> canette: %.3f m pour %.3f m de bras   a portee: %s" % [
+			d_seated, span, d_seated <= span])
+		# Et on essaie de la prendre sans toucher au clic droit.
+		#
+		# Que ca REUSSISSE ne contredit pas la ligne au-dessus : interaction.gd
+		# n'exige pas que le bras y arrive, seulement que l'objet soit sous le
+		# viseur a moins de `reach` (1,25 m de l'oeil). L'epaule, elle, en est a
+		# 0,77 m pour 0,58 m de bras — c'est le bras qui rattrape, pas le corps
+		# qui se deplace. Le distinguo est justement ce que ce banc rend visible :
+		# si un jour on veut que la banquette se MERITE, c'est ici qu'on lira que
+		# la prise passe encore.
+		var got_seated := false
+		for attempt in 3:
+			await _aim_clamped(local, can, 6)
+			await _click()
+			got_seated = await _until(func(): return inter.held == can, 1.5)
+			if got_seated:
+				break
+		print("    prise sans clic droit : %s   (le viseur suffit, c'est le bras qui rattrape)" %
+			got_seated)
+		if got_seated:
+			# Remise EXACTEMENT ou elle etait, et pas reposee au viseur : la
+			# mesure penchee qui suit se compare a celle d'avant, et elle ne le
+			# peut que si la canette n'a pas bouge d'un millimetre entre les deux.
+			inter.let_go()
+			can.position = local
+			await get_tree().create_timer(0.8).timeout
+
+		# Puis penche. On repart tete droite et on MAINTIENT LE CLIC AVANT DE
+		# TOURNER : c'est l'ordre du joueur, et c'est lui qui compte. Se pencher
+		# efface la sortie de tete par la vitre, donc tourner a gauche une fois
+		# le bouton tenu emmene le buste EN ARRIERE dans l'habitacle au lieu de
+		# passer la tete dehors. Dans l'autre ordre, on sort d'abord la tete et
+		# on ne voit plus jamais la banquette.
+		car.head.rotation = Vector3.ZERO
+		await get_tree().create_timer(0.7).timeout
+		await _act("lean", true)
+		await _until(func(): return car.lean_amount() > 0.97, 2.0)
+		var seen_leaned: bool = await _aim_clamped(local, can, 16)
+		await get_tree().create_timer(0.5).timeout
+		leaned = car.head.position
+		# Releve AVANT les essais de prise : ceux-ci font bouger la tete, et on
+		# mesurerait alors la pose d'apres le geste, pas celle qui le permet.
+		var d_leaned: float = drv.shoulder_right().distance_to(local)
+		print("  penche en arriere : tete=%s   visee=%s" % [
+			leaned.snappedf(0.001), seen_leaned])
+		print("    dans l'habitacle : %s" % _in_cabin(leaned))
+		print("    epaule -> canette: %.3f m   A PORTEE: %s   (gagne %.3f m)" % [
+			d_leaned, d_leaned <= span, d_seated - d_leaned])
+		# L'epaule droite doit avoir passe le plan du dossier (z 0.53) : c'est
+		# ca, s'enrouler autour du siege, et c'est ce qui donne acces a ce qui
+		# est pose DERRIERE. Devant ce plan, le bras bute sur le dossier.
+		var sh: Vector3 = drv.shoulder_right()
+		print("    epaule droite    : %s   DERRIERE LE DOSSIER: %s (z 0.53)" % [
+			sh.snappedf(0.001), sh.z > 0.53])
+		print("    bras au volant   : avant-bras G x%.3f  D x%.3f" % [
+			drv.forearm_stretch_left(), drv.forearm_stretch()])
+		# VERDICT DIRECT, sans dependre de la convergence de la boucle de visee.
+		# Celle-ci se cale mal sur ce qui est pratiquement plein arriere : le
+		# lacet requis y bascule d'un bord a l'autre pour quelques centimetres
+		# de tete, et le banc part du mauvais cote. Une souris n'a pas cette
+		# discontinuite. Ce qu'on peut affirmer sans elle : depuis la pose
+		# penchee, l'objet est-il DANS le debattement de la tete, et a portee ?
+		var to_can: Vector3 = local - leaned
+		var need_yaw: float = rad_to_deg(atan2(-to_can.x, -to_can.z))
+		var need_pitch: float = rad_to_deg(asin(clampf(to_can.normalized().y, -1.0, 1.0)))
+		var cap_right: float = car.yaw_limit_right + car.lean_yaw_bonus * car.lean_amount()
+		var in_cone: bool = need_yaw >= -cap_right and need_yaw <= car.yaw_limit_left \
+			and absf(need_pitch) <= car.pitch_limit
+		print("    lacet %.0f deg (butee %.0f a droite / %.0f a gauche)   plongee %.0f deg (butee %.0f)" % [
+			need_yaw, -cap_right, car.yaw_limit_left, need_pitch, car.pitch_limit])
+		print("    DANS LE CHAMP    : %s   a %.3f m de l'oeil" % [
+			in_cone, to_can.length()])
+
+		# Et on la prend pour de bon : c'est le geste complet qui compte, avec
+		# le buste qui va chercher les derniers centimetres (REACH_LEAN_OFF_SEAT).
+		# On laisse la pose se poser et on re-vise avant de cliquer : cliquer a
+		# l'instant precis ou la cible s'allume, c'est cliquer pendant que la
+		# tete bouge encore, et la cible se perd entre le clic et la prise.
+		await get_tree().create_timer(0.5).timeout
+		var got := false
+		for attempt in 4:
+			# Re-viser AVANT chaque essai : la pose se pose encore, et un clic
+			# tire pendant que la tete bouge trouve la cible deja perdue.
+			await _aim_clamped(local, can, 6)
+			await _click()
+			got = await _until(func(): return inter.held == can, 1.5)
+			if got:
+				break
+		print("    ATTRAPEE         : %s   avant-bras etire x%.3f (1.000 = pas etire)" % [
+			got, drv.forearm_stretch()])
+		if got:
+			# On la repose ou elle etait : la canette suivante se mesure dans
+			# une voiture propre.
+			await _mouse(true)
+			await get_tree().create_timer(0.3).timeout
+			await _mouse(false)
+			await get_tree().create_timer(0.8).timeout
+
+	# --- 4. s'enrouler autour du siege ------------------------------------
+	# Le geste qu'on fait pour attraper ce qui traine DERRIERE SOI : on se
+	# tourne a droite jusqu'au bout et le buste contourne le dossier.
+	#
+	# On amene la tete a l'angle A LA MAIN au lieu de passer par la boucle de
+	# visee : celle-ci ne se cale pas sur ce qui est pratiquement plein arriere
+	# (le lacet requis y bascule d'un bord a l'autre pour quelques centimetres
+	# de tete). Or ce qu'on veut mesurer ici est la POSE, pas la capacite du
+	# banc a converger dessus. L'angle, lui, est connu : la butee penchee.
+	var kombo: Node3D = null
+	for g in inter.grabbables:
+		if String(g.name).begins_with("Can_kombo_Crushed"):
+			kombo = g
+	if kombo != null:
+		var kl: Vector3 = car.to_local(kombo.global_position)
+		await _act("lean", false)
+		await _until(func(): return car.lean_amount() < 0.02, 2.0)
+		car.head.rotation = Vector3.ZERO
+		await get_tree().create_timer(0.7).timeout
+		await _act("lean", true)
+		await _until(func(): return car.lean_amount() > 0.97, 2.0)
+		var cap: float = deg_to_rad(car.yaw_limit_right + car.lean_yaw_bonus)
+		for i in 16:
+			car.head.rotation.y = maxf(car.head.rotation.y - deg_to_rad(14.0), -cap)
+			car.head.rotation.x = -deg_to_rad(25.0)
+			await get_tree().create_timer(0.12).timeout
+		await get_tree().create_timer(0.9).timeout
+
+		var sh: Vector3 = drv.shoulder_right()
+		var d: float = sh.distance_to(kl)
+		print("enroule            : lacet %.0f deg   tete=%s" % [
+			rad_to_deg(car.head.rotation.y), car.head.position.snappedf(0.001)])
+		print("  epaule droite     : %s" % sh.snappedf(0.001))
+		print("  DERRIERE LE DOSSIER: %s   (z %.3f, dossier a 0.53)" % [sh.z > 0.53, sh.z])
+		print("  epaule -> canette : %.3f m pour %.3f m de bras   A PORTEE: %s" % [
+			d, span, d <= span])
+		print("  bras au volant    : avant-bras G x%.3f  D x%.3f" % [
+			drv.forearm_stretch_left(), drv.forearm_stretch()])
+		var seen: bool = await _aim_clamped(kl, kombo, 8)
+		print("  visee             : %s" % seen)
+		var caught := false
+		for attempt in 3:
+			await _aim_clamped(kl, kombo, 4)
+			await _click()
+			caught = await _until(func(): return inter.held == kombo, 1.5)
+			if caught:
+				break
+		print("  ATTRAPEE          : %s   avant-bras D x%.3f" % [
+			caught, drv.forearm_stretch()])
+	get_tree().quit()
+
+
+## Banc de la REGLE : se retourner regarde, le clic droit deplace. Rien d'autre.
+##
+## C'est le banc d'un defaut vecu, pas d'une specification. Une version faisait
+## partir le buste tout seul des que le regard tournait assez a droite en
+## plongeant, pour mettre la banquette a portee sans rien demander. En pratique
+## on se retrouvait A GENOUX SUR LA BANQUETTE juste pour avoir regarde derriere
+## soi — or regarder derriere soi, on le fait sans arret : pour reculer, pour
+## surveiller, par reflexe.
+##
+## Le banc mesure donc l'ecart MAXIMUM de la tete sur toute la sequence, et pas
+## seulement a l'arrivee : un aller-retour se verrait a l'ecran tout en laissant
+## la pose finale intacte.
+func _wrap_test() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	await get_tree().create_timer(1.0).timeout
+
+	# 1. Retourne a droite, REGARD A L'HORIZONTALE : c'est la marche arriere, on
+	#    regarde par la lunette. Rien ne doit avoir bouge.
+	car.head.rotation = Vector3(0.0, -deg_to_rad(140.0), 0.0)
+	await get_tree().create_timer(1.5).timeout
+	var level: Vector3 = car.head.position
+	print("retourne, regard a plat : tete=%s   penche a %.2f" % [
+		level.snappedf(0.001), car.lean_amount()])
+	print("  LA TETE EST RESTEE    : %s   (enroule=%s)" % [
+		car.lean_amount() < 0.05, car.wrapping()])
+
+	# 2. LE TEST QUI COMPTE. On baisse les yeux a 45 degres, toujours sans rien
+	#    tenir, et on filme image par image. La tete ne doit PAS bouger — ni au
+	#    bout du compte, ni en cours de route. Une version precedente partait
+	#    d'elle-meme s'enrouler autour du siege ici, et on se retrouvait a genoux
+	#    sur la banquette pour avoir simplement regarde derriere soi.
+	car.head.rotation.x = -deg_to_rad(45.0)
+	var worst := 0.0
+	for i in 150:
+		await get_tree().process_frame
+		worst = maxf(worst, car.head.position.distance_to(level))
+	var settled: Vector3 = car.head.position
+	print("yeux baisses de 45 deg  : tete=%s   penche a %.2f   enroule=%s" % [
+		settled.snappedf(0.001), car.lean_amount(), car.wrapping()])
+	# L'ecart maxi sur toute la sequence, pas seulement a l'arrivee : un aller-
+	# retour se verrait a l'ecran et ne laisserait aucune trace sur la pose
+	# finale.
+	print("  LA TETE N'A PAS BOUGE : %s   (ecart maxi %.3f m, seuil 10 mm)" % [
+		worst <= 0.010, worst])
+	print("  corps immobile        : %s   (penche a %.2f)" % [
+		car.lean_amount() < 0.02, car.lean_amount()])
+
+	# 3. Et maintenant le clic droit : LUI a le droit de deplacer le corps, et
+	#    c'est le seul. Retourne a droite et regard plonge, il ne penche pas vers
+	#    l'avant mais contourne le siege (HEAD_WRAP).
+	await _act("lean", true)
+	await get_tree().create_timer(1.5).timeout
+	var leaned: Vector3 = car.head.position
+	print("clic droit tenu         : tete=%s   penche a %.2f   enroule=%s" % [
+		leaned.snappedf(0.001), car.lean_amount(), car.wrapping()])
+	print("  LE CORPS SUIT         : %s   (deplacement %.3f m)" % [
+		leaned.distance_to(level) > 0.10, leaned.distance_to(level)])
+
+	# 4. Relache : on revient s'asseoir, sans avoir a lever les yeux.
+	await _act("lean", false)
+	await get_tree().create_timer(1.5).timeout
+	var back: float = car.head.position.distance_to(level)
+	print("clic droit relache      : a %.3f m de la pose retournee   penche a %.2f" % [
+		back, car.lean_amount()])
+	print("  REVENU S'ASSEOIR      : %s   (seuil 30 mm)" % (back <= 0.030))
+	get_tree().quit()
+
+
+## Comme _aim_at, mais BORNE au debattement reel de la tete, et repete jusqu'a
+## ce que `obj` soit vraiment sous le viseur.
+##
+## Deux raisons. Un banc qui vise par-dela les butees mesure une pose que le
+## joueur ne peut pas prendre — c'est comme ca qu'on croit avoir acces a un coin
+## de la banquette qu'on ne peut en realite meme pas regarder. Et la tete se
+## DEPLACE en visant (on se retourne, on se penche), donc un calcul unique vise
+## a cote : on corrige jusqu'a ce que le point s'allume, exactement comme un
+## joueur.
+## Part de l'ecart qu'une passe rattrape. La tete se DEPLACE en tournant : viser
+## est donc un point fixe, pas un calcul. Sauter d'un coup sur l'angle calcule
+## depasse et repart en sens inverse — le banc oscillait sans jamais se poser.
+## En n'en reprenant qu'un peu moins de la moitie, la suite converge.
+const AIM_DAMP := 0.45
+
+func _aim_clamped(point: Vector3, obj: Node3D = null, passes := 8) -> bool:
+	for i in passes:
+		var dir: Vector3 = (point - car.head.position).normalized()
+		var want_pitch := clampf(asin(clampf(dir.y, -1.0, 1.0)),
+			-deg_to_rad(car.pitch_limit), deg_to_rad(car.pitch_limit))
+		var cur: float = car.head.rotation.y
+		# La butee droite est celle DU MOMENT : elle s'ouvre en se penchant.
+		var want_yaw := clampf(atan2(-dir.x, -dir.z),
+			-deg_to_rad(car.yaw_limit_right + car.lean_yaw_bonus * car.lean_amount()),
+			deg_to_rad(car.yaw_limit_left))
+		car.head.rotation = Vector3(
+			lerpf(car.head.rotation.x, want_pitch, AIM_DAMP),
+			lerpf(cur, want_yaw, AIM_DAMP),
+			0.0)
+		await get_tree().create_timer(0.25).timeout
+		if obj != null and car.interaction.target == obj:
+			return true
+	return obj == null
+
+
+## Vrai si la tete est dans la boite de l'habitacle (car.gd). Le plafond du
+## volant n'y est pas repris : on verifie l'enveloppe, pas le detail.
+func _in_cabin(p: Vector3) -> bool:
+	var lo: Vector3 = CarScript.LEAN_MIN
+	var hi: Vector3 = CarScript.LEAN_MAX
+	return p.x >= lo.x - 0.002 and p.x <= hi.x + 0.002 \
+		and p.y >= lo.y - 0.002 and p.y <= hi.y + 0.002 \
+		and p.z >= lo.z - 0.002 and p.z <= hi.z + 0.002
 
 
 ## Banc d'essai de la boite : plein gaz dans chaque rapport, on releve la
@@ -806,6 +2099,69 @@ func _auto_capture() -> void:
 	get_tree().quit()
 
 
+## Verifie que la lune est la ou on la croit. Le piege : le disque et la lumiere
+## sont deux objets differents, et rien n'empeche de les faire diverger — on
+## aurait alors un clair de lune venant d'un coin de ciel vide. On mesure donc
+## l'ecart entre les deux directions AVANT de regarder l'image ; puis on verifie
+## qu'elle tombe dans le pare-brise, et pas derriere le pavillon.
+func _moon_test() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	car.gear = 4
+	car.speed = 14.0
+	await get_tree().create_timer(1.6).timeout
+
+	var disc: MeshInstance3D = _moon.get_node("Disc")
+	var light: DirectionalLight3D = _moon.get_node("Light")
+	var cam: Camera3D = car.cam
+	var to_disc: Vector3 = (disc.global_position - cam.global_position).normalized()
+	# +Z de la lumiere : la direction d'ou elle vient, donc la lune elle-meme.
+	var from_light: Vector3 = light.global_transform.basis.z
+
+	# Rayon apparent : on projette le centre, puis un point decale du rayon du
+	# disque le long de l'axe horizontal de la camera.
+	var radius: float = (disc.mesh as QuadMesh).size.x / MOON_HALO_RATIO * 0.5
+	var centre := cam.unproject_position(disc.global_position)
+	var bord := cam.unproject_position(
+			disc.global_position + cam.global_transform.basis.x * radius)
+	var vue := get_viewport().get_visible_rect()
+
+	# L'ecart n'est pas tout a fait nul et ne peut pas l'etre : le disque est a
+	# 260 m, pas a l'infini, et l'oeil du conducteur n'est pas sur le noeud Moon.
+	# 1,2 m de decalage a 260 m font 0,26 degre. Au-dela de 0,5, c'est un bug.
+	print("lune : ecart disque/lumiere = %.3f deg   (parallaxe de l'oeil, < 0.5)" % \
+			rad_to_deg(to_disc.angle_to(from_light)))
+	print("       hauteur = %.1f deg   distance = %.0f m   rayon = %.0f px" % [
+			rad_to_deg(asin(to_disc.y)), cam.global_position.distance_to(disc.global_position),
+			centre.distance_to(bord)])
+	print("       ecran = %s   dans le champ = %s   devant = %s" % [
+			centre.round(), vue.has_point(centre),
+			not cam.is_position_behind(disc.global_position)])
+
+	# Vue du siege, tete au repos : la seule qui compte, celle du joueur qui
+	# roule. Viser la lune avec la tete n'apprend rien — le pavillon la cache
+	# bien avant que le regard ne l'atteigne.
+	car.head.rotation = Vector3.ZERO
+	await get_tree().create_timer(0.6).timeout
+	await _shot("19_lune_pare_brise.png")
+
+	# Vue degagee, hors de l'habitacle : pour juger le disque et son halo seuls,
+	# sans montant ni pavillon pour les couper.
+	var sky := Camera3D.new()
+	sky.fov = 34.0
+	sky.far = 900.0
+	add_child(sky)
+	sky.global_position = car.global_position + Vector3(0.0, 2.2, 0.0)
+	sky.look_at(disc.global_position, Vector3.UP)
+	sky.make_current()
+	await get_tree().create_timer(0.5).timeout
+	await _shot("19_lune_ciel.png")
+	sky.queue_free()
+	car.cam.make_current()
+
+	await get_tree().create_timer(0.3).timeout
+	get_tree().quit()
+
+
 func _build_environment() -> void:
 	var env := Environment.new()
 
@@ -854,14 +2210,49 @@ func _build_environment() -> void:
 	world.environment = env
 	add_child(world)
 
-	# Clair de lune : juste assez pour deviner les silhouettes dans le brouillard.
-	var moon := DirectionalLight3D.new()
-	moon.name = "Moon"
-	moon.light_color = Color(0.55, 0.64, 0.90)
-	moon.light_energy = moon_energy
-	moon.shadow_enabled = false
-	moon.rotation_degrees = Vector3(-52.0, 35.0, 0.0)
-	add_child(moon)
+
+## La lune : le disque qu'on voit et la lumiere qui en vient, portes par le meme
+## noeud pour qu'ils ne puissent pas diverger. Deplacer "Moon" dans l'inspecteur
+## deplace les deux ensemble.
+func _build_moon() -> void:
+	_moon = Node3D.new()
+	_moon.name = "Moon"
+	# X = -elevation : la lumiere descend vers le sol, donc la lune monte.
+	# Y = 180 - azimut : a 180 elle est droit devant (la voiture part vers -Z),
+	# et un azimut positif la fait glisser vers la droite du pare-brise.
+	_moon.rotation_degrees = Vector3(-moon_elevation, 180.0 - moon_azimuth, 0.0)
+	add_child(_moon)
+
+	# Clair de lune : juste assez pour deviner les silhouettes dans le
+	# brouillard. Pas d'ombres : a 0.05 d'energie elles seraient invisibles et
+	# couteraient une passe d'ombre directionnelle par image.
+	var light := DirectionalLight3D.new()
+	light.name = "Light"
+	light.light_color = Color(0.55, 0.64, 0.90)
+	light.light_energy = moon_energy
+	light.shadow_enabled = false
+	_moon.add_child(light)
+
+	# Le disque se place a l'oppose du sens d'eclairage (+Z local) : la lumiere
+	# part bien de la lune qu'on voit.
+	var span := 2.0 * MOON_DISTANCE * tan(deg_to_rad(moon_apparent_size) * 0.5)
+	var quad := QuadMesh.new()
+	quad.size = Vector2.ONE * span * MOON_HALO_RATIO
+
+	var mat := ShaderMaterial.new()
+	mat.shader = preload("res://shaders/moon.gdshader")
+	mat.set_shader_parameter("disc_radius", 1.0 / MOON_HALO_RATIO)
+
+	var disc := MeshInstance3D.new()
+	disc.name = "Disc"
+	disc.mesh = quad
+	disc.material_override = mat
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	disc.position = Vector3(0.0, 0.0, MOON_DISTANCE)
+	# Le quad pivote dans le vertex shader : sa boite englobante, elle, reste
+	# plate et de travers. Sans marge, la lune clignote quand on tourne la tete.
+	disc.extra_cull_margin = quad.size.x
+	_moon.add_child(disc)
 
 
 ## Tramage plein ecran. Couche 0 : il passe par-dessus la 3D mais sous le HUD
