@@ -117,6 +117,31 @@ const GEAR_PULL := [0.85, 0.0, 1.0, 0.68, 0.46, 0.33, 0.24]
 @export var over_rev_brake := 10.0     # freinage moteur en sur-regime
 @export var idle_rpm := 850.0
 @export var redline_rpm := 6800.0
+## Sous ce regime, en prise, le moteur meurt. 450 tr/min : un moteur chaud tient
+## son ralenti a 850 et s'arrete vers 400-500 quand la boite le tire plus bas.
+@export var stall_rpm := 450.0
+## Combien de temps le moteur broute avant de mourir.
+##
+## Ce n'est pas de la clemence, c'est ce qui rend le depart possible. A l'instant
+## ou l'on lache l'embrayage a l'arret, la vitesse est nulle, donc le regime
+## aussi : sans ce delai, tout depart calerait, y compris plein gaz. Avec, la
+## voiture a le temps de prendre les quelques km/h qui remontent le regime — et
+## si le pied reste leve, elle ne les prend pas et ca cale. C'est exactement le
+## comportement qu'on veut, et il tombe tout seul.
+##
+## Un vrai moteur ne s'arrete pas non plus sur une image : il tousse d'abord.
+@export var stall_grace := 0.7
+## Regime auquel le demarreur entraine le moteur. A garder egal a STARTER_RPM de
+## tools/make_starter_sounds.py : la cadence des compressions du fichier est
+## calculee dessus, et l'aiguille la contredirait.
+@export var starter_rpm := 250.0
+## Combien de temps le demarreur tourne avant que le moteur prenne.
+@export var start_time := 0.6
+## Frein moteur d'un moteur ARRETE, en prise, en 1re. Plus fort que le frein
+## moteur ordinaire : un moteur qui tourne est emporte par sa propre inertie,
+## un moteur cale ne fait que resister. C'est ce qui plante la voiture quand on
+## cale en roulant.
+@export var stall_drag := 6.0
 ## Vitesse a laquelle le regime retombe A VIDE (debraye ou au point mort), en
 ## tr/min par seconde, lineaire : le volant moteur freine a couple constant.
 ## 3500, c'est la ligne rouge au ralenti en 1,7 s. Avant il retombait en lerp
@@ -339,6 +364,14 @@ var _prev_speed := 0.0
 ## Vrai pendant une coupure d'allumage du rupteur. Lu par le son.
 var limiter_cut := false
 var _limiter_timer := 0.0
+## Moteur arrete. Il ne pousse plus, il freine, et il faut le demarreur.
+var stalled := false
+## Vrai tant que le demarreur tourne. Lu par le son et par le HUD.
+var cranking := false
+var _stall_timer := 0.0
+var _start_timer := 0.0
+var _starter_snd: AudioStreamPlayer
+var _stall_snd: AudioStreamPlayer
 
 var head: Node3D
 var cam: Camera3D
@@ -402,6 +435,8 @@ func _ready() -> void:
 	cabin_audio.outside_bus = CABIN_BUS
 	cabin_audio.door_bus = DOOR_BUS
 	add_child(cabin_audio)
+
+	_build_starter_audio()
 	# Le conducteur anime le volant et les leviers du modele Blender plutot que
 	# d'en fabriquer en primitives.
 	driver.use_controls(cabin.wheel_tilt, cabin.wheel_spin, cabin.shift_pivot,
@@ -448,6 +483,26 @@ func _physics_process(delta: float) -> void:
 	var v := absf(speed)
 	var engaged := not clutch and gear != GEAR_N
 
+	# --- demarreur -------------------------------------------------------
+	# On ne demarre qu'embraye ou au point mort. Une EF de 1990 n'a pas de
+	# contacteur qui l'impose — c'est la MECANIQUE qui l'impose : lancer un
+	# moteur mort avec un rapport engage, c'est demander au demarreur de pousser
+	# la voiture. Il n'en a pas la force, la voiture sursaute et rien ne part.
+	cranking = stalled and Input.is_action_pressed("starter")
+	if cranking and (clutch or gear == GEAR_N):
+		_start_timer += delta
+		if _start_timer >= start_time:
+			stalled = false
+			cranking = false
+			_start_timer = 0.0
+			rpm = idle_rpm
+			_stall_timer = 0.0
+	else:
+		_start_timer = 0.0
+		if cranking and _flash_timer <= 0.0:
+			_show_flash("DEBRAYE POUR DEMARRER (MAJ)")
+	_update_starter_sound()
+
 	# --- rupteur ---------------------------------------------------------
 	# Coupure d'allumage : des que le regime touche la ligne rouge, plus de
 	# poussee pendant limiter_cut_time, frein moteur, puis ca repart. C'est ce
@@ -464,7 +519,18 @@ func _physics_process(delta: float) -> void:
 	if engaged:
 		var top: float = GEAR_TOP[gear]
 		var pull: float = GEAR_PULL[gear]
-		if throttle > 0.0 and not limiter_cut:
+		if stalled and cranking:
+			# Rapport engage : le demarreur pousse LA VOITURE au lieu de lancer
+			# le moteur, et il n'en a pas la force. Elle avance de quelques
+			# centimetres, elle sursaute, et rien ne part. C'est la raison
+			# mecanique pour laquelle on demarre embraye — pas une regle du jeu.
+			var dir := -1.0 if gear == GEAR_R else 1.0
+			speed = move_toward(speed, dir * 0.45, 2.0 * delta)
+		elif stalled:
+			# Moteur mort : l'accelerateur ne commande plus rien, et la boite
+			# traine un moteur qui resiste. C'est ce qui plante la voiture.
+			speed = move_toward(speed, 0.0, stall_drag * pull * delta)
+		elif throttle > 0.0 and not limiter_cut:
 			var dir := -1.0 if gear == GEAR_R else 1.0
 			speed += dir * engine_power * pull * throttle * _torque(rpm) * delta
 		else:
@@ -495,8 +561,24 @@ func _physics_process(delta: float) -> void:
 
 	# --- regime moteur ---------------------------------------------------
 	var target_rpm := 0.0
-	if engaged:
-		target_rpm = idle_rpm + (v / GEAR_TOP[gear]) * (redline_rpm - idle_rpm)
+	if stalled:
+		# Moteur arrete. Le demarreur, lui, le fait tourner a son propre regime
+		# — c'est ce qu'on voit a l'aiguille quand on tient la cle.
+		target_rpm = starter_rpm if cranking else 0.0
+	elif engaged:
+		# Type explicite : GEAR_TOP est un tableau const non type, ses elements
+		# sortent en Variant et `:=` ne peut rien en inferer.
+		var mapped: float = idle_rpm + (v / GEAR_TOP[gear]) * (redline_rpm - idle_rpm)
+		# SOUS la vitesse a laquelle ce rapport tourne au ralenti, c'est la boite
+		# qui mene le moteur, et elle le mene de moins en moins vite : le regime
+		# s'effondre au lieu de rester colle au ralenti. C'est ce facteur, et
+		# rien d'autre, qui rend le calage possible — sans lui le modele donnait
+		# 850 tr/min a l'arret en 5e, embrayage lache.
+		#
+		# Au-dessus, il vaut exactement 1 et le modele est celui d'avant, au
+		# tr/min pres : les vitesses maxi, le 0-100 et la courbe de couple de ce
+		# README ont tous ete mesures la, et aucun ne bouge.
+		target_rpm = mapped * clampf(v / _creep_speed(gear), 0.0, 1.0)
 	elif limiter_cut:
 		target_rpm = idle_rpm          # allumage coupe : le regime retombe
 	else:
@@ -511,7 +593,20 @@ func _physics_process(delta: float) -> void:
 		rpm = move_toward(rpm, target_rpm, rpm_fall_rate * delta)
 	else:
 		rpm = lerpf(rpm, target_rpm, clampf(delta * 7.0, 0.0, 1.0))
-	rpm = clampf(rpm, idle_rpm, redline_rpm)
+	# Plancher a ZERO, plus au ralenti : un moteur qu'on tire sous son ralenti
+	# descend pour de bon, et c'est la moitie du mecanisme du calage.
+	rpm = clampf(rpm, 0.0, redline_rpm)
+
+	# --- le moteur cale --------------------------------------------------
+	# Seulement EN PRISE : debraye ou au point mort, rien ne tire le moteur vers
+	# le bas, il tient son ralenti quoi qu'il arrive. C'est bien "lacher
+	# l'embrayage trop bas" qui cale, pas "rouler doucement".
+	if not stalled and engaged and rpm < stall_rpm:
+		_stall_timer += delta
+		if _stall_timer >= stall_grace:
+			_stall()
+	else:
+		_stall_timer = 0.0
 
 	# --- braquage --------------------------------------------------------
 	# Le volant est une PIECE MECANIQUE, pas un curseur : il garde l'angle ou on
@@ -722,7 +817,16 @@ func _process(delta: float) -> void:
 	if _cabin_lp != null:
 		_cabin_lp.cutoff_hz = lerpf(cabin_muffle_hz, cabin_open_hz,
 			pow(clampf(win_open, 0.0, 1.0), 0.6))
-	engine_audio.update(rpm, throttle, not clutch and gear != GEAR_N, delta, limiter_cut, win_open)
+	# Moteur mort : le son s'eteint AU RYTHME DU REGIME, qui plonge de son cote.
+	# C'est ce qui fait entendre un moteur qui meurt plutot qu'un volume qu'on
+	# baisse. Pendant le demarreur, en revanche, on coupe net : starter.wav
+	# contient deja les compressions du moteur entraine, et les deux ensemble
+	# feraient deux moteurs.
+	var running := 1.0
+	if stalled:
+		running = 0.0 if cranking else clampf(rpm / idle_rpm, 0.0, 1.0)
+	engine_audio.update(rpm, throttle, not clutch and gear != GEAR_N, delta,
+		limiter_cut, win_open, running)
 	cabin_audio.update(speed, gear, handbrake_on, delta, win_open)
 	cabin.set_gauges(absf(speed) * 3.6, rpm)
 	cabin.set_wheels(speed, steer, delta)
@@ -952,6 +1056,64 @@ func _torque(r: float) -> float:
 	return (0.35 + 0.65 * rise) * lerpf(0.55, 1.0, fade)
 
 
+## Vitesse a laquelle un rapport fait tourner le moteur A SON RALENTI.
+##
+## C'est la vitesse en dessous de laquelle il faut debrayer. Elle sort du meme
+## tableau que tout le reste : le rapport atteint la ligne rouge a GEAR_TOP,
+## donc le ralenti a GEAR_TOP * ralenti / ligne rouge. Rien a regler a la main,
+## et rien qui puisse se desynchroniser de GEAR_TOP.
+##
+##   1re 6,3   2e 10,8   3e 15,3   4e 19,4   5e 22,5   R 3,6  (km/h)
+##
+## C'est pour ca qu'on cale bien plus facilement en 5e qu'en 1re, sans qu'aucun
+## chiffre ne le dise nulle part : c'est la demultiplication qui le veut.
+func _creep_speed(g: int) -> float:
+	if g == GEAR_N:
+		return 0.0
+	return GEAR_TOP[g] * idle_rpm / redline_rpm
+
+
+## Le moteur meurt.
+func _stall() -> void:
+	stalled = true
+	_stall_timer = 0.0
+	_start_timer = 0.0
+	if _stall_snd:
+		_stall_snd.play()
+	_show_flash("CALE — K POUR DEMARRER")
+
+
+## Le demarreur tourne tant qu'on tient la touche. Le son est une BOUCLE, donc
+## on le lance et on l'arrete, on ne le rejoue pas : le relancer a chaque image
+## le remettrait a zero et on n'entendrait qu'une attaque repetee.
+func _update_starter_sound() -> void:
+	if not _starter_snd:
+		return
+	if cranking and not _starter_snd.playing:
+		_starter_snd.play()
+	elif not cranking and _starter_snd.playing:
+		_starter_snd.stop()
+
+
+## Charge les deux sons du demarreur. Ils vivent dans le bus de l'habitacle,
+## comme le moteur : ils viennent tous du meme endroit, sous le tablier.
+func _build_starter_audio() -> void:
+	_starter_snd = _load_snd("res://assets/audio/starter/starter.wav", -6.0)
+	_stall_snd = _load_snd("res://assets/audio/starter/stall.wav", -3.0)
+
+
+func _load_snd(path: String, db: float) -> AudioStreamPlayer:
+	if not ResourceLoader.exists(path):
+		push_warning("son absent : %s (lancer tools/make_starter_sounds.py)" % path)
+		return null
+	var p := AudioStreamPlayer.new()
+	p.stream = load(path)
+	p.volume_db = db
+	p.bus = CABIN_BUS
+	add_child(p)
+	return p
+
+
 ## Molette vers le haut : R -> N -> 1 -> 2 ... Vers le bas : l'inverse.
 func _change_gear(step: int) -> void:
 	_select_gear(clampi(gear + step, 0, GEAR_NAMES.size() - 1))
@@ -1153,7 +1315,7 @@ func _build_hud() -> void:
 	_hint.offset_right = 700.0
 	_hint.offset_bottom = -22.0
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hint.text = "ZQSD / WASD / fleches : conduire    Maj : embrayage    Molette : rapports, clic : point mort (ou lancer)\nH : phares    Espace : frein a main    Souris : regarder    Clic droit maintenu : se pencher"
+	_hint.text = "ZQSD / WASD / fleches : conduire    Maj : embrayage    Molette : rapports, clic : point mort (ou lancer)\nH : phares    K : demarreur    Espace : frein a main    Souris : regarder    Clic droit maintenu : se pencher"
 	_hint.add_theme_font_size_override("font_size", 14)
 	_hint.add_theme_color_override("font_color", Color(0.8, 0.82, 0.88, 0.5))
 	layer.add_child(_hint)
@@ -1166,11 +1328,15 @@ func _show_flash(text: String) -> void:
 
 func _update_hud(delta: float) -> void:
 	var kmh := int(round(absf(speed) * 3.6))
-	_hud.text = "%s    %d km/h\n%d tr/min%s" % [
-		GEAR_NAMES[gear], kmh, int(round(rpm)),
+	# Moteur arrete : on le dit a la place du regime. Zero tr/min se lit comme un
+	# compteur en panne, pas comme un moteur mort.
+	var line := "MOTEUR ARRETE" if stalled and not cranking \
+		else ("DEMARREUR" if cranking else "%d tr/min" % int(round(rpm)))
+	_hud.text = "%s    %d km/h\n%s%s" % [
+		GEAR_NAMES[gear], kmh, line,
 		"\nFREIN A MAIN" if handbrake_on else ""]
 	_hud.add_theme_color_override("font_color",
-		Color(1.0, 0.25, 0.15, 0.95) if rpm > redline_rpm * 0.9
+		Color(1.0, 0.25, 0.15, 0.95) if rpm > redline_rpm * 0.9 or stalled
 		else Color(1.0, 0.45, 0.22, 0.85))
 
 	_fps.text = "%d ips" % Engine.get_frames_per_second()

@@ -100,6 +100,8 @@ func _ready() -> void:
 		_moon_test()
 	elif "throwtest" in OS.get_cmdline_user_args():
 		_throw_test()
+	elif "stalltest" in OS.get_cmdline_user_args():
+		_stall_test()
 
 
 func _process(_delta: float) -> void:
@@ -548,6 +550,132 @@ func _mirror_test() -> void:
 	print("  REGLAGE CONSERVE  : %s" % (rad_to_deg(n2.angle_to(
 		mirror.global_transform.basis.z)) < 0.01))
 	get_tree().quit()
+
+
+## Banc d'essai du calage et du demarreur.
+##
+## Ce qu'on veut prouver tient en une phrase : c'est LACHER L'EMBRAYAGE qui
+## cale, pas rouler doucement. Les deux premiers essais sont donc la meme
+## situation — a l'arret, un rapport engage, pied leve — et ne different que par
+## la pedale d'embrayage. Si les deux calaient, ou si aucun ne calait, le
+## mecanisme serait branche sur autre chose que ce qu'on croit.
+##
+## On verifie ensuite qu'on peut PARTIR. C'est le vrai risque de cette
+## fonctionnalite : a l'instant ou l'on lache l'embrayage a l'arret, la vitesse
+## est nulle, donc le regime aussi, et un calage immediat rendrait tout depart
+## impossible. C'est stall_grace qui l'evite, et il faut le montrer.
+func _stall_test() -> void:
+	await get_tree().create_timer(0.6).timeout
+	print("au lancement       : %d tr/min   cale=%s   (point mort)" % [
+		roundi(car.rpm), car.stalled])
+	print("  son du demarreur : %s" % (car._starter_snd != null))
+	print("  son du calage    : %s" % (car._stall_snd != null))
+
+	# --- 1. debraye, a l'arret, en 1re : il TIENT --------------------------
+	car.gear = 2
+	car.speed = 0.0
+	await _act("clutch", true)
+	await get_tree().create_timer(car.stall_grace + 0.4).timeout
+	print("debraye, a l'arret : %d tr/min   cale=%s" % [roundi(car.rpm), car.stalled])
+	print("  IL TIENT         : %s   (rien ne tire le moteur vers le bas)" %
+		(not car.stalled))
+
+	# --- 2. le meme, embrayage lache : il CALE -----------------------------
+	await _act("clutch", false)
+	var died: bool = await _until(func(): return car.stalled, car.stall_grace + 1.5)
+	print("embrayage lache    : cale=%s   %d tr/min" % [died, roundi(car.rpm)])
+	print("  IL CALE          : %s" % died)
+
+	# Le moteur doit s'ETEINDRE, pas rester a regime : c'est ce que le son suit.
+	await get_tree().create_timer(0.8).timeout
+	print("  moteur eteint    : %s   (%d tr/min)" % [car.rpm < 60.0, roundi(car.rpm)])
+
+	# --- 3. cale, l'accelerateur ne commande plus rien ---------------------
+	car.debug_full_throttle = true
+	await get_tree().create_timer(1.2).timeout
+	print("plein gaz, cale    : %.2f km/h" % (car.speed * 3.6))
+	print("  RIEN NE PART     : %s" % (absf(car.speed) < 0.05))
+	car.debug_full_throttle = false
+
+	# --- 4. le demarreur, rapport engage : il POUSSE, il ne lance pas ------
+	var before: float = car.speed
+	await _act("starter", true)
+	await get_tree().create_timer(car.start_time + 0.6).timeout
+	print("demarreur en prise : cale=%s   %.2f km/h" % [car.stalled, car.speed * 3.6])
+	print("  IL NE PART PAS   : %s   (on demarre embraye)" % car.stalled)
+	print("  ELLE SURSAUTE    : %s   (avance de %.2f m/s)" % [
+		car.speed - before > 0.05, car.speed - before])
+	await _act("starter", false)
+
+	# --- 5. le demarreur, embraye : il LANCE -------------------------------
+	await _act("clutch", true)
+	await _act("starter", true)
+	var lit: bool = await _until(func(): return not car.stalled, car.start_time + 1.5)
+	await _act("starter", false)
+	print("demarreur embraye  : demarre=%s   %d tr/min" % [lit, roundi(car.rpm)])
+	print("  IL DEMARRE       : %s" % lit)
+	print("  AU RALENTI       : %s   (%d tr/min, ralenti %d)" % [
+		absf(car.rpm - car.idle_rpm) < 200.0, roundi(car.rpm), roundi(car.idle_rpm)])
+
+	# --- 6. on peut PARTIR de l'arret ---------------------------------------
+	# Le risque de cette fonctionnalite, et la raison d'etre de stall_grace.
+	car.speed = 0.0
+	car.gear = 2
+	car.debug_full_throttle = true
+	await _act("clutch", false)
+	await get_tree().create_timer(2.5).timeout
+	print("depart plein gaz   : cale=%s   %.1f km/h" % [car.stalled, car.speed * 3.6])
+	print("  ELLE PART        : %s   (sans caler)" % (
+		not car.stalled and car.speed * 3.6 > 8.0))
+	car.debug_full_throttle = false
+
+	# --- 7. pied leve au meme endroit : elle cale ---------------------------
+	# Le pendant du precedent. Meme rapport, meme depart, seule la pedale de
+	# droite change : c'est elle qui fait la difference, et rien d'autre.
+	car.speed = 0.0
+	var stalls: bool = await _until(func(): return car.stalled, car.stall_grace + 1.5)
+	print("depart pied leve   : cale=%s" % stalls)
+	print("  ELLE CALE        : %s" % stalls)
+
+	# --- 8. la demultiplication decide, pas un reglage ----------------------
+	# On ne cale pas a la meme vitesse selon le rapport, et personne n'a ecrit
+	# ces vitesses nulle part : elles sortent de GEAR_TOP.
+	print("vitesse de ralenti par rapport (en dessous, il faut debrayer) :")
+	for g in range(car.GEAR_NAMES.size()):
+		if g == car.GEAR_N:
+			continue
+		print("  %-2s  %5.1f km/h" % [car.GEAR_NAMES[g], car._creep_speed(g) * 3.6])
+
+	# Et on le VERIFIE sur deux rapports opposes, a une MEME vitesse choisie
+	# entre les deux : la 5e doit caler la ou la 1re tient sans broncher.
+	#
+	# La vitesse est MAINTENUE pendant la mesure, et c'est tout le sujet. Pied
+	# leve, une voiture ralentit jusqu'a l'arret et finit par caler dans
+	# n'importe quel rapport : un banc qui la laisse faire mesure le frein
+	# moteur, pas la demultiplication, et il voit deux calages qui ne prouvent
+	# rien. En tenant la vitesse, le seul terme qui change d'un essai a l'autre
+	# est le rapport engage.
+	var probe: float = car._creep_speed(2) * 0.8      # 80 % du ralenti de 1re
+	for g in [2, 6]:
+		await _restart_engine()
+		car.gear = g
+		await _act("clutch", false)
+		for i in 100:                                  # ~1,7 s a vitesse tenue
+			car.speed = probe
+			await get_tree().physics_frame
+		print("  a %.1f km/h en %-2s : %4d tr/min   cale=%s" % [
+			probe * 3.6, car.GEAR_NAMES[g], roundi(car.rpm), car.stalled])
+	get_tree().quit()
+
+
+## Remet le moteur en marche entre deux essais, au point mort pour qu'il y reste.
+func _restart_engine() -> void:
+	car.gear = car.GEAR_N
+	await _act("clutch", true)
+	if car.stalled:
+		await _act("starter", true)
+		await _until(func(): return not car.stalled, car.start_time + 1.5)
+		await _act("starter", false)
 
 
 func _move_mouse(rel: Vector2) -> void:

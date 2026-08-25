@@ -16,6 +16,7 @@ Ouvrir le projet dans Godot 4.8 et appuyer sur F5.
 | **Molette ↑ / ↓** | **monter / descendre les rapports** |
 | **Clic molette** | **point mort direct** (embrayage enfoncé) |
 | Espace | frein à main (maintenu en roulant, verrouillé à l'arrêt) |
+| **K** | **démarreur** (maintenu, embrayage enfoncé ou point mort) |
 | H | phares |
 | Souris | regarder autour |
 | **Clic droit maintenu** | **se pencher dans la direction du regard** (sauf arme en main : elle se lève) |
@@ -47,7 +48,21 @@ saute deux ou trois rapports d'un coup.
 
 Vitesses maxi mesurées (`godot --path . -- geartest`), sur le rupteur sauf la
 5e qui est limitée par la traînée :
-**50 / 87 / 122 / 155 / 172 km/h**, et 0-100 km/h en **12,0 s**.
+**50 / 87 / 122 / 155 / 172 km/h**, et 0-100 km/h en **12,2 s**.
+
+Le 0-100 était de 11,9 s avant le calage (voir « Caler ») : le départ passe
+désormais par un régime qui monte depuis zéro au lieu de commencer au ralenti,
+donc par le creux de couple, et les trois dixièmes sont là. Les vitesses maxi,
+elles, ne bougent pas d'un km/h — le facteur qui rend le calage possible vaut 1
+partout au-dessus de la vitesse de ralenti de chaque rapport.
+
+**Attention en relevant ces chiffres :** les vitesses maxi se mesurent sur 10 s
+*réelles* en `time_scale` 6, donc sur 60 s de jeu **si la machine suit**. Sur une
+machine chargée elle ne suit pas, les rapports longs n'ont pas le temps de
+converger, et on relit la fenêtre de mesure au lieu de la voiture — le même piège
+qu'au paragraphe précédent, par un autre chemin. Une 5e qui s'arrête sous le
+rupteur (ici 6536 tr/min) n'a pas fini de converger. Le 0-100 et le frein à main,
+eux, comptent en temps *simulé* et ne craignent rien.
 
 `engine_power` est passé de 6.0 à **4.2 m/s²** (0-100 : 8,1 s → 12,0 s) : la
 voiture accélérait trop fort pour ce qu'elle est censée être. Les vitesses maxi
@@ -76,6 +91,76 @@ un `lerp`, celui-ci n'atteint la ligne rouge qu'asymptotiquement.
 Quand tu débrayes, la main droite quitte le volant pour aller sur le levier, le
 levier se déplace dans sa grille en H, et le pied gauche appuie sur la pédale.
 
+### Caler
+
+Lâche l'embrayage trop bas et **le moteur meurt**. Il faut alors le relancer :
+**K maintenu**, embrayage enfoncé ou au point mort, et il repart après `start_time`.
+
+Ce n'est pas un test ajouté par-dessus le modèle, c'est un **plancher qu'on a
+retiré**. Le régime en prise valait `idle + (v/GEAR_TOP)·(ligne rouge − idle)`,
+qui donne le ralenti à l'arrêt : embrayage lâché, moteur calé sur 850 tr/min, la
+voiture immobile en 5e ronronnait comme au point mort. Il est maintenant
+multiplié par `v / creep_speed`, borné à 1 :
+
+```
+creep_speed(rapport) = GEAR_TOP · ralenti / ligne rouge
+```
+
+C'est la vitesse à laquelle un rapport fait tourner le moteur **à son ralenti**,
+et elle sort du même tableau que tout le reste — rien à régler à la main, rien
+qui puisse se désynchroniser de `GEAR_TOP` :
+
+| | R | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|---|
+| en dessous, il faut débrayer | 3,6 | 6,3 | 10,8 | 15,3 | 19,4 | 22,5 km/h |
+
+**Au-dessus, le facteur vaut exactement 1** et le modèle est celui d'avant, au
+tour près : les vitesses maxi, le 0-100 et la courbe de couple mesurés plus haut
+sont tous relevés là, et aucun ne bouge. En dessous, le régime s'effondre, et
+sous `stall_rpm` (450) le moteur meurt.
+
+Personne n'a écrit qu'on calait plus facilement en 5e qu'en 1re : c'est la
+**démultiplication** qui le veut, et elle tombe toute seule du tableau.
+
+**Le délai avant de mourir n'est pas de la clémence, c'est ce qui rend le départ
+possible.** À l'instant où l'on lâche l'embrayage à l'arrêt, la vitesse est
+nulle, donc le régime aussi : un calage immédiat rendrait *tout* départ
+impossible, y compris plein gaz. `stall_grace` (0,7 s) laisse à la voiture le
+temps de prendre les quelques km/h qui remontent le régime — et si le pied reste
+levé, elle ne les prend pas et ça cale. Le comportement qu'on voulait tombe tout
+seul, sans qu'on ait à distinguer les deux cas. Et un vrai moteur ne s'arrête pas
+non plus sur une image : il tousse d'abord.
+
+Moteur mort, l'accélérateur ne commande plus rien et la boîte traîne un moteur
+qui résiste (`stall_drag`, plus fort que le frein moteur ordinaire) : c'est ce
+qui **plante** la voiture au lieu de la laisser rouler en roue libre.
+
+**On démarre embrayé, et ce n'est pas une règle du jeu.** Une EF de 1990 n'a
+aucun contacteur qui l'impose ; c'est la mécanique. Lancer un moteur mort avec un
+rapport engagé, c'est demander au démarreur de pousser la voiture — il n'en a pas
+la force. Elle avance de quelques centimètres, elle sursaute, et rien ne part.
+C'est exactement ce que fait le jeu.
+
+Mesuré (`godot --headless --path . -- stalltest`) :
+
+| | |
+|---|---|
+| débrayé, à l'arrêt, en 1re | **850 tr/min**, il tient |
+| le même, embrayage lâché | **cale**, puis 0 tr/min |
+| plein gaz une fois calé | **0,00 km/h** — rien ne part |
+| démarreur, rapport engagé | ne démarre pas, la voiture **sursaute** de 0,45 m/s |
+| démarreur, embrayage enfoncé | **démarre**, 850 tr/min |
+| départ plein gaz depuis l'arrêt | **20,7 km/h sans caler** |
+| même départ, pied levé | **cale** |
+| à 5,0 km/h en 1re | **1156 tr/min**, tient |
+| à 5,0 km/h en 5e | **cale** |
+
+Les deux dernières lignes sont le cœur du banc, et la vitesse y est **maintenue**
+pendant la mesure. Pied levé, une voiture ralentit jusqu'à l'arrêt et finit par
+caler dans n'importe quel rapport : un banc qui la laisse faire mesure le frein
+moteur, pas la démultiplication, et il voit deux calages qui ne prouvent rien.
+C'est le premier défaut qu'a eu celui-ci.
+
 Le **frein à main** a deux comportements selon que la voiture roule ou non :
 
 - **En roulant** — il est actif tant que tu tiens Espace, comme un frein de
@@ -92,7 +177,14 @@ bascule : c'est ce qui le rend impossible à désynchroniser.
 C'est un frein **arrière seulement** : 4 m/s² en roulant, contre 17 pour la
 pédale. Il se raidit à 20 m/s² sous 4 m/s, sinon « serrer le frein » ne
 tiendrait pas la voiture. Mesuré (`godot --path . -- hbtest`) :
-**90 km/h → arrêt en 4,4 s**, et **0,0 km/h plein gaz en 1re, frein serré**.
+**90 km/h → arrêt en 3,8 s**, et **0,0 km/h plein gaz en 1re, frein serré**.
+
+C'était 4,4 s avant le calage, et la différence n'est pas dans le frein : à
+freiner à mort en 4e sans débrayer, **le moteur cale en route**, et un moteur
+calé retient la transmission plus fort qu'un moteur qui tourne (`stall_drag`
+contre `engine_brake`). Le banc mesure donc désormais le frein à main *plus* un
+calage — ce qui est bien ce que vit le joueur qui freine sans toucher à
+l'embrayage.
 
 Le **pied droit** passe de l'accélérateur au frein avec son propre
 amortissement, et se soulève au passage. L'entrée de freinage passe de 0 à 1 en
@@ -886,6 +978,49 @@ même image, les boucles restent en phase entre elles : en les fondant, les
 impulsions s'additionnent au lieu de se battre. D'où un fondu **linéaire**, pas
 à puissance constante.
 
+### Le démarreur et le calage
+
+```bash
+python tools/make_starter_sounds.py
+```
+
+écrit `assets/audio/starter/starter.wav` (bouclée) et `stall.wav`.
+
+**Un démarreur, ce sont deux machines à la fois**, et c'est leur superposition
+qui fait reconnaître le bruit. Le moteur électrique tourne treize fois plus vite
+que le vilebrequin (pignon de 9 dents sur une couronne de 120) : à 250 tr/min de
+vilebrequin il fait 3300 tr/min, et ses 9 dents engrènent à ~500 Hz — c'est le
+**sifflement**, la partie aiguë, celle qui ne varie pas. Dessous, le moteur
+thermique entraîné n'explose pas, il **comprime** : deux fois par tour, soit
+8,3 Hz, et c'est le « wouh-wouh-wouh » qu'on compte quand une voiture a du mal à
+partir. Le sifflement seul fait perceuse ; les compressions seules font moteur au
+ralenti.
+
+`STARTER_RPM` y est recopié depuis `car.gd` : la cadence des compressions du
+fichier en dépend, et l'aiguille du compte-tours la contredirait.
+
+**Le calage n'est pas un fondu.** Un moteur qui cale ne baisse pas le volume : il
+**ralentit**, ses compressions s'espacent, et il s'arrête sur l'une d'elles — la
+plus forte et la plus grave, celle que le vilebrequin n'a plus l'énergie de
+passer. Le fichier suit donc un régime qui tombe de 850 à 0 et place ses coups là
+où la **phase** du vilebrequin franchit un demi-tour, au lieu de les espacer « de
+plus en plus » à la main. Un fondu de volume, lui, s'entendrait comme quelqu'un
+qui baisse la radio.
+
+Côté jeu, l'extinction demande **les deux moitiés** : `car.gd` fait plonger le
+régime, les boucles moteur le suivent en pitch, et le nouveau paramètre `running`
+de [engine_audio.gd](scripts/engine_audio.gd) éteint le volume au même rythme.
+Sans `running`, on entendrait le moteur descendre indéfiniment dans les graves ;
+sans la descente de régime, on entendrait quelqu'un couper le son. Pendant le
+démarreur, en revanche, `running` tombe à zéro d'un coup : `starter.wav` contient
+déjà les compressions du moteur entraîné, et les deux ensemble feraient deux
+moteurs.
+
+Le raccord de la boucle est **mesuré**, pas supposé : 0,031 d'écart entre le
+dernier échantillon et le premier, pour un saut interne maximal de 0,046. Un
+raccord qui dépasse ce que le signal fait déjà tout seul s'entend comme un clic à
+chaque tour.
+
 Le reste est cosmétique : flottement du ralenti (`wobble`), rupteur qui hache
 (`limiter_hz`), volume qui monte avec le régime et la charge (`volume_db`).
 Les résonances et l'équilibre des couches se règlent en tête du script Python
@@ -985,6 +1120,8 @@ change un `volume_db` dans un script, le reporter dans `LEVELS`.
 | `scripts/cabin_audio.gd` | route, vent, levier, frein à main |
 | `tools/make_engine_sounds.py` | synthèse des boucles moteur (`assets/audio/engine/`) |
 | `tools/make_cabin_sounds.py` | synthèse des sons d'habitacle (`assets/audio/cabin/`) |
+| `tools/make_starter_sounds.py` | synthèse du démarreur et du calage (`assets/audio/starter/`) |
+| `tools/probe_surfaces.gd` | carte de hauteurs du maillage, comparée aux surfaces de dépose de `cabin.gd` |
 | `tools/render_audio_demo.py` | rendu hors ligne de tous les sons aux niveaux du jeu, pour la balance |
 | `shaders/retro.gdshader` | tramage ordonné (Bayer 4×4) |
 
@@ -1300,8 +1437,13 @@ regard bloqué, glace orientée, caméra virtuelle qui suit) et `-- visortest`
 non enterré dans la garniture) et `-- windowtest` (vitre : manivelle qui tourne,
 glace qui disparaît sous la ceinture, et les deux panneaux qui suivent) et
 `-- throwtest` (lancer : départ dans l'axe du regard, clic molette qui ne
-débraye pas, objet qui reste dans la caisse et se repose d'aplomb). Ils injectent de vrais
-événements d'entrée, ils ne rejouent pas la logique en double.
+débraye pas, objet qui reste dans la caisse et se repose d'aplomb) et
+`-- stalltest` (calage : ce qui tient débrayé meurt embrayage lâché, le
+démarreur ne lance rien en prise, et on part quand même de l'arrêt). Ils
+injectent de vrais événements d'entrée, ils ne rejouent pas la logique en double.
+
+`-- stalltest` se lance en `--headless` : il ne touche ni à la souris ni à
+l'image, et il y va cinq fois plus vite.
 
 Roule 2 secondes puis écrit plusieurs images dans
 `%APPDATA%/Godot/app_userdata/Nouveau projet de jeu/` : la vue de conduite, le
@@ -1313,6 +1455,8 @@ image plausible peut sortir d'une caméra mal placée, pas une erreur de 0 mm.
 
 ## Suite possible
 
-Calage moteur si on lâche l'embrayage trop bas (et son démarreur), clignotants,
-essuie-glaces et pluie, rétroviseur qui montre vraiment l'arrière
-(`SubViewport`), quelque chose sur la route.
+Clignotants, essuie-glaces et pluie, quelque chose sur la route.
+
+Le calage et son démarreur sont faits (voir « Caler »), les rétroviseurs
+montrent vraiment l'arrière depuis qu'ils ont chacun leur `SubViewport` (voir
+« Les rétroviseurs ») : les deux figuraient ici et n'y ont plus leur place.

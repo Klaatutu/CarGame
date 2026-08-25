@@ -104,8 +104,14 @@ func _exit_tree() -> void:
 ## vide et la charge est plus faible a accelerateur egal.
 ## limiter_cut : coupure d'allumage en cours (car.gd) ; la charge tombe a zero.
 ## window_open : ouverture acoustique des vitres, 0 fermees, 1 grande ouverte.
+## `running` : 0 quand le moteur est arrete. Ce n'est pas un simple interrupteur
+## de volume — le regime, lui, plonge vers zero de son cote, et les boucles le
+## suivent en pitch. Sans ce facteur on entendrait le moteur descendre a l'infini
+## dans les graves au lieu de s'arreter ; sans la descente de regime, on
+## entendrait quelqu'un baisser le son. Il faut les deux, et c'est car.gd qui
+## fait la premiere moitie.
 func update(rpm: float, throttle: float, engaged: bool, delta: float,
-		limiter_cut := false, window_open := 0.0) -> void:
+		limiter_cut := false, window_open := 0.0, running := 1.0) -> void:
 	if _points.size() < 2:
 		return
 
@@ -140,7 +146,7 @@ func update(rpm: float, throttle: float, engaged: bool, delta: float,
 	# puissance 0,6 ; la couche "dehors" est plus presente sous charge.
 	var open_fx := pow(clampf(window_open, 0.0, 1.0), 0.6)
 	var master := db_to_linear(volume_db) * lerpf(0.5, 1.0, norm) * lerpf(0.72, 1.0, _load) \
-		* (1.0 + window_boost * open_fx)
+		* (1.0 + window_boost * open_fx) * clampf(running, 0.0, 1.0)
 	var g_on := _load * master
 	var g_off := (1.0 - _load) * master
 	var g_out := open_fx * master * lerpf(0.4, 1.0, _load) * db_to_linear(window_volume_db)
