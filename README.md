@@ -320,7 +320,8 @@ Six pièges rencontrés, tous corrigés :
 
 - **Boîtes qui se chevauchent** — un objet coincé dans une intersection se fait
   éjecter. La console est désormais une seule boîte, pas un dessus posé sur un
-  caisson, et les deux morceaux de planche de bord sont jointifs.
+  caisson, et les quatre morceaux de planche de bord sont jointifs — ils se
+  touchent en z sans jamais se recouvrir.
 - **Tunnelling** — une dalle de 2 cm se fait traverser par un objet qui tombe de
   6 cm par image. Les boîtes sont épaisses vers le bas (elles sont invisibles) et
   l'intégration se fait en sous-pas de 2 cm.
@@ -376,12 +377,55 @@ C'est ce qui a corrigé « je ne peux pas saisir le paquet en roulant » : un
 serveur physique qu'au pas suivant. À 24 m/s le rayon passait **40 cm à côté** —
 à l'arrêt l'écart était nul, d'où l'impression que ça ne marchait que garé.
 
-Les surfaces de dépose sont **sept boîtes** déclarées dans
+Les surfaces de dépose sont **dix boîtes** déclarées dans
 [cabin.gd](scripts/cabin.gd) : les deux assises avant, la banquette arrière, le
-dessus de console, le plancher, et le tableau de bord en deux morceaux — la
-casquette pleine largeur au ras du pare-brise, plus la partie profonde côté
-passager. Côté conducteur cette partie-là est exclue : c'est le bloc compteurs,
-encastré dans la planche, et un objet posé dessus flotterait.
+dessus de console, le plancher en deux morceaux, et le tableau de bord en
+quatre — la casquette pleine largeur au ras du pare-brise, puis la partie
+profonde côté passager, chacune en deux bandes. Côté conducteur cette partie-là
+est exclue : c'est le bloc compteurs, encastré dans la planche.
+
+### Elles sont relevées sur le maillage, pas estimées
+
+Ces boîtes étaient saisies à la main, et rien ne garantissait qu'elles collent
+au modèle. [probe_surfaces.gd](tools/probe_surfaces.gd) lit le `.glb`, projette
+tous les triangles **tournés vers le haut** sur une grille en x/z, garde le plus
+haut — c'est exactement ce sur quoi un objet se poserait — et compare le relevé
+à chaque boîte déclarée :
+
+```bash
+godot --headless --path . --script res://tools/probe_surfaces.gd
+```
+
+Il a trouvé deux boîtes fausses, et le défaut ne se lisait dans aucune
+coordonnée : il fallait la carte du maillage réel.
+
+- **La casquette flottait de 8 à 22 mm.** Un seul plan à 0,955 sur toute sa
+  profondeur, alors que la tôle est **galbée** : 0,933 au ras du pare-brise,
+  0,947 en arrière sur le capot des compteurs.
+- **La planche passager flottait de 35 mm**, et son emprise était fausse deux
+  fois. Elle courait jusqu'à z −0,50, soit **6 cm au-dessus du vide** — la tôle
+  s'arrête à −0,56, après quoi c'est la boîte à gants. Et son bord x 0,75
+  mordait sur le **montant A**, qui monte à 1,09 : d'où une couverture de 73 %,
+  et un objet qui pouvait aussi bien flotter de 30 cm que s'enfoncer de 13.
+
+Chaque morceau est maintenant **deux bandes** qui suivent le galbe, calées sur
+le point **haut** de ce qu'elles couvrent. Le sens du calage n'est pas
+symétrique : un plan trop haut fait léviter l'objet, un plan trop bas l'enfonce
+dans la tôle, et l'enfoncement est le pire des deux. C'est ce qui décide des
+grilles de dégivrage — 21 et 3 triangles, assez petites pour qu'on les ignore,
+mais elles **dépassent** de la planche, et les négliger mettait le plan 5 mm
+sous elles.
+
+Écart au maillage, avant et après :
+
+| | flottement | couverture |
+|---|---|---|
+| casquette | 8 à 22 mm | 92 % |
+| planche passager | jusqu'à 35 mm | 73 % |
+| **les quatre bandes** | **0 à 15 mm** | **100 %** (92 % pour la casquette avant) |
+
+Les 92 % qui restent sont structurels : ce sont les coins avant, où le
+pare-brise vient couper la planche en biais.
 
 La surbrillance passe par l'uniforme `emission` de `retro.gdshader`, noir par
 défaut donc sans effet sur le reste. Elle pulse lentement : dans le noir, un
@@ -389,6 +433,11 @@ défaut donc sans effet sur le reste. Elle pulse lentement : dans le noir, un
 
 Banc d'essai : `godot --path . -- packtest` vise, prend, déplace et repose le
 paquet en injectant de vrais clics, et vérifie qu'il redevient attrapable.
+
+Rétrécir ces boîtes rétrécit aussi les **parois** — `_surface()` déclare une
+surface de visée *et* une boîte pleine. C'est `-- throwtest` qui le contrôle,
+avec son balayage de 60 lancers dans tout l'éventail : **0 fuite**, dépassement
+maximal 0,000 m.
 
 ### Lancer
 

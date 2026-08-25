@@ -422,12 +422,36 @@ func _build_surfaces() -> void:
 	# La console EST son propre obstacle : une seule boite, pas un dessus pose
 	# sur un caisson, sinon les deux se chevauchent et ejectent ce qui traine.
 	_surface(Vector3(0.26, 0.28, 0.84), Vector3(0.0, 0.460, -0.24))     # console
-	# Planche de bord en deux morceaux JOINTIFS, pas superposes : la casquette
-	# pleine largeur au ras du pare-brise (z -0.92 a -0.70), puis la partie
-	# profonde cote passager (z -0.70 a -0.50). Cote conducteur cette
-	# derniere est occupee par le bloc compteurs, d'ou l'absence de boite.
-	_surface(Vector3(1.45, 0.20, 0.22), Vector3(0.0, 0.855, -0.81))     # haut de planche
-	_surface(Vector3(0.70, 0.20, 0.20), Vector3(0.40, 0.855, -0.60))    # planche passager
+	# Planche de bord en morceaux JOINTIFS, pas superposes : la casquette pleine
+	# largeur au ras du pare-brise, puis la partie profonde cote passager. Cote
+	# conducteur cette derniere est occupee par le bloc compteurs, d'ou l'absence
+	# de boite.
+	#
+	# Les cotes sont RELEVEES SUR LE MAILLAGE (tools/probe_surfaces.gd), pas
+	# estimees : un seul plan a 0,955 sur toute la planche faisait flotter ce
+	# qu'on y posait de 8 a 22 mm sur la casquette, et de 35 mm sur la partie
+	# passager. Un objet qui levite au-dessus de la tole se voit tout de suite.
+	#
+	# La casquette est GALBEE : elle sort a 0,933 au ras du pare-brise et monte a
+	# 0,947 en arriere, sur le capot des compteurs. Deux bandes la suivent, la
+	# seconde calee sur le point HAUT de ce qu'elle couvre — un plan sous le
+	# maillage enfoncerait l'objet dans la tole, ce qui est pire que le flottement
+	# qu'on corrige.
+	# Chaque bande est calee sur les grilles de degivrage, qui DEPASSENT de la
+	# tole : les ignorer parce qu'elles sont petites (21 et 3 triangles) mettait
+	# le plan 5 mm sous elles, et un objet pose la s'enfoncait dans la grille.
+	_surface(Vector3(1.40, 0.20, 0.14), Vector3(0.0, 0.845, -0.85))     # casquette, avant
+	_surface(Vector3(1.40, 0.20, 0.08), Vector3(0.0, 0.850, -0.74))     # casquette, arriere
+	# La planche passager s'arrete a z -0.57 : au-dela c'est le vide au-dessus de
+	# la boite a gants, et la boite s'y etendait de 6 cm. Elle s'arrete aussi a
+	# x 0.70 — a 0.75 son emprise mordait sur le montant A, qui monte a 1,09 et
+	# tirait la couverture de la sonde a 73 %.
+	#
+	# Elle plonge vers l'arriere (0,944 au ras de la casquette, 0,915 au bord),
+	# d'ou deux bandes ici aussi : un plan unique faisait flotter de 29 mm ce
+	# qu'on posait au bord, la ou la tole redescend vers la boite a gants.
+	_surface(Vector3(0.65, 0.20, 0.065), Vector3(0.375, 0.844, -0.6675))  # planche pass., avant
+	_surface(Vector3(0.65, 0.20, 0.065), Vector3(0.375, 0.830, -0.6025))  # planche pass., arriere
 	# Plancher en deux morceaux, de part et d'autre du tunnel de console, et sur
 	# TOUTE la longueur de l'habitacle : arrete aux pieds, un objet qui glisse
 	# vers l'arriere tombait dans le vide.
