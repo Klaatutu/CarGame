@@ -16,7 +16,8 @@ Ouvrir le projet dans Godot 4.8 et appuyer sur F5.
 | **Molette ↑ / ↓** | **monter / descendre les rapports** |
 | **Clic molette** | **point mort direct** (embrayage enfoncé) |
 | Espace | frein à main (maintenu en roulant, verrouillé à l'arrêt) |
-| **K** | **démarreur** (maintenu, embrayage enfoncé ou point mort) |
+| **Clic gauche maintenu** sur la clé de contact | **la prendre** (caméra libre) |
+| **Molette ↑ / ↓**, clé en main | **démarrer** / **couper le moteur** |
 | H | phares |
 | Souris | regarder autour |
 | **Clic droit maintenu** | **se pencher dans la direction du regard** (sauf arme en main : elle se lève) |
@@ -93,8 +94,8 @@ levier se déplace dans sa grille en H, et le pied gauche appuie sur la pédale.
 
 ### Caler
 
-Lâche l'embrayage trop bas et **le moteur meurt**. Il faut alors le relancer :
-**K maintenu**, embrayage enfoncé ou au point mort, et il repart après `start_time`.
+Lâche l'embrayage trop bas et **le moteur meurt**. Il faut alors le relancer, et
+ça se fait **à la clé** — voir « La clé de contact » juste après.
 
 Ce n'est pas un test ajouté par-dessus le modèle, c'est un **plancher qu'on a
 retiré**. Le régime en prise valait `idle + (v/GEAR_TOP)·(ligne rouge − idle)`,
@@ -141,19 +142,81 @@ rapport engagé, c'est demander au démarreur de pousser la voiture — il n'en 
 la force. Elle avance de quelques centimètres, elle sursaute, et rien ne part.
 C'est exactement ce que fait le jeu.
 
-Mesuré (`godot --headless --path . -- stalltest`) :
+### La clé de contact
+
+On ne démarre pas à une touche : **on vise la clé**, on maintient le clic gauche
+pour la prendre, et la **molette** la tourne — vers le haut on lance, vers le bas
+on coupe.
+
+C'est **le geste de la manivelle de vitre**, et c'est voulu. La molette est le
+seul mouvement de la souris qui soit *rotatif*, et une clé de contact, ça tourne :
+le sens tombe alors tout seul — vers le haut on arme, vers le bas on coupe — au
+lieu d'être une convention à retenir. La caméra reste libre, comme à la
+manivelle : une clé, on la tourne sans la regarder.
+
+Pour [interaction.gd](scripts/interaction.gd), [ignition.gd](scripts/ignition.gd)
+**est** une manivelle : il expose `wind()`, donc le clic maintenu le fait passer
+en `GRIPPING`, et `crank()`, donc les crans lui parviennent. Rien n'a eu à changer
+là-bas — c'est tout l'intérêt d'avoir fait tenir le geste dans deux méthodes.
+
+**L'angle de la clé montre l'état du moteur, il ne le commande pas.** Il est
+déduit de `car` à chaque image et n'est jamais mémorisé : arrêt (0°), contact
+(−30°), et la position démarreur (−55°) pendant le lancement. Elle en revient donc
+toute seule quand le moteur prend, comme une vraie clé rappelée par son ressort,
+et elle reste juste même si on lâche le clic en plein lancement.
+
+Le démarreur, lui, **tourne seul une fois lancé**, jusqu'au bout de `start_time` :
+la clé donne un *coup* de démarreur, elle ne le tient pas. C'est ce que permet un
+geste ponctuel là où une touche se maintenait — un démarreur qui s'arrêterait au
+relâchement du clic serait intenable à la molette.
+
+Les trois pièces existaient déjà dans le `.glb` (`STR_Ignition` le barillet,
+`STR_Key` le panneton, `STR_KeyHead` la tête) : seules les deux dernières passent
+sous le pivot, le barillet est vissé à la colonne. **L'axe n'est pas deviné**,
+c'est la droite qui joint le centre du barillet à celui de la tête — la clé
+elle-même. Lire l'axe long de l'AABB du barillet donnerait le mauvais : il fait
+20 mm de long pour 24 de diamètre, sa boîte est plus large que profonde. Son
+*sens* est choisi pour pointer vers le conducteur, ce qui donne un sens à
+« horaire » quelle que soit l'orientation du modèle.
+
+Mesuré (`godot --path . -- stalltest`, avec fenêtre) :
 
 | | |
 |---|---|
 | débrayé, à l'arrêt, en 1re | **850 tr/min**, il tient |
 | le même, embrayage lâché | **cale**, puis 0 tr/min |
 | plein gaz une fois calé | **0,00 km/h** — rien ne part |
-| démarreur, rapport engagé | ne démarre pas, la voiture **sursaute** de 0,45 m/s |
-| démarreur, embrayage enfoncé | **démarre**, 850 tr/min |
-| départ plein gaz depuis l'arrêt | **20,7 km/h sans caler** |
+| clé tournée, rapport engagé | ne démarre pas, la voiture **sursaute de 0,45 m/s** |
+| clé tournée, embrayage enfoncé | **démarre**, 850 tr/min |
+| la clé a tourné | arrêt **0°** → contact **−30°** |
+| revenue de la position démarreur | oui (contact −30°, démarreur −55°) |
+| molette vers le bas | **contact coupé**, clé revenue à **0°** |
+| départ plein gaz depuis l'arrêt | **21,2 km/h sans caler** |
 | même départ, pied levé | **cale** |
 | à 5,0 km/h en 1re | **1156 tr/min**, tient |
 | à 5,0 km/h en 5e | **cale** |
+
+Le banc **injecte de vrais clics et de vrais crans** plutôt que d'appeler
+`car.key_start()` par en dessous : ce qui doit être éprouvé, c'est la chaîne
+visée → prise → molette. Appeler la méthode directement prouverait que le moteur
+démarre, et rien du tout sur la façon dont on le démarre.
+
+Il écrit aussi `19_cle_arret.png` et `19_cle_contact.png`, de part et d'autre du
+geste. Ce n'est pas de l'illustration : **le sens de rotation ne se lit dans
+aucun chiffre**. Un signe faux donnerait exactement les mêmes 30°, de l'autre
+côté de l'axe, et tous les tests passeraient pendant qu'à l'écran la clé
+tournerait à l'envers. Il faut le voir.
+
+Deux pièges y sont tombés, tous deux du banc et non du jeu :
+
+- **`--headless` ne peut pas cliquer.** `interaction.gd` ignore la souris tant
+  qu'elle n'est pas capturée, ce qu'un moteur sans fenêtre ne peut pas offrir :
+  la clé était visée, mais l'état restait `IDLE` et pas un cran ne passait. Tous
+  les bancs à clics tournent donc avec une fenêtre.
+- **Le sursaut se mesure PENDANT.** Le démarreur pousse la voiture puis s'arrête,
+  et `stall_drag` la ramène à zéro en un dixième de seconde. Relever la vitesse
+  une fois tout fini, c'est mesurer le retour au calme et conclure qu'il ne s'est
+  rien passé. On suit donc la pointe.
 
 Les deux dernières lignes sont le cœur du banc, et la vitesse y est **maintenue**
 pendant la mesure. Pied levé, une voiture ralentit jusqu'à l'arrêt et finit par
@@ -1110,6 +1173,7 @@ change un `volume_db` dans un script, le reporter dans `LEVELS`.
 | `scripts/mirror.gd` | rétroviseur : vrai miroir plan (SubViewport + caméra à l'œil réfléchi) |
 | `scripts/visor.gd` | pare-soleil : bascule autour de sa tige, placé à la souris |
 | `scripts/window.gd` | vitres de portière, descendues à la manivelle |
+| `scripts/ignition.gd` | clé de contact : prise au clic, tournée à la molette |
 | `scripts/prop.gd` | objets libres de l'habitacle : simulation en repère voiture, frottement de Coulomb |
 | `scripts/road.gd` | route infinie et lisse, arbres, poteaux, voiture de police |
 | `scripts/police_car.gd` | voiture de police garée (`police_car.glb`) : gyrophares rotatifs, faisceaux bleus |
@@ -1438,12 +1502,15 @@ non enterré dans la garniture) et `-- windowtest` (vitre : manivelle qui tourne
 glace qui disparaît sous la ceinture, et les deux panneaux qui suivent) et
 `-- throwtest` (lancer : départ dans l'axe du regard, clic molette qui ne
 débraye pas, objet qui reste dans la caisse et se repose d'aplomb) et
-`-- stalltest` (calage : ce qui tient débrayé meurt embrayage lâché, le
-démarreur ne lance rien en prise, et on part quand même de l'arrêt). Ils
-injectent de vrais événements d'entrée, ils ne rejouent pas la logique en double.
+`-- stalltest` (calage et clé de contact : ce qui tient débrayé meurt embrayage
+lâché, la clé tournée ne lance rien en prise, et on part quand même de l'arrêt).
+Ils injectent de vrais événements d'entrée, ils ne rejouent pas la logique en
+double.
 
-`-- stalltest` se lance en `--headless` : il ne touche ni à la souris ni à
-l'image, et il y va cinq fois plus vite.
+**Aucun banc à clics ne tourne en `--headless`** : `interaction.gd` ignore la
+souris tant qu'elle n'est pas capturée, ce qu'un moteur sans fenêtre ne peut pas
+offrir. Le symptôme est trompeur — la cible est bien visée, l'objet se met même
+en surbrillance, mais l'état reste `IDLE` et pas un clic ne passe.
 
 Roule 2 secondes puis écrit plusieurs images dans
 `%APPDATA%/Godot/app_userdata/Nouveau projet de jeu/` : la vue de conduite, le

@@ -599,23 +599,63 @@ func _stall_test() -> void:
 
 	# --- 4. le demarreur, rapport engage : il POUSSE, il ne lance pas ------
 	var before: float = car.speed
-	await _act("starter", true)
-	await get_tree().create_timer(car.start_time + 0.6).timeout
-	print("demarreur en prise : cale=%s   %.2f km/h" % [car.stalled, car.speed * 3.6])
+	var reached: bool = await _turn_key(true)
+	print("cle visee et prise : %s" % reached)
+	# On suit la POINTE pendant le coup de demarreur, pas l'etat apres. La
+	# voiture sursaute et retombe : le demarreur s'arrete au bout de start_time
+	# et stall_drag la ramene a zero en un dixieme de seconde. Relever la vitesse
+	# une fois tout fini, c'est mesurer le retour au calme et conclure qu'il ne
+	# s'est rien passe — ce que ce banc a commence par faire.
+	var peak := 0.0
+	var left: float = car.start_time + 0.4
+	while left > 0.0:
+		await get_tree().physics_frame
+		left -= get_physics_process_delta_time()
+		peak = maxf(peak, absf(car.speed - before))
+	print("demarreur en prise : cale=%s   pointe %.2f m/s" % [car.stalled, peak])
 	print("  IL NE PART PAS   : %s   (on demarre embraye)" % car.stalled)
-	print("  ELLE SURSAUTE    : %s   (avance de %.2f m/s)" % [
-		car.speed - before > 0.05, car.speed - before])
-	await _act("starter", false)
+	print("  ELLE SURSAUTE    : %s   (%.2f m/s pendant le lancement)" % [
+		peak > 0.05, peak])
 
-	# --- 5. le demarreur, embraye : il LANCE -------------------------------
+	# --- 5. la cle, embraye : elle LANCE -----------------------------------
+	# Deux captures encadrent le geste : le sens de rotation ne se lit dans aucun
+	# chiffre — un signe faux donnerait exactement les memes degres, du mauvais
+	# cote de l'axe. Il faut le voir.
+	_env.ambient_light_energy = 2.2
 	await _act("clutch", true)
-	await _act("starter", true)
+	var angle_off: float = car.cabin.ignition._angle
+	await _aim_at(car.to_local(car.cabin.ignition.global_position))
+	await _shot("19_cle_arret.png")
+	await _turn_key(true)
 	var lit: bool = await _until(func(): return not car.stalled, car.start_time + 1.5)
-	await _act("starter", false)
-	print("demarreur embraye  : demarre=%s   %d tr/min" % [lit, roundi(car.rpm)])
-	print("  IL DEMARRE       : %s" % lit)
+	print("cle tournee embraye: demarre=%s   %d tr/min" % [lit, roundi(car.rpm)])
+	print("  ELLE DEMARRE     : %s" % lit)
 	print("  AU RALENTI       : %s   (%d tr/min, ralenti %d)" % [
 		absf(car.rpm - car.idle_rpm) < 200.0, roundi(car.rpm), roundi(car.idle_rpm)])
+
+	# La cle doit AVOIR TOURNE, et etre revenue du demarreur au contact toute
+	# seule. Un moteur qui demarre sans que rien ne bouge a l'ecran, c'est une
+	# touche deguisee en geste.
+	await get_tree().create_timer(0.6).timeout
+	var angle_run: float = car.cabin.ignition._angle
+	print("  ELLE A TOURNE    : %s   (arret %.0f deg -> contact %.0f deg)" % [
+		absf(angle_run - angle_off) > 5.0, angle_off, angle_run])
+	print("  REVENUE DU START : %s   (contact %.0f, demarreur %.0f)" % [
+		absf(angle_run) < car.cabin.ignition.start_angle - 5.0,
+		angle_run, -car.cabin.ignition.start_angle])
+	await _aim_at(car.to_local(car.cabin.ignition.global_position))
+	await _shot("19_cle_contact.png")
+
+	# --- 5 bis. molette vers le BAS : on coupe -----------------------------
+	await _turn_key(false)
+	await get_tree().create_timer(0.5).timeout
+	print("molette bas        : cale=%s   %d tr/min   cle a %.0f deg" % [
+		car.stalled, roundi(car.rpm), car.cabin.ignition._angle])
+	print("  CONTACT COUPE    : %s" % car.stalled)
+	print("  CLE SUR L'ARRET  : %s" % (absf(car.cabin.ignition._angle) < 5.0))
+	# Et on le relance pour la suite.
+	await _turn_key(true)
+	await _until(func(): return not car.stalled, car.start_time + 1.5)
 
 	# --- 6. on peut PARTIR de l'arret ---------------------------------------
 	# Le risque de cette fonctionnalite, et la raison d'etre de stall_grace.
@@ -673,9 +713,40 @@ func _restart_engine() -> void:
 	car.gear = car.GEAR_N
 	await _act("clutch", true)
 	if car.stalled:
-		await _act("starter", true)
+		await _turn_key(true)
 		await _until(func(): return not car.stalled, car.start_time + 1.5)
-		await _act("starter", false)
+
+
+## Vise la cle de contact, la prend, et donne UN cran de molette.
+##
+## `up` vrai : vers le haut, on lance. Faux : vers le bas, on coupe.
+##
+## C'est le geste complet, avec de vrais clics et de vrais crans — pas un appel
+## direct a car.key_start(). Ce qui doit etre eprouve ici, c'est justement la
+## chaine visee -> prise -> molette : appeler la methode par-dessous prouverait
+## que le moteur demarre, et rien du tout sur la facon dont on le demarre.
+func _turn_key(up: bool) -> bool:
+	var key: Node3D = car.cabin.ignition
+	if key == null:
+		print("PAS DE CLE DE CONTACT dans le .glb")
+		return false
+	var inter = car.interaction
+	var aimed := false
+	for i in 3:
+		await _aim_at(car.to_local(key.global_position))
+		aimed = inter.target == key
+		if aimed:
+			break
+	if not aimed:
+		return false
+
+	await _mouse(true)
+	# La main part chercher la cle : un cran donne avant qu'elle y soit ne
+	# compterait pas (interaction.gd exige _blend >= 1).
+	await get_tree().create_timer(0.9).timeout
+	await _wheel(1, MOUSE_BUTTON_WHEEL_UP if up else MOUSE_BUTTON_WHEEL_DOWN)
+	await _mouse(false)
+	return true
 
 
 func _move_mouse(rel: Vector2) -> void:

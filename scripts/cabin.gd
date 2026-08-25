@@ -25,6 +25,7 @@ const CigPack := preload("res://scripts/cig_pack.gd")
 const MirrorScript := preload("res://scripts/mirror.gd")
 const VisorScript := preload("res://scripts/visor.gd")
 const WindowScript := preload("res://scripts/window.gd")
+const IgnitionScript := preload("res://scripts/ignition.gd")
 const DomeLight := preload("res://scripts/dome_light.gd")
 
 ## Couche des solides de l'habitacle. La caisse elle-meme est sur la couche 1
@@ -207,6 +208,8 @@ var adjustables: Array[Node3D] = []
 var visors: Array[Node3D] = []
 ## Vitres de portiere (window.gd), manoeuvrees a la manivelle.
 var windows: Array[Node3D] = []
+## Cle de contact (ignition.gd). Null si le .glb ne la porte pas.
+var ignition: Node3D
 ## Reperes de prehension, en local de leur pivot, releves sur le modele.
 var knob_local := Vector3.ZERO
 var grip_local := Vector3.ZERO
@@ -229,6 +232,7 @@ func _ready() -> void:
 	_build_exterior()
 	_build_windows()      # apres l'exterieur : la glace exterieure en fait partie
 	_build_mirrors()
+	_build_ignition()
 
 
 ## Articule les deux vitres de portiere et leur manivelle.
@@ -268,6 +272,52 @@ func _build_windows() -> void:
 		crank.add_child(win)
 		win.setup(crank, panes, knob_c, signf(hub_c.x), knob)
 		windows.append(win)
+
+
+## Articule la cle de contact autour de l'axe de son barillet.
+##
+## Le .glb porte deja les trois pieces : STR_Ignition (le barillet, chrome, visse
+## a la colonne — il ne tourne pas), STR_Key (le panneton) et STR_KeyHead (la
+## tete de plastique, celle qu'on vise et qu'on attrape). Seules les deux
+## dernieres passent sous le pivot.
+##
+## L'AXE N'EST PAS DEVINE, il est relevé : c'est la droite qui joint le centre du
+## barillet a celui de la tete, c'est-a-dire la cle elle-meme. Lire l'axe long de
+## l'AABB du barillet ne marcherait pas — il fait 20 mm de long pour 24 de
+## diametre, sa boite est donc plus large que profonde et designerait le mauvais
+## axe.
+##
+## Son SENS compte, et il est choisi pour pointer vers le conducteur : c'est ce
+## qui donne un sens a "horaire" dans ignition.gd, quelle que soit l'orientation
+## du modele.
+func _build_ignition() -> void:
+	var barrel := find_child("STR_Ignition", true, false) as MeshInstance3D
+	var head := find_child("STR_KeyHead", true, false) as MeshInstance3D
+	if barrel == null or head == null:
+		push_warning("STR_Ignition ou STR_KeyHead introuvable : pas de cle de contact")
+		return
+
+	var barrel_c: Vector3 = (_relative_to(barrel, self) * barrel.mesh.get_aabb()).get_center()
+	var head_c: Vector3 = (_relative_to(head, self) * head.mesh.get_aabb()).get_center()
+	var axis := head_c - barrel_c
+	if axis.length() < 0.001:
+		push_warning("cle et barillet confondus : pas de cle de contact")
+		return
+	axis = axis.normalized()
+	# Vers le conducteur. EYE_REF n'a pas besoin d'etre exact : seul le SIGNE du
+	# produit scalaire compte, et l'oeil est a un demi-metre de la colonne.
+	if axis.dot(EYE_REF - barrel_c) < 0.0:
+		axis = -axis
+
+	var pivot := _make_pivot(self, Transform3D(Basis(), barrel_c),
+		["STR_Key", "STR_KeyHead"], self)
+	pivot.name = "IgnitionPivot"
+
+	var key: Node3D = IgnitionScript.new()
+	key.name = "Ignition"
+	pivot.add_child(key)
+	key.setup(pivot, head, head_c, axis)
+	ignition = key
 
 
 ## Articule les deux pare-soleil autour de leur tige.

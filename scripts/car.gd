@@ -460,6 +460,11 @@ func _ready() -> void:
 	interaction.adjustables = cabin.adjustables.duplicate()
 	interaction.adjustables.append_array(cabin.visors)
 	interaction.adjustables.append_array(cabin.windows)
+	# La cle de contact : meme geste que la manivelle, donc meme liste. C'est sa
+	# methode wind() qui lui vaut d'etre TENUE plutot que prise, pas cette ligne.
+	if cabin.ignition != null:
+		cabin.ignition.car = self
+		interaction.adjustables.append(cabin.ignition)
 	_spawn_props()
 
 	_build_lights()
@@ -484,23 +489,23 @@ func _physics_process(delta: float) -> void:
 	var engaged := not clutch and gear != GEAR_N
 
 	# --- demarreur -------------------------------------------------------
-	# On ne demarre qu'embraye ou au point mort. Une EF de 1990 n'a pas de
-	# contacteur qui l'impose — c'est la MECANIQUE qui l'impose : lancer un
-	# moteur mort avec un rapport engage, c'est demander au demarreur de pousser
-	# la voiture. Il n'en a pas la force, la voiture sursaute et rien ne part.
-	cranking = stalled and Input.is_action_pressed("starter")
-	if cranking and (clutch or gear == GEAR_N):
-		_start_timer += delta
-		if _start_timer >= start_time:
-			stalled = false
+	# Il tourne SEUL une fois lance, jusqu'au bout de son temps : la cle donne un
+	# coup de demarreur, elle ne le tient pas. C'est ce que permet un geste
+	# ponctuel (un cran de molette) la ou une touche se maintenait.
+	if cranking:
+		_start_timer -= delta
+		if _start_timer <= 0.0:
 			cranking = false
-			_start_timer = 0.0
-			rpm = idle_rpm
-			_stall_timer = 0.0
-	else:
-		_start_timer = 0.0
-		if cranking and _flash_timer <= 0.0:
-			_show_flash("DEBRAYE POUR DEMARRER (MAJ)")
+			# On ne demarre qu'embraye ou au point mort. Une EF de 1990 n'a aucun
+			# contacteur qui l'impose — c'est la MECANIQUE : lancer un moteur mort
+			# avec un rapport engage, c'est demander au demarreur de pousser la
+			# voiture. Il n'en a pas la force, elle sursaute et rien ne part.
+			if clutch or gear == GEAR_N:
+				stalled = false
+				rpm = idle_rpm
+				_stall_timer = 0.0
+			else:
+				_show_flash("DEBRAYE POUR DEMARRER (MAJ)")
 	_update_starter_sound()
 
 	# --- rupteur ---------------------------------------------------------
@@ -1076,11 +1081,41 @@ func _creep_speed(g: int) -> float:
 ## Le moteur meurt.
 func _stall() -> void:
 	stalled = true
+	cranking = false
 	_stall_timer = 0.0
 	_start_timer = 0.0
 	if _stall_snd:
 		_stall_snd.play()
-	_show_flash("CALE — K POUR DEMARRER")
+	_show_flash("CALE — TOURNE LA CLE")
+
+
+## La cle est tournee vers le demarreur (ignition.gd, molette vers le haut).
+##
+## Un COUP de demarreur, pas un demarreur qu'on tient : il tourne `start_time`
+## puis rend son verdict. Un geste ponctuel ne peut pas se maintenir, et un
+## demarreur qui s'arreterait au relachement du clic serait intenable a la
+## molette.
+func key_start() -> void:
+	if not stalled or cranking:
+		return
+	cranking = true
+	_start_timer = start_time
+
+
+## La cle est ramenee sur l'arret (molette vers le bas). Couper n'est pas caler :
+## le moteur s'arrete parce qu'on lui a coupe l'allumage, pas parce que la boite
+## l'a etouffe. Meme extinction, autre cause — et le HUD ne raconte donc pas la
+## meme chose.
+func key_off() -> void:
+	if stalled:
+		return
+	stalled = true
+	cranking = false
+	_stall_timer = 0.0
+	_start_timer = 0.0
+	if _stall_snd:
+		_stall_snd.play()
+	_show_flash("CONTACT COUPE")
 
 
 ## Le demarreur tourne tant qu'on tient la touche. Le son est une BOUCLE, donc
@@ -1315,7 +1350,7 @@ func _build_hud() -> void:
 	_hint.offset_right = 700.0
 	_hint.offset_bottom = -22.0
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hint.text = "ZQSD / WASD / fleches : conduire    Maj : embrayage    Molette : rapports, clic : point mort (ou lancer)\nH : phares    K : demarreur    Espace : frein a main    Souris : regarder    Clic droit maintenu : se pencher"
+	_hint.text = "ZQSD / WASD / fleches : conduire    Maj : embrayage    Molette : rapports, clic : point mort (ou lancer)\nH : phares    Espace : frein a main    Souris : regarder    Vise la cle et maintiens clic gauche : demarrer"
 	_hint.add_theme_font_size_override("font_size", 14)
 	_hint.add_theme_color_override("font_color", Color(0.8, 0.82, 0.88, 0.5))
 	layer.add_child(_hint)
