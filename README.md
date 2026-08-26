@@ -2171,6 +2171,181 @@ Il se promène, il n'attaque pas encore. Ce qui reste à décider est ce qu'il f
 une fois arrivé sur toi, et ce que tu peux lui faire : le revolver est déjà là,
 et `head_point()` donne sa tête à viser.
 
+## L'étrangleur
+
+Troisième ennemi ([strangler.gd](scripts/strangler.gd)). Le géant écrase la
+voiture de dehors, le mille-pattes la traverse comme si elle n'existait pas ;
+celui-ci considère qu'elle n'est pas un abri mais **une poignée**. Un humanoïde
+décharné de 2,02 m, debout au milieu de la voie, dont les bras descendent aux
+chevilles — 1,58 m d'épaule au bout des doigts, là où un homme de cette taille
+en fait 0,88, soit 3,56 m d'envergure. À 42 m, quand les phares le trouvent, il
+écarte les bras : il ne barre pas la route par hasard, il l'annonce. Il se
+décale (2,6 m/s) pour rester devant toi ; le percuter ou passer à moins de
+1,15 m de la caisse, et il s'agrippe. Ni le freinage ni les embardées ne le
+décrochent — sous une secousse de plus de 14 m/s² il s'arrête et se cramponne,
+comme le mille-pattes, parce que s'agripper est son métier à lui aussi. Ce qui
+le décroche, c'est **cinq balles**. La tête compte double.
+
+### De prise en prise, et une main tient toujours
+
+La carrosserie n'est pas un sol, c'est une suite de **poignées** : bord du
+capot, auvent d'essuie-glaces, montant A, ceinture de caisse — vingt prises
+nommées, dix par flanc, chacune avec sa normale et la direction de ses doigts.
+De chacune, **une seule suivante** mène vers la portière du même côté : pas de
+graphe, pas de recherche de chemin, une chaîne, comme une voie d'escalade. Le
+côté est fixé par la prise d'accrochage (la plus proche du buste à l'impact),
+donc un choc frontal remonte le capot — six prises, on le regarde ramper vers
+soi à travers le pare-brise — et un frôlement latéral le met directement à la
+ceinture, à deux prises de la portière.
+
+La règle des mains est **celle du volant** : une main ne lâche que si l'autre
+tient. Une main plantée est un point fixe en espace voiture (dérive relevée au
+banc : **0,0 mm**), l'autre vole vers la prise suivante, et le corps pend sous
+les deux — sur les flancs il PEND, chest contre la tôle, pieds calés au bas de
+caisse (jamais sur la chaussée : elle défile dessous, un pied posé là serait un
+patin) ; sur le capot il RAMPE, accroupi. La posture n'est pas un état de
+plus : elle sort de la normale de la prise. Chaque main qui claque passe par
+`car.impact()` — on **sent** chaque prise dans la suspension avant d'avoir
+tourné la tête, le canal même des pas du géant.
+
+Il change de parent en s'accrochant (`reparent` vers la voiture) : tout son
+monde passe en espace voiture, là où vivent déjà les objets, la visée et le
+mille-pattes, et 170 km/h redeviennent zéro.
+
+### La portière s'ouvre — vraiment
+
+Arrivé à la ceinture, il secoue la poignée extérieure — **cinq secousses**, le
+temps de comprendre ce qui arrive et d'armer le revolver — puis la porte cède.
+Les portières s'ouvrent depuis toujours dans le modèle, il n'y avait juste
+personne pour le faire : `cabin.gd` monte maintenant une **charnière** par
+porte (pivot vertical au bord avant, cote `DOOR_Y_FRONT`), sous laquelle
+passent garniture, poignées, haut-parleur ET les deux pivots de vitre créés par
+`_build_windows` — la manivelle continue de fonctionner porte ouverte, les deux
+mouvements se composent (relevé : poignée de manivelle à x −1,37 porte ouverte,
+−0,66 fermée). Ce qui ne tourne pas : le panneau extérieur, fondu dans le flanc
+de la caisse — de nuit, vu du siège, la porte EST sa garniture et sa vitre.
+`set_door()` / `door_amount()` sont l'API ; une porte ouverte ouvre aussi le
+son de l'habitacle (`_window_openness`), et elle **reste** ouverte : personne ne
+la referme, c'est la cicatrice de la rencontre.
+
+Si la vitre de ce côté est descendue de plus de moitié, il ne s'embarrasse pas
+de la poignée : il passe les bras par le jour. Une vitre ouverte était déjà une
+entrée pour le mille-pattes ; elle l'est pour tout le monde.
+
+### Deux fins, choisies par la vitesse
+
+Les bras entrent (1,5 s — la dernière fenêtre de tir), les mains se referment,
+et le signal `caught` part vers `main.gd`, qui possède la caméra et l'écran :
+
+- **voiture lancée (« throw »)** — le conducteur est arraché de son siège. La
+  caméra est reparentée au monde avec la vitesse de la caisse plus la poussée
+  du bras, et à partir de là c'est un corps qui tombe : gravité, rebond,
+  glissade, immobilité — puis la tête, couchée sur le bitume, se tourne vers la
+  seule chose qu'il reste à voir : les feux arrière qui rétrécissent, portière
+  battante (mesuré : la voiture est à **379 m** quand l'écran s'éteint,
+  `driverless` coupe les pédales et la jante, les rétroviseurs gèlent — visés
+  depuis le bitume leurs frustums dégénèrent). Le point de non-retour est le
+  contact des mains.
+- **voiture arrêtée (« strangle »)** — les mains se referment sur la gorge, la
+  vision bat au rythme d'un cœur qui force et le plancher de la pulsation
+  monte ; noir complet en 4,5 s. Celle-ci **s'annule** : une balle pendant
+  l'étranglement le fait lâcher (relevé : noir à 0,50 au moment du tir, 0,00
+  une demi-seconde après). C'est toute la tension du corps-à-corps — tirer
+  pendant que l'écran s'éteint.
+
+Mort, il lâche tout : parti avec la vitesse de la voiture, il culbute sur la
+chaussée (pas de moteur physique : gravité, une rotation, le sol), et y reste
+en tas — bras rejeté au-dessus de la tête, l'autre en travers, parce qu'un
+corps tombe n'importe comment, pas en étoile.
+
+### On le tire au travers du groupe « shootable »
+
+Le rayon du revolver interroge maintenant **deux mondes** : le serveur physique
+(la caisse), et le groupe `shootable`, **analytiquement** — chaque créature
+répond elle-même à `ray_hit()` sur le squelette de l'image en cours, capsule
+par capsule, sphère pour le crâne. Pas de corps physique : un corps accroché à
+une caisse qui roule ne transmet sa position au serveur qu'au pas suivant, le
+défaut qui faisait déjà rater le paquet de cigarettes à 24 m/s. Le plus proche
+des deux gagne et reçoit `hit()`. Les vitres n'arrêtent pas les balles — c'est
+une abstraction assumée du prototype, comme le panneau extérieur qui ne tourne
+pas.
+
+Piège relevé au banc : la convention de `_bone` envoie (0, −0,5, 0) sur le
+*début* de l'os et (0, +0,5, 0) sur sa *fin*. La première version du relevé de
+squelette lisait à l'envers — le « poignet » était le coude, la capsule de
+l'avant-bras un point, et le banc mesurait des doigts à 65 cm du sol sur un
+corps dont ils le touchent (0,07 m une fois remis à l'endroit).
+
+### Blême, et c'est un choix d'éclairage
+
+Tout le décor absorbe (troncs 0,075, géant 0,070) ; lui renvoie **0,34** —
+c'est l'ennemi qui vit DANS la lumière du joueur, là où le géant vit dans son
+brouillard. Plus un souffle d'auto-lueur (émission 0,04, très loin du seuil de
+glow) : sans elle, pendu à la portière côté nuit, il était un trou noir dans du
+noir et le joueur qui tournait la tête ne trouvait rien à viser. Les yeux sont
+deux orbites **noires** — sur un visage qui luit à peine, des trous lisent
+mieux que des braises, et le géant garde les siennes. La pendaison est réglée
+pour que le crâne tombe au milieu de la glace (relevé : **1,18 m**, vitre
+0,97–1,235) : on tourne la tête, et il est là, à soixante centimètres, qui
+regardait déjà. La tête suit le conducteur en permanence — le même fil que le
+géant : le corps fait sa vie, le regard jamais.
+
+### Les sons
+
+`tools/make_strangler_sounds.py`, les briques du géant (glotte de Rosenberg,
+filtres à phase minimale, dosage à la sonie), six fichiers dans
+`assets/audio/strangler/` : le **cri** (une gorge d'homme poussée au-delà — f0
+qui monte de 300 à 620 Hz puis se casse, formants de bouche grande ouverte,
+coupé à 3,2 kHz pour ne pas grésiller au tramage), le **coup encaissé** (même
+appareil, une demi-seconde, f0 qui chute — on sait que la balle a porté sans
+regarder), la **respiration** en boucle sans couture (audible à 3 m : on ne
+l'entend que quand il est à la vitre, et c'est le but), la **paume sur la
+tôle** (coup sourd + partiels inharmoniques d'une plaque, pas d'infra — une
+main n'ébranle pas le sol), la **poignée secouée** et la **charnière** (du
+stick-slip : la même glotte que la voix, un grincement EST une voix de métal,
+f0 de 320 à 90 Hz et le clonc de butée à la fin).
+
+### Banc d'essai
+
+```bash
+godot --path . -- stranglertest
+```
+
+| | relevé |
+|---|---|
+| la route le pose | **oui**, au milieu de la voie (0,70 m de l'axe, jeu 0,8), face à la voiture |
+| bras épaule → doigts / envergure | **1,58 m** / **3,56 m** (stature 2,02) |
+| debout, bout des doigts au-dessus du sol | **0,07 m** |
+| frôlé à 1 m sur sa droite | il s'agrippe au **pare-chocs**, vise la portière **gauche** |
+| pare-chocs → portière | **12 mains posées**, 6,4 s |
+| dérive d'une main posée (espace voiture) | **0,0 mm** |
+| images à deux mains en vol | **0** — une main ne lâche que si l'autre tient |
+| crâne pendu à la portière | **1,18 m** (vitre 0,97–1,235) |
+| secousses de poignée avant que ça cède | **5** |
+| porte ouverte | **62°**, garniture à x −0,89 (tôle −0,79), manivelle partie avec (−1,37) |
+| voiture arrêtée | mode **« strangle »**, noir à 0,50 à mi-étreinte |
+| trois balles pendant l'étreinte (visée réelle, `_nearest_shootable`) | il lâche, noir **annulé**, partie **pas** perdue |
+| il finit | au sol, y **0,16 m**, en tas |
+| voiture tenue à 20 m/s | mode **« throw »**, caméra reparentée au monde, `driverless` |
+| la voiture quand l'écran s'éteint | à **379 m** |
+
+Le banc tient la vitesse **pendant** l'approche et pendant la montée à la
+portière, et ce n'est pas un confort : lâchée une fois, la vitesse passe sous
+le ralenti du rapport, le moteur cale (voir « Caler ») et la voiture s'arrête à
+dix mètres de lui — le banc mesurait alors un frein moteur, pas une prise. Même
+piège que le frein à main et la 5e, par un troisième chemin.
+
+Il écrit `60_etrangleur_route.png` (posé par la route), `60b_etrangleur_phares.png`
+(la croix dans les phares — l'image que le joueur aura), `61_etrangleur_pendu.png`
+(pendu au flanc, caméra montée SUR la voiture, sinon le cadrage fuit de huit
+mètres pendant la pose), `61b_etrangleur_vitre.png` (le crâne à la glace, vu du
+siège), `62_etrangleur_porte.png` (les bras dans l'ouverture),
+`63_etrangleur_etreinte.png`, `63b_etrangleur_abattu.png` et
+`64_etrangleur_jete.png` (l'écran de fin). Comme pour le mille-pattes, deux
+défauts ne se lisaient dans **aucun chiffre** — la tête qui dépassait du toit en
+pendaison, le visage caché derrière son propre avant-bras pendant l'étreinte —
+il faut le voir.
+
 ## Les boutons à tourner en premier
 
 - **Boîte** — `car.gd` : `GEAR_TOP` (vitesse au rupteur par rapport),

@@ -14,6 +14,7 @@ extends Node3D
 const Retro := preload("res://scripts/retro.gd")
 const PoliceCar := preload("res://scripts/police_car.gd")
 const GiantScript := preload("res://scripts/giant.gd")
+const StranglerScript := preload("res://scripts/strangler.gd")
 
 const STEP := 2.0               # distance entre deux points de la ligne mediane
 const SAMPLES := 150            # ~300 m de route vivante
@@ -60,6 +61,17 @@ const GIANT_EVERY_MAX := 1800
 ## qu'accroupi il se confonde avec les troncs.
 const GIANT_OFF := 15.0
 
+# L'etrangleur (strangler.gd). Lui ne se cache pas : il est POSE debout au
+# milieu de la voie, face au sens de circulation, et il attend. Le premier
+# vient apres le premier geant — on a appris qu'on pouvait fuir, et voila
+# quelque chose qu'on ne fuit pas, qu'on evite ou qu'on abat.
+const STRANGLER_FIRST := 420          # echantillon (global), ~820 m
+const STRANGLER_EVERY_MIN := 800
+const STRANGLER_EVERY_MAX := 1600
+## Jeu lateral autour de l'axe : jamais exactement au milieu, comme quelqu'un
+## qui est ARRIVE la, pas qui y a ete dessine.
+const STRANGLER_JITTER := 0.8
+
 var target: Node3D
 
 var _pos := PackedVector3Array()      # points de la ligne mediane
@@ -104,6 +116,11 @@ var giant: Node3D
 ## Echantillon global ou le geant est tapi (-1 : il n'est nulle part).
 var giant_index := -1
 var _giant_next := GIANT_FIRST
+
+var strangler: Node3D
+## Echantillon global ou l'etrangleur est poste (-1 : nulle part).
+var strangler_index := -1
+var _strangler_next := STRANGLER_FIRST
 
 
 func _ready() -> void:
@@ -154,6 +171,13 @@ func _process(_delta: float) -> void:
 	if giant_index >= 0 and giant.asleep():
 		giant_index = -1
 		_giant_next = _index0 + SAMPLES + _rng.randi_range(GIANT_EVERY_MIN, GIANT_EVERY_MAX)
+
+	# L'etrangleur pareil : depasse, abattu ou vainqueur, il s'eteint de
+	# lui-meme, et le suivant prend rendez-vous.
+	if strangler_index >= 0 and strangler.asleep():
+		strangler_index = -1
+		_strangler_next = _index0 + SAMPLES \
+			+ _rng.randi_range(STRANGLER_EVERY_MIN, STRANGLER_EVERY_MAX)
 
 
 # --------------------------------------------------------------------------
@@ -315,6 +339,18 @@ func _place_props(i: int) -> void:
 		giant.arm(target)
 		giant_index = g
 
+	# L'etrangleur, debout au milieu de la voie, tourne vers la voiture qui
+	# vient. Pose a ~275 m devant : le temps que les phares le trouvent, il est
+	# la depuis toujours.
+	if g >= _strangler_next and strangler_index < 0 and target != null:
+		var r := _right[i]
+		var basis := Basis(r, Vector3.UP, -Vector3.UP.cross(r)) \
+			.rotated(Vector3.UP, PI)
+		strangler.transform = Transform3D(basis,
+			_pos[i] + r * _rng.randf_range(-STRANGLER_JITTER, STRANGLER_JITTER))
+		strangler.arm(target)
+		strangler_index = g
+
 
 ## Pose (centre de la chaussee, face a la route) a l'echantillon global g, ou
 ## l'identite s'il n'est plus dans la fenetre vivante. Sert aux bancs d'essai.
@@ -337,6 +373,12 @@ func _build_prop_pools() -> void:
 	giant = GiantScript.new()
 	giant.name = "Giant"
 	add_child(giant)
+
+	# Un seul etrangleur aussi. Il change de parent quand il s'accroche a la
+	# voiture, et revient ici en s'eteignant.
+	strangler = StranglerScript.new()
+	strangler.name = "Strangler"
+	add_child(strangler)
 
 	for i in TREE_COUNT:
 		var tree := Node3D.new()

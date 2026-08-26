@@ -480,26 +480,68 @@ func _apply_pose() -> void:
 		_extractor.position.z = _extractor_rest + EJECT_TRAVEL * _eject
 
 
-## Le coup lui-meme. Un rayon depuis la bouche : il n'y a encore rien qui sache
-## etre touche, mais ce qui le saura un jour n'aura qu'a exposer `hit()`.
+## Le coup lui-meme. Un rayon depuis la bouche, et DEUX mondes a interroger :
+##
+##   - le serveur physique, pour ce qui a un corps (il n'y a guere que la
+##     caisse) ;
+##   - le groupe "shootable", ANALYTIQUEMENT : les creatures du jeu n'ont pas
+##     de corps physique (voir giant.gd — un pied solide catapulte la voiture),
+##     et un corps accroche a une caisse qui roule ne transmet sa position au
+##     serveur qu'au pas suivant, le defaut qui faisait deja rater le paquet a
+##     24 m/s (README, la visee sans physique). Chaque creature repond donc
+##     elle-meme a ray_hit(), sur le squelette de L'IMAGE EN COURS.
+##
+## Le plus proche des deux gagne, et il n'a qu'a exposer `hit()`.
 func _shoot() -> void:
 	var world := get_world_3d()
 	if world == null:
 		return
 	var from := global_transform * _muzzle
 	var dir := (global_transform.basis * aim_axis()).normalized()
-	var q := PhysicsRayQueryParameters3D.create(from, from + dir * RANGE)
+
+	var best: Node = null
+	var best_d := RANGE
+	var best_pos := Vector3.ZERO
+	var best_nrm := Vector3.UP
+	var soft := _nearest_shootable(from, dir)
+	if not soft.is_empty():
+		best = soft["who"]
+		best_d = soft["d"]
+		best_pos = soft["pos"]
+		best_nrm = soft["n"]
+
+	var q := PhysicsRayQueryParameters3D.create(from, from + dir * best_d)
 	q.collide_with_areas = false
 	# Sans quoi le premier obstacle est la caisse dans laquelle on est assis.
 	if carrier is CollisionObject3D:
 		q.exclude = [(carrier as CollisionObject3D).get_rid()]
 	var hit := world.direct_space_state.intersect_ray(q)
-	if hit.is_empty():
+	if not hit.is_empty():
+		best = hit.get("collider")
+		best_pos = hit["position"]
+		best_nrm = hit["normal"]
+
+	if best == null:
 		return
-	var who = hit.get("collider")
-	_last_shot = "touche %s" % (who.name if who is Node else "?")
-	if who is Node and who.has_method("hit"):
-		who.call("hit", hit["position"], hit["normal"])
+	_last_shot = "touche %s" % best.name
+	if best.has_method("hit"):
+		best.call("hit", best_pos, best_nrm)
+
+
+## La creature du groupe "shootable" la plus proche sur le rayon. Separee de
+## _shoot() pour que les bancs d'essai puissent interroger la chaine de visee
+## sans faire partir un coup.
+func _nearest_shootable(from: Vector3, dir: Vector3) -> Dictionary:
+	var best := {}
+	var best_d := RANGE
+	for s in get_tree().get_nodes_in_group("shootable"):
+		if not s.has_method("ray_hit"):
+			continue
+		var r: Dictionary = s.ray_hit(from, dir, best_d)
+		if not r.is_empty() and r["d"] < best_d:
+			best_d = r["d"]
+			best = {"who": s, "d": r["d"], "pos": r["pos"], "n": r["n"]}
+	return best
 
 
 # --------------------------------------------------------------------------

@@ -396,6 +396,9 @@ var _limiter_timer := 0.0
 var stalled := false
 ## Vrai tant que le demarreur tourne. Lu par le son et par le HUD.
 var cranking := false
+## Plus personne au volant : l'etrangleur a sorti le conducteur (main.gd le
+## pose). Les entrees sont ignorees, la voiture finit sa course toute seule.
+var driverless := false
 var _stall_timer := 0.0
 var _start_timer := 0.0
 var _starter_snd: AudioStreamPlayer
@@ -506,6 +509,16 @@ func _physics_process(delta: float) -> void:
 	var steer_input := Input.get_action_strength("steer_left") - Input.get_action_strength("steer_right")
 	if debug_full_steer != 0.0:
 		steer_input = debug_full_steer
+
+	# Plus personne au volant (l'etrangleur a sorti le conducteur) : les
+	# pedales retombent, la jante file. La voiture continue SA vie — elle
+	# roule, ralentit au frein moteur, finira par caler — c'est precisement ce
+	# qu'on veut regarder depuis le bitume.
+	if driverless:
+		throttle = 0.0
+		braking = 0.0
+		clutch = false
+		steer_input = 0.0
 
 	# Frein a main : maintenu en roulant, verrouille a l'arret.
 	# L'etat "tenu" vient directement de l'entree, pas d'une bascule : c'est ce
@@ -881,7 +894,11 @@ func _process(delta: float) -> void:
 	cabin.set_gauges(absf(speed) * 3.6, rpm)
 	cabin.set_wheels(speed, steer, delta)
 	# Apres la camera : les miroirs se calent sur l'oeil, pas sur la voiture.
-	cabin.aim_mirrors(cam.global_position)
+	# Plus d'oeil dedans (conducteur jete dehors), plus de calage : une camera
+	# de miroir visee depuis le bitume a un frustum degenere, et une erreur par
+	# image. Ils gardent leur derniere image.
+	if not driverless:
+		cabin.aim_mirrors(cam.global_position)
 	_update_hud(delta)
 
 
@@ -1095,6 +1112,12 @@ func _window_openness() -> float:
 	var closed := 1.0
 	for w in cabin.windows:
 		closed *= 1.0 - w.open * (1.0 if w.side < 0.0 else 0.7)
+	# Une portiere ouverte (l'etrangleur ne les referme pas) ouvre l'habitacle
+	# comme la vitre du meme cote, en plus grand : des 20 degres il n'y a plus
+	# de filtre du tout de ce cote-la.
+	for side in ["L", "R"]:
+		var d: float = clampf(cabin.door_amount(side) / deg_to_rad(20.0), 0.0, 1.0)
+		closed *= 1.0 - d * (1.0 if side == "L" else 0.7)
 	return 1.0 - closed
 
 
@@ -1279,6 +1302,11 @@ func _spawn_props() -> void:
 	gun.position = CabinScript.REVOLVER_SPAWN
 	gun.rotation.y = deg_to_rad(CabinScript.REVOLVER_YAW)
 	interaction.grabbables.append(gun)
+
+	# Le mille-pattes s'attrape comme le reste — c'est meme le seul geste qui
+	# le sorte de la voiture, si une vitre est assez baissee pour le jeter
+	# (centipede.gd, section "La main").
+	interaction.grabbables.append(cabin.centipede)
 
 
 func _build_collision() -> void:

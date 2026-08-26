@@ -303,6 +303,8 @@ var adjustables: Array[Node3D] = []
 var visors: Array[Node3D] = []
 ## Vitres de portiere (window.gd), manoeuvrees a la manivelle.
 var windows: Array[Node3D] = []
+## Charnieres de portiere : "L"/"R" -> pivot. Voir _build_doors().
+var _doors := {}
 ## Cle de contact (ignition.gd). Null si le .glb ne la porte pas.
 var ignition: Node3D
 ## Reperes de prehension, en local de leur pivot, releves sur le modele.
@@ -325,6 +327,7 @@ func _ready() -> void:
 	_load_shape()         # la geometrie de collision, relevee sur le .glb
 	_build_exterior()
 	_build_windows()      # apres l'exterieur : la glace exterieure en fait partie
+	_build_doors()        # apres les vitres : la charniere emporte leurs pivots
 	_build_shell()        # apres les vitres : les glaces en donnent les cotes
 	_build_mirrors()
 	_build_ignition()
@@ -376,6 +379,68 @@ func _build_windows() -> void:
 		if pane != null and pane.mesh != null:
 			win.glass_box = _relative_to(pane, self) * pane.mesh.get_aabb()
 		windows.append(win)
+
+
+## Les PORTIERES peuvent s'ouvrir. Personne dans le jeu ne les ouvre — sauf
+## l'etrangleur (strangler.gd), et c'est pour lui qu'elles existent.
+##
+## Une charniere par porte : un pivot vertical au bord AVANT du panneau
+## (z -0,66, la cote DOOR_Y_FRONT de civic_dims.py), sous lequel passent
+## toutes les pieces montees sur la porte — garniture, poignees, manivelle,
+## haut-parleur, ET les deux pivots que _build_windows vient de creer
+## (Crank* et Panes*, qui portent bras de manivelle et glaces). Les vitres
+## continuent donc de se manoeuvrer porte ouverte : leur pivot descend en Y
+## local, la charniere tourne au-dessus, les deux mouvements se composent.
+##
+## Ce qui NE tourne PAS : le panneau exterieur de la porte, qui est fondu dans
+## le flanc de la caisse (un seul maillage, EXT_Side*), et le retroviseur.
+## De nuit, vu du siege, la porte EST sa garniture et sa vitre : c'est elles
+## qu'on voit s'ecarter, et le flanc reste dans le noir. Le jour ou la
+## carrosserie decoupera ses portes, il suffira d'ajouter leurs noms ici.
+##
+## Le KickPanel n'y est pas non plus : malgre son nom DOOR_*, c'est l'habillage
+## du passage de roue, visse a la caisse devant la porte.
+const DOOR_PARTS := {
+	"L": ["DOOR_L_Card", "DOOR_L_Cloth", "DOOR_L_HandleRecess", "DOOR_L_Handle",
+		"DOOR_L_CrankHub", "DOOR_L_PullRecess", "DOOR_L_Speaker",
+		"DOOR_L_SpeakerRing", "DOOR_L_SpeakerGrille0", "DOOR_L_SpeakerGrille1",
+		"DOOR_L_SpeakerGrille2", "DOOR_L_LockKnob", "DOOR_L_BeltTrim",
+		"DOOR_L_Sill", "DOOR_L_Skin", "CrankL", "PanesL",
+		"EXT_DoorHandle_L", "EXT_DoorLock_L", "EXT_DoorWinSeal_L"],
+	"R": ["DOOR_R_Card", "DOOR_R_Cloth", "DOOR_R_HandleRecess", "DOOR_R_Handle",
+		"DOOR_R_CrankHub", "DOOR_R_PullRecess", "DOOR_R_Speaker",
+		"DOOR_R_SpeakerRing", "DOOR_R_SpeakerGrille0", "DOOR_R_SpeakerGrille1",
+		"DOOR_R_SpeakerGrille2", "DOOR_R_LockKnob", "DOOR_R_BeltTrim",
+		"DOOR_R_Sill", "DOOR_R_Skin", "CrankR", "PanesR",
+		"EXT_DoorHandle_R", "EXT_DoorLock_R", "EXT_DoorWinSeal_R"],
+}
+
+
+func _build_doors() -> void:
+	for side in ["L", "R"]:
+		var sx := -1.0 if side == "L" else 1.0
+		var hinge := Vector3(sx * 0.80, 0.72, -0.66)
+		var pivot := _make_pivot(self, Transform3D(Basis(), hinge),
+			DOOR_PARTS[side], self)
+		pivot.name = "Door%s" % side
+		_doors[side] = pivot
+
+
+## Ouvre une portiere. `angle` en radians, 0 fermee ; le SIGNE de la rotation
+## est deduit du cote — les deux portes s'ouvrent vers l'exterieur, et la
+## charniere est a l'avant, donc le bord arriere s'ecarte de la caisse.
+func set_door(side: String, angle: float) -> void:
+	if not _doors.has(side):
+		return
+	var sx := -1.0 if side == "L" else 1.0
+	(_doors[side] as Node3D).rotation.y = sx * angle
+
+
+## Ouverture courante, en radians. Sert au son de l'habitacle et aux bancs.
+func door_amount(side: String) -> float:
+	if not _doors.has(side):
+		return 0.0
+	return absf((_doors[side] as Node3D).rotation.y)
 
 
 ## Articule la cle de contact autour de l'axe de son barillet.

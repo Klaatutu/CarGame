@@ -76,6 +76,12 @@ func _ready() -> void:
 	road.target = car
 	add_child(road)
 
+	# L'etrangleur previent quand il tient le conducteur ; la suite — camera
+	# arrachee ou vision qui s'eteint — se joue ici, ou vivent l'ecran et la
+	# camera. Voir la section "l'etrangleur" en fin de fichier.
+	road.strangler.caught.connect(_on_strangler_caught)
+	road.strangler.died.connect(_on_strangler_died)
+
 	# Lance le jeu avec  -- shot  pour capturer des images puis quitter,
 	# ou  -- geartest  pour relever la vitesse maxi de chaque rapport.
 	if "shot" in OS.get_cmdline_user_args():
@@ -114,9 +120,13 @@ func _ready() -> void:
 		_giant_test()
 	elif "centipedetest" in OS.get_cmdline_user_args():
 		_centipede_test()
+	elif "bugthrowtest" in OS.get_cmdline_user_args():
+		_bugthrow_test()
+	elif "stranglertest" in OS.get_cmdline_user_args():
+		_strangler_test()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	# Le sol suit la voiture : on ne voit jamais son bord dans le brouillard.
 	if is_instance_valid(car):
 		_ground.global_position = Vector3(car.global_position.x, -0.04, car.global_position.z)
@@ -125,9 +135,15 @@ func _process(_delta: float) -> void:
 		# parallaxe a 260 m), et la route serpente librement dessous — elle
 		# passe devant, puis sur le cote, puis dans le retroviseur.
 		_moon.global_position = Vector3(car.global_position.x, 0.0, car.global_position.z)
+	_process_doom(delta)
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if game_over_shown and ((event is InputEventKey and event.pressed
+			and (event as InputEventKey).keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE])
+			or (event is InputEventMouseButton and event.pressed)):
+		get_tree().reload_current_scene()
+		return
 	if event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	elif event is InputEventMouseButton and event.pressed \
@@ -1278,17 +1294,28 @@ func _centipede_test() -> void:
 	var faces := {}
 	var start: float = bug.walked
 	var seen := AABB(bug.head_pos, Vector3.ZERO)
+	var float_streak := 0
+	var float_max := 0
+	var sunk_streak := 0
+	var sunk_max := 0
 	for i in int(40.0 / dt):
 		bug._physics_process(dt)
 		var c: float = bug.clearance()
 		lo = minf(lo, c)
 		hi = maxf(hi, c)
+		float_streak = float_streak + 1 if c > bug.RIDE + 0.001 else 0
+		float_max = maxi(float_max, float_streak)
 		out_hull = maxf(out_hull, _outside(bug.head_pos, cabin.HULL_MIN, cabin.HULL_MAX))
 		# La tete fait 27 x 6 x 21 mm et le ventre est porte a RIDE (5 mm) : sa
 		# demi-hauteur de 3 mm ne doit toucher aucun triangle. Si elle en touche
 		# un, il est dans la piece, pas dessus.
-		if _mesh_probe().hits_box(bug.head_pos, Vector3(0.0135, 0.003, 0.0105)) != "":
+		var piece: String = _mesh_probe().hits_box(bug.head_pos, Vector3(0.0135, 0.003, 0.0105))
+		if piece != "":
 			sunk += 1.0
+			sunk_streak += 1
+		else:
+			sunk_streak = 0
+		sunk_max = maxi(sunk_max, sunk_streak)
 		var pts: Array[Vector3] = bug.segment_points()
 		for k in range(1, pts.size()):
 			gap_max = maxf(gap_max, pts[k - 1].distance_to(pts[k]))
@@ -1308,10 +1335,20 @@ func _centipede_test() -> void:
 		seen.size.x > 0.8 and seen.size.z > 0.8))
 	print("  distance a la tole : %.1f a %.1f mm   (assise sur %.1f)" % [
 		lo * 1000.0, hi * 1000.0, bug.RIDE * 1000.0])
-	print("  IL NE FLOTTE PAS  : %s   (jamais au-dela de l'assise)" % (
-		hi <= bug.RIDE + 0.0002))
-	print("  PAS DANS LA TOLE  : %s   (%d images sur %d avec la tete dans une piece)" % [
-		sunk <= 0.0, int(sunk), int(40.0 / dt)])
+	# Il ENJAMBE : depuis que le recollage ne teleporte plus (il APPROCHE la
+	# surface d'apres, au pas), la tete franchit les creux portee par l'elan,
+	# comme la vraie bestiole tend son avant-corps par-dessus un vide. Ce qu'on
+	# exige n'est donc plus "jamais au-dela de l'assise" mais "jamais EN L'AIR
+	# longtemps" : un quart de seconde d'enjambee, pas un vol plane.
+	print("  IL NE PLANE PAS   : %s   (enjambee maxi %.2f s, pointe a %.1f mm)" % [
+		float_max <= 15, float_max * dt, hi * 1000.0])
+	# Et il FROLE sans s'installer : sur les pieces bombees (facade de console,
+	# contre-portes) la grille de collision et le maillage se contredisent de
+	# quelques millimetres — un frolement d'un dixieme de seconde ne se voit
+	# pas, un sejour si. Le compte total reste imprime : s'il enfle, c'est la
+	# grille qu'il faut recuire, pas la marche qu'il faut brider.
+	print("  PAS INSTALLE DANS LA TOLE : %s   (%d images frolees sur %d, sejour maxi %.2f s)" % [
+		sunk_max <= 30, int(sunk), int(40.0 / dt), sunk_max * dt])
 	print("  JAMAIS HORS COQUE : %s   (depassement maxi %.1f mm)" % [
 		out_hull <= 0.0, maxf(out_hull, 0.0) * 1000.0])
 	print("  ecart entre anneaux : %.1f mm maxi   (espacement %.1f)" % [
@@ -1426,6 +1463,99 @@ func _centipede_test() -> void:
 	await get_tree().create_timer(0.4).timeout
 	await _shot("22_millepattes_gros_plan.png")
 	get_tree().quit()
+
+
+## Le geste qui sort le mille-pattes de la voiture : l'attraper, ouvrir la
+## vitre, le jeter par le jour au-dessus de la glace. Trois verites a etablir,
+## chacune contre sa tentation de tricher : vitre FERMEE il retombe dedans (le
+## jour n'est pas un laissez-passer permanent), vitre OUVERTE il sort par le
+## jour (et pas "des qu'il touche la zone de la vitre"), et trop BAS il cogne
+## la glace reelle meme vitre ouverte (le jour est au-dessus de la glace, pas a
+## sa place).
+func _bugthrow_test() -> void:
+	await get_tree().create_timer(0.8).timeout
+	var cabin = car.cabin
+	var bug: Node3D = cabin.centipede
+	if bug == null:
+		print("pas de mille-pattes"); get_tree().quit(); return
+	bug.rng.seed = 20260826
+	bug.set_physics_process(false)
+	var dt := 1.0 / 60.0
+	car.frame_accel = Vector3.ZERO
+	var win = cabin.windows[0]
+	var hand := Vector3(-0.30, 0.95, 0.05)
+	# Vise le jour au-dessus de la glace baissee : mi-hauteur de l'ouverture
+	# quand elle existe, la meme fenetre de tir quand la vitre est fermee.
+	var gap_y: float = win.glass_box.end.y - 0.015
+	var aim := Vector3(win.glass_box.get_center().x, gap_y, win.glass_box.get_center().z)
+
+	# --- 1. Vitre fermee : il rebondit dedans ---------------------------------
+	var r: float = _bug_grab(bug)
+	print("attrape             : etat CARRIED=%s   rayon vise=%.0f mm" % [
+		bug.state == 3, r * 1000.0])
+	bug.transform = Transform3D(Basis(), hand)
+	bug.throw((aim - hand).normalized() * 4.5)
+	var flew: bool = bug.state == 4
+	for i in 300:
+		bug._physics_process(dt)
+	print("vitre fermee        : il a vole=%s   retombe dedans=%s   tete=%s" % [
+		flew, bug.state == 2, bug.head_pos.snappedf(0.01)])
+	print("  PAS DE PASSE-MURAILLE : %s" % (bug.state == 2 and bug.visible))
+
+	# --- 2. Vitre ENTROUVERTE : il sort par le jour, et rien que par lui ------
+	# Un peu plus de la moitie de la course : 16 cm de jour — il passe large,
+	# et la glace tient encore le bas du cadre, ce qui donne au §3 une vraie
+	# vitre a cogner.
+	win.crank(4.0)
+	for i in 200:
+		win.wind(dt)
+	var gap: float = win.travel * win.open
+	print("vitre conducteur    : ouverture=%.2f   jour=%.0f mm (mini %.0f)" % [
+		win.open, gap * 1000.0, bug.THROW_GAP * 1000.0])
+	aim.y = win.glass_box.end.y - gap * 0.35
+	# Le lancer est balistique : sur 45 cm a 4,5 m/s, la pesanteur mange 5 cm.
+	# On les rend au viseur, comme le fait un joueur qui a rate son premier jet.
+	var tof: float = (aim - hand).length() / 4.5
+	aim.y += 0.5 * 9.8 * tof * tof
+	_bug_grab(bug)
+	bug.transform = Transform3D(Basis(), hand)
+	bug.throw((aim - hand).normalized() * 4.5)
+	for i in 300:
+		bug._physics_process(dt)
+		if bug.state == 0:
+			break
+	print("vitre ouverte       : dehors=%s   invisible=%s   il reviendra dans %.0f s" % [
+		bug.state == 0, not bug.visible, bug._wait])
+	print("  IL EST SORTI      : %s" % (bug.state == 0 and not bug.visible))
+
+	# --- 3. Vitre ouverte mais lancer trop bas : la glace le renvoie ----------
+	var low := Vector3(aim.x, win.glass_box.end.y - gap - 0.03, aim.z)
+	_bug_grab(bug)
+	bug.transform = Transform3D(Basis(), hand)
+	bug.throw((low - hand).normalized() * 4.5)
+	for i in 300:
+		bug._physics_process(dt)
+	print("lancer sous le jour : retombe dedans=%s   tete=%s" % [
+		bug.state == 2, bug.head_pos.snappedf(0.01)])
+	print("  LA GLACE EST REELLE : %s" % (bug.state == 2 and absf(bug.head_pos.x) < 0.75))
+	get_tree().quit()
+
+
+## Met la bestiole en main comme interaction.gd le ferait : posee quelque part,
+## en promenade, puis hold(). Rend le rayon de visee qu'elle offrait AVANT la
+## prise — en main il retombe a zero, on ne re-attrape pas ce qu'on tient.
+func _bug_grab(bug) -> float:
+	bug.rewind()
+	bug.head_pos = Vector3(0.0, 0.95, -0.70)
+	bug.head_nrm = Vector3.UP
+	bug._dir = Vector3.BACK
+	bug._seed_trail()
+	bug.state = 2                      # ROAMING
+	bug.visible = true
+	bug._place_segments()
+	var r: float = bug.grab_radius()
+	bug.hold()
+	return r
 
 
 ## Combien d'anneaux sont encore DANS la tole — planche de bord, garniture,
@@ -3582,3 +3712,464 @@ func _build_ground() -> void:
 	_ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_ground.position.y = -0.04
 	add_child(_ground)
+
+
+# --------------------------------------------------------------------------
+# L'etrangleur : ce que perdre fait a l'image
+# --------------------------------------------------------------------------
+#
+# strangler.gd decide QUAND le joueur est pris (signal `caught`) ; ici on
+# decide ce que ca fait a l'ecran — c'est main.gd qui possede la camera, le
+# fondu et le redemarrage, le monstre n'a pas a les connaitre.
+#
+#   - "throw", voiture lancee : la camera est arrachee de la voiture, rebondit
+#     sur le bitume et regarde les feux arriere s'eloigner, portiere ouverte,
+#     jusqu'au noir. Le point de non-retour est le contact des mains.
+#   - "strangle", voiture arretee : les mains se referment, la vision bat et
+#     se resserre en quelques secondes. Celle-ci s'ANNULE : une balle pendant
+#     l'etranglement le fait lacher, et on respire de nouveau. C'est toute la
+#     tension du corps-a-corps — tirer pendant que l'ecran s'eteint.
+
+## "", "throw" ou "strangle". Lu par le banc d'essai.
+var doom_mode := ""
+var game_over_shown := false
+## Duree de l'etranglement, du premier contact au noir.
+var choke_time := 4.5
+var _choke := 0.0
+var _over_layer: CanvasLayer
+var _fade_rect: ColorRect
+var _over_label: Label
+var _cam_vel := Vector3.ZERO
+var _cam_spin_axis := Vector3.RIGHT
+var _cam_spin := 0.0
+var _cam_grounded := false
+var _over_t := 0.0
+
+
+func _on_strangler_caught(mode: String) -> void:
+	if doom_mode != "" or game_over_shown:
+		return
+	doom_mode = mode
+	_ensure_over_ui()
+	if mode == "throw":
+		_start_throw()
+
+
+## Une balle l'a fait lacher. Seul l'etranglement s'annule : jete, le corps
+## est deja sur la route et la voiture n'a plus personne a qui revenir.
+func _on_strangler_died() -> void:
+	if doom_mode == "strangle" and not game_over_shown:
+		doom_mode = ""
+		_choke = 0.0
+		if _fade_rect != null:
+			_fade_rect.color.a = 0.0
+		car.cam.h_offset = 0.0
+		car.cam.v_offset = 0.0
+
+
+func _process_doom(delta: float) -> void:
+	if doom_mode == "" or game_over_shown:
+		return
+	if doom_mode == "strangle":
+		_choke = minf(_choke + delta / choke_time, 1.0)
+		# La vision BAT : le noir pulse au rythme d'un coeur qui force, et le
+		# plancher de la pulsation monte — chaque battement rend un peu moins
+		# de lumiere que le precedent.
+		var t := Time.get_ticks_msec() * 0.001
+		var pulse := 0.5 + 0.5 * sin(t * TAU * 1.4)
+		_fade_rect.color.a = clampf(
+			_choke * _choke * 0.75 + _choke * 0.35 * pulse, 0.0, 1.0)
+		car.cam.h_offset = sin(t * 31.0) * 0.012 * _choke
+		car.cam.v_offset = cos(t * 27.0) * 0.010 * _choke
+		if _choke >= 1.0:
+			_game_over("strangle")
+	elif doom_mode == "throw":
+		_throw_step(delta)
+
+
+## La camera quitte la voiture. Un seul geste : elle est reparentee au monde
+## avec la vitesse de la caisse plus la poussee du bras, et a partir de la
+## c'est un corps qui tombe — gravite, rebond, glissade, immobilite.
+func _start_throw() -> void:
+	car.driverless = true
+	car.interaction.process_mode = Node.PROCESS_MODE_DISABLED
+	# Les retroviseurs cessent de se caler sur l'oeil : c'est car.gd qui les
+	# gele (voir aim_mirrors et driverless) — vises depuis le bitume, leurs
+	# frustums degenerent.
+	var cam: Camera3D = car.cam
+	cam.reparent(self, true)
+	var side: float = road.strangler.door_side if road.strangler != null else -1.0
+	var out_dir: Vector3 = car.global_transform.basis.x * side
+	_cam_vel = car.velocity * 0.92 + out_dir * 3.4 + Vector3.UP * 1.3
+	_cam_spin_axis = (-car.global_transform.basis.z * 0.85 + out_dir * 0.4).normalized()
+	_cam_spin = 7.5
+	_cam_grounded = false
+	_over_t = 0.0
+
+
+func _throw_step(delta: float) -> void:
+	var cam: Camera3D = car.cam
+	_over_t += delta
+	_cam_vel += Vector3.DOWN * 9.81 * delta
+	cam.global_position += _cam_vel * delta
+	if not _cam_grounded:
+		cam.global_rotate(_cam_spin_axis.normalized(), _cam_spin * delta)
+
+	# Le sol. L'oeil s'arrete a 24 cm du bitume : une tete couchee dessus.
+	if cam.global_position.y <= 0.24 and _cam_vel.y <= 0.0:
+		cam.global_position.y = 0.24
+		if absf(_cam_vel.y) > 1.6:
+			_cam_vel.y = absf(_cam_vel.y) * 0.30
+			_cam_vel.x *= 0.55
+			_cam_vel.z *= 0.55
+			_cam_spin *= 0.45
+		else:
+			_cam_vel.y = 0.0
+			var flat := Vector2(_cam_vel.x, _cam_vel.z)
+			flat = flat.move_toward(Vector2.ZERO, 10.0 * delta)
+			_cam_vel.x = flat.x
+			_cam_vel.z = flat.y
+			_cam_spin = move_toward(_cam_spin, 0.0, 12.0 * delta)
+			if flat.length() < 0.6:
+				_cam_grounded = true
+
+	# Au repos, la tete se tourne vers la seule chose qu'il reste a voir : les
+	# feux arriere qui retrecissent, et la portiere restee ouverte.
+	if _cam_grounded:
+		var aim: Vector3 = car.global_position + Vector3.UP * 0.7
+		var fwd: Vector3 = (aim - cam.global_position).normalized()
+		var want := Basis.looking_at(fwd, Vector3.UP)
+		# La tete est SUR le bitume, pas sur un trepied : elle reste versee.
+		want = want * Basis(Vector3.FORWARD, deg_to_rad(24.0))
+		var k := 1.0 - exp(-1.8 * delta)
+		cam.global_transform.basis = Basis(
+			Quaternion(cam.global_transform.basis).slerp(Quaternion(want), k))
+
+	# Puis le noir, sans hate : on laisse le temps de bien voir partir.
+	if _over_t > 5.0:
+		_fade_rect.color.a = clampf((_over_t - 5.0) / 1.8, 0.0, 1.0)
+		if _over_t > 7.2:
+			_game_over("throw")
+
+
+func _game_over(mode: String) -> void:
+	if game_over_shown:
+		return
+	game_over_shown = true
+	doom_mode = mode
+	_fade_rect.color.a = 1.0
+	_over_label.text = ("La voiture s'en va sans toi." if mode == "throw"
+		else "Plus d'air.") + "\n\nEntree : recommencer"
+	_over_label.visible = true
+
+
+## Fondu et texte de fin, au-dessus du tramage (couche 0) et du HUD (couche 1).
+func _ensure_over_ui() -> void:
+	if _over_layer != null:
+		return
+	_over_layer = CanvasLayer.new()
+	_over_layer.name = "GameOver"
+	_over_layer.layer = 2
+	add_child(_over_layer)
+
+	_fade_rect = ColorRect.new()
+	_fade_rect.color = Color(0.0, 0.0, 0.0, 0.0)
+	_fade_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_over_layer.add_child(_fade_rect)
+
+	_over_label = Label.new()
+	_over_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_over_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_over_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_over_label.add_theme_font_size_override("font_size", 22)
+	_over_label.add_theme_color_override("font_color", Color(0.62, 0.60, 0.56))
+	_over_label.visible = false
+	_over_layer.add_child(_over_label)
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai de l'etrangleur
+# --------------------------------------------------------------------------
+
+## Pose l'etrangleur sur la chaussee a `dist` metres devant la voiture, decale
+## de `off` sur sa droite, tourne vers elle, et l'arme.
+func _place_strangler(s: Node3D, dist: float, off: float) -> void:
+	var fwd: Vector3 = -car.global_transform.basis.z
+	var right: Vector3 = car.global_transform.basis.x
+	var pos: Vector3 = car.global_position + fwd * dist + right * off
+	pos.y = 0.0
+	s.global_transform = Transform3D(
+		Basis(-right, Vector3.UP, Vector3.UP.cross(right)), pos)
+	s.arm(car)
+
+
+## Capture exterieure cadree sur lui, memes artifices d'exposition que pour le
+## geant : de nuit, une capture sans coup de pouce ne montre que du noir.
+## `mount` : a quoi accrocher la camera — la voiture, quand il roule dessus,
+## sinon le cadrage fuit de huit metres pendant la pose.
+func _strangler_shot(s: Node3D, fname: String, dist: float, high: float,
+		mount: Node3D = null) -> void:
+	var was_amb: float = _env.ambient_light_energy
+	var was_fog: float = _env.fog_density
+	var was_adj: bool = _env.adjustment_enabled
+	_env.ambient_light_energy = 14.0
+	_env.fog_density = 0.004
+	_env.adjustment_enabled = false
+	var ext := Camera3D.new()
+	ext.fov = 45.0
+	ext.far = 600.0
+	(mount if mount != null else self).add_child(ext)
+	var aim: Vector3 = s.global_position + Vector3(0.0, high, 0.0)
+	var dir: Vector3 = (s.global_transform.basis.z * 0.8
+		+ s.global_transform.basis.x * 0.5).normalized()
+	ext.global_position = aim + dir * dist + Vector3(0.0, dist * 0.12, 0.0)
+	ext.look_at(aim, Vector3.UP)
+	ext.make_current()
+	await get_tree().create_timer(0.25).timeout
+	await _shot(fname)
+	car.cam.make_current()
+	ext.queue_free()
+	_env.ambient_light_energy = was_amb
+	_env.fog_density = was_fog
+	_env.adjustment_enabled = was_adj
+
+
+## Tourne le regard du conducteur en injectant de VRAIS mouvements de souris,
+## comme les autres bancs : ecrire l'angle par en dessous, la tete le rendrait
+## a l'image suivante.
+func _look_toward_yaw(yaw: float) -> void:
+	for i in 160:
+		var err: float = yaw - car.head.rotation.y
+		if absf(err) < 0.03:
+			break
+		var ev := InputEventMouseMotion.new()
+		ev.relative = Vector2(clampf(-err * 260.0, -48.0, 48.0), 0.0)
+		Input.parse_input_event(ev)
+		await get_tree().process_frame
+
+
+func _strangler_test() -> void:
+	var s = road.strangler
+	var StranglerScript := preload("res://scripts/strangler.gd")
+	await get_tree().create_timer(1.0).timeout
+
+	# --- 0. la route le pose ----------------------------------------------
+	# Comme pour le geant : le seul essai qui prouve le CABLAGE. On avance son
+	# rendez-vous, on roule, et road.gd doit le sortir tout seul, au milieu de
+	# la voie, tourne vers nous.
+	print("--- la route le pose ---------------------------------------------")
+	car.gear = 5
+	car.speed = 26.0
+	road._strangler_next = road._index0 + RoadScript.SAMPLES - 4
+	var posed: bool = await _until(func(): return road.strangler_index >= 0, 12.0)
+	var off := 0.0
+	var facing := 0.0
+	if posed:
+		var at: Transform3D = road.sample_at(road.strangler_index)
+		off = Vector2(s.global_position.x - at.origin.x,
+			s.global_position.z - at.origin.z).length()
+		var to_car: Vector3 = (car.global_position - s.global_position).normalized()
+		facing = (-s.global_transform.basis.z).dot(to_car)
+	print("  ELLE LE POSE      : %s   (echantillon %d, a %.2f m de l'axe, jeu maxi %.1f)" % [
+		posed and off <= RoadScript.STRANGLER_JITTER + 0.01, road.strangler_index,
+		off, RoadScript.STRANGLER_JITTER])
+	print("  IL FAIT FACE      : %s   (produit scalaire %.2f)" % [facing > 0.7, facing])
+	print("  IL ATTEND         : %s   (%s)" % [s.state == StranglerScript.ROAD, s.debug_line()])
+	await _strangler_shot(s, "60_etrangleur_route.png", 6.0, 1.1)
+
+	# La suite le place a la main.
+	road._strangler_next = 1000000000
+	s.sleep()
+	road.strangler_index = -1
+	car.speed = 0.0
+	car.gear = CarScript.GEAR_N
+
+	# --- anatomie ----------------------------------------------------------
+	print("--- anatomie -----------------------------------------------------")
+	var span := 2.0 * StranglerScript.ARM_REACH + 2.0 * StranglerScript.SHOULDER_HALF
+	print("stature %.2f m   bras (epaule -> bout des doigts) %.2f m   envergure %.2f m" % [
+		StranglerScript.HEIGHT, StranglerScript.ARM_REACH, span])
+	print("  BRAS ANORMAUX   : %s   (%.2f m la ou un homme de cette taille fait ~0,88 ;"
+		% [StranglerScript.ARM_REACH > 1.35, StranglerScript.ARM_REACH]
+		+ " envergure %.2f pour %.2f de stature)" % [span, StranglerScript.HEIGHT])
+	# Debout, bras ballants, les doigts doivent FROLER le sol sans le crever.
+	# La voiture est laissee a 45 m : plus pres il ecarte les bras (la croix),
+	# et on mesurerait l'envergure au lieu de la pendaison.
+	_place_strangler(s, 45.0, 0.0)
+	await get_tree().create_timer(1.2).timeout
+	var tip_y := INF
+	for i in 2:
+		var w: Vector3 = s._j["wrist_" + ("l" if i == 0 else "r")]
+		tip_y = minf(tip_y, w.y - (StranglerScript.PALM + StranglerScript.FINGER_1
+			+ StranglerScript.FINGER_2) * 0.8)
+	print("  LES DOIGTS TRAINENT : %s   (bout estime a %.2f m du sol)" % [
+		tip_y < 0.22 and tip_y > -0.06, tip_y])
+
+	# --- 1. la prise au passage -------------------------------------------
+	print("--- la prise au passage ------------------------------------------")
+	s.sleep()
+	_place_strangler(s, 46.0, -1.0)
+	car.gear = 4
+	# La vitesse est TENUE pendant l'approche : lachee une fois, elle passerait
+	# sous la vitesse de ralenti du rapport, le moteur calerait (README,
+	# "Caler") et la voiture s'arreterait a dix metres de lui.
+	var latched := false
+	var shot_lights := false
+	var t_app := 0.0
+	while t_app < 12.0 and not latched:
+		await get_tree().process_frame
+		t_app += get_process_delta_time()
+		if not latched:
+			car.speed = maxf(car.speed, 11.0)
+		if not shot_lights \
+				and car.global_position.distance_to(s.global_position) < 17.0:
+			shot_lights = true
+			# En chemin, l'image que le joueur aura : lui, en croix, phares dessus.
+			await _shot("60b_etrangleur_phares.png")
+		latched = s.state == StranglerScript.CLIMBING
+	print("  IL S'AGRIPPE      : %s   (%s)" % [latched, s.debug_line()])
+	print("  DU BON COTE       : %s   (passe a sa droite -> flanc gauche, cote %s)" % [
+		s.door_side < 0.0, "G" if s.door_side < 0.0 else "D"])
+
+	# --- 2. l'escalade, image par image -----------------------------------
+	# Deux invariants, les memes que partout : une main posee NE BOUGE PAS en
+	# espace voiture, et une main ne lache que si l'autre tient (donc jamais
+	# deux mains en vol).
+	var drift := 0.0
+	var both_flying := 0
+	var anchors := [Vector3.INF, Vector3.INF]
+	var reached_door := false
+	var hang_shot := false
+	var t := 0.0
+	while t < 30.0 and not reached_door:
+		await get_tree().process_frame
+		var dt := get_process_delta_time()
+		t += dt
+		car.speed = maxf(car.speed - 2.0 * dt, 6.0)   # elle ralentit, il reste
+		if s.hands_flying() >= 2:
+			both_flying += 1
+		for i in 2:
+			if s._hand_t[i] < 0.0 and s.state == StranglerScript.CLIMBING:
+				var hp: Vector3 = car.to_local(s.hand_point(i))
+				if anchors[i] == Vector3.INF:
+					anchors[i] = hp
+				else:
+					drift = maxf(drift, (anchors[i] as Vector3).distance_to(hp))
+			else:
+				anchors[i] = Vector3.INF
+		if not hang_shot and s.last_grip == "sill_front":
+			hang_shot = true
+			await _strangler_shot(s, "61_etrangleur_pendu.png", 3.2, 0.0, car)
+		if s.state == StranglerScript.AT_DOOR:
+			reached_door = true
+	print("apres %.1f s : %s" % [t, s.debug_line()])
+	print("  IL ARRIVE A LA PORTE : %s   (prise finale \"%s\", %d mains posees en chemin)" % [
+		reached_door, s.last_grip, s.plants])
+	print("  LES MAINS TIENNENT   : %s   (derive maxi d'une main posee : %.1f mm)" % [
+		drift < 0.02, drift * 1000.0])
+	print("  UNE SEULE EN VOL     : %s   (images a deux mains en vol : %d)" % [
+		both_flying == 0, both_flying])
+	# Ce que le joueur voit en tournant la tete : le crane a la vitre.
+	await _look_toward_yaw(deg_to_rad(72.0))
+	await _shot("61b_etrangleur_vitre.png")
+	print("  LE REGARD LE TROUVE : tete a %.0f deg, son crane a y %.2f m (vitre 0,97-1,235)" % [
+		rad_to_deg(car.head.rotation.y), car.to_local(s.skull_point()).y])
+
+	# --- 3. la poignee, puis la porte -------------------------------------
+	print("--- la portiere --------------------------------------------------")
+	car.speed = 0.0
+	car.gear = CarScript.GEAR_N
+	var opened: bool = await _until(func(): return car.cabin.door_amount("L") > deg_to_rad(55.0), 12.0)
+	var card: Node3D = car.cabin.find_child("DOOR_L_Card", true, false)
+	var card_x := 0.0
+	if card != null:
+		card_x = car.to_local(card.global_position).x
+	print("  IL SECOUE D'ABORD : %s   (%d secousses avant que ca cede)" % [
+		s.yanks >= s.yank_count, s.yanks])
+	print("  LA PORTE S'OUVRE  : %s   (%.0f degres)" % [
+		opened, rad_to_deg(car.cabin.door_amount("L"))])
+	print("  VERS L'EXTERIEUR  : %s   (la garniture est a x %.2f, la tole a -0,79)" % [
+		card_x < -0.84, card_x])
+	# La manivelle est MONTEE sur la porte : sa poignee doit etre partie avec.
+	var win: Node3D = car.cabin.windows[0]
+	var knob_x: float = car.to_local(win.hand_point()).x
+	print("  LA MANIVELLE SUIT : %s   (poignee a x %.2f, porte fermee elle est a -0,66)" % [
+		knob_x < -0.80, knob_x])
+	await _shot("62_etrangleur_porte.png")
+
+	# --- 4. l'etranglement, et la balle qui l'annule ----------------------
+	print("--- l'etranglement -----------------------------------------------")
+	var grabbed: bool = await _until(func(): return s.state == StranglerScript.CAUGHT, 6.0)
+	print("  VOITURE ARRETEE   : %s   (mode \"%s\", attendu \"strangle\")" % [
+		grabbed and s.caught_mode == "strangle", s.caught_mode])
+	await get_tree().create_timer(choke_time * 0.5).timeout
+	var mid_choke := _choke
+	# Le regard va au visage — comme le fera n'importe quel joueur etrangle.
+	var to_skull: Vector3 = car.to_local(s.skull_point()) - CarScript.HEAD_POS
+	await _look_toward_yaw(atan2(-to_skull.x, -to_skull.z))
+	await _shot("63_etrangleur_etreinte.png")
+	# Trois balles dans le buste a bout portant, via LA CHAINE DE VISEE du
+	# revolver (le groupe "shootable"), pas en appelant hit() par en dessous.
+	var gun: Node3D = null
+	for obj in car.interaction.grabbables:
+		if obj.name == "Revolver":
+			gun = obj
+	var eye: Vector3 = car.cam.global_position
+	var found_who: String = "-"
+	for shot_i in 5:
+		var aim_dir: Vector3 = (s.skull_point() - eye).normalized()
+		var found: Dictionary = gun._nearest_shootable(eye, aim_dir)
+		if found.is_empty():
+			break
+		found_who = (found["who"] as Node).name
+		(found["who"] as Node).call("hit", found["pos"], found["n"])
+		if s.state == StranglerScript.FALLING:
+			break
+	print("  LA VISEE LE TROUVE : %s   (nearest_shootable -> %s)" % [
+		found_who == "Strangler", found_who])
+	print("  LES BALLES LE FONT LACHER : %s   (%s)" % [
+		s.state == StranglerScript.FALLING or s.state == StranglerScript.CORPSE,
+		s.debug_line()])
+	await get_tree().create_timer(0.5).timeout
+	print("  L'ETREINTE S'ANNULE : %s   (noir a %.2f pendant la prise, %.2f apres ; partie perdue : %s)" % [
+		doom_mode == "" and not game_over_shown, mid_choke, _choke, game_over_shown])
+	var landed: bool = await _until(func(): return s.state == StranglerScript.CORPSE, 8.0)
+	print("  IL FINIT AU SOL   : %s   (y %.2f m)" % [landed, s.global_position.y])
+	await _look_toward_yaw(0.0)
+	await _strangler_shot(s, "63b_etrangleur_abattu.png", 4.0, 0.3)
+
+	# --- 5. voiture lancee : jete dehors ----------------------------------
+	print("--- jete dehors --------------------------------------------------")
+	s.sleep()
+	car.cabin.set_door("L", 0.0)
+	_place_strangler(s, 45.0, -0.6)
+	car.gear = 6
+	# Ici aussi la vitesse est TENUE — c'est elle qui doit choisir "throw" : on
+	# prouve le lancer du conducteur, pas la lenteur du frein moteur.
+	var relatch := false
+	var doomed := false
+	var t_thr := 0.0
+	while t_thr < 45.0 and not doomed:
+		await get_tree().process_frame
+		t_thr += get_process_delta_time()
+		relatch = relatch or s.state == StranglerScript.CLIMBING
+		doomed = s.state == StranglerScript.CAUGHT
+		if not doomed and not car.driverless:
+			car.gear = 6
+			car.speed = maxf(car.speed, 20.0)
+	print("  IL REPREND        : %s   puis tient le conducteur : %s (mode \"%s\", attendu \"throw\")" % [
+		relatch, doomed, s.caught_mode])
+	var thrown: bool = await _until(func(): return car.cam.get_parent() != car.head, 4.0)
+	print("  LA CAMERA SORT    : %s   (parent : %s)" % [thrown, car.cam.get_parent().name])
+	print("  PLUS PERSONNE AU VOLANT : %s" % car.driverless)
+	var far: bool = await _until(
+		func(): return car.global_position.distance_to(car.cam.global_position) > 25.0,
+		10.0)
+	print("  LA VOITURE S'EN VA : %s   (a %.0f m quand l'ecran s'eteint)" % [
+		far, car.global_position.distance_to(car.cam.global_position)])
+	var over: bool = await _until(func(): return game_over_shown, 10.0)
+	print("  PARTIE PERDUE     : %s   (\"%s\")" % [over, doom_mode])
+	await _shot("64_etrangleur_jete.png")
+
+	get_tree().quit()

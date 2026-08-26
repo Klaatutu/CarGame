@@ -54,8 +54,9 @@ extends Node3D
 ##
 
 const Retro := preload("res://scripts/retro.gd")
+const BODY_SCENE := preload("res://assets/models/centipede.glb")
 
-enum {WAITING, ENTERING, ROAMING}
+enum {WAITING, ENTERING, ROAMING, CARRIED, FLYING}
 
 # --- corps ------------------------------------------------------------------
 
@@ -66,7 +67,6 @@ const SEG_SPACING := 0.019
 ## Longueur totale : 26,6 cm. Une Scolopendra gigantea en fait 30 — assez gros
 ## pour qu'on le voie du siege, assez petit pour passer par une grille.
 const BODY_LEN := float(SEGMENTS - 1) * SEG_SPACING
-const BODY_W := 0.022
 ## EPAISSEUR DU CORPS — 6 mm, et ce chiffre est MESURE, pas choisi.
 ##
 ## tools/probe_vents.gd releve les lames des aerateurs a 10,3 mm d'entraxe pour
@@ -75,28 +75,13 @@ const BODY_W := 0.022
 ## cette raison — c'est ce qui lui permet de vivre sous les pierres, et ici
 ## d'etre dans la voiture avant toi.
 const BODY_T := 0.006
-const HEAD_W := 0.027
-const HEAD_L := 0.021
 ## Hauteur du ventre au-dessus de la surface : il est porte par ses pattes.
 const RIDE := 0.005
-const LEG_LEN := 0.028
-const LEG_THICK := 0.0024
-## Ouverture de la CUISSE sous l'horizontale, et angle du GENOU par-dessus.
-##
-## Une patte droite ne se lit pas comme une patte : ca fait un peigne, et c'est
-## ce que donnait la premiere version. Coudee, elle se lit du premier coup
-## d'oeil — c'est le seul detail qui separe l'animal du rateau.
-##
-## Les deux angles sont pris pour que la POINTE touche : cuisse presque a plat
-## (17,4 mm a 0,10 rad, soit 1,7 mm de chute), tarse plongeant a 0,52 rad sur
-## 14 mm, soit 7,0 mm en tout — le ventre etant a 5, la pointe mord la tole de
-## 2 mm et l'animal a l'air de s'y tenir. Des pattes plus plongeantes
-## donneraient une araignee sur echasses, pas un mille-pattes, qui rampe a plat.
+## Plongee des pattes sous l'horizontale, appliquee au pivot a chaque image.
+## Le reste de la patte — cuisse arquee, genou, pointe — est de la GEOMETRIE,
+## figee dans le modele (assets/blender/build_centipede.py) : une seule
+## rotation par patte suffit a la foulee.
 const LEG_DROOP := 0.10
-const LEG_KNEE := 0.42
-## Part de la patte qui revient a la cuisse ; le reste est le tarse.
-const LEG_THIGH := 0.62
-const ANTENNA_LEN := 0.032
 
 # --- marche -----------------------------------------------------------------
 
@@ -110,8 +95,16 @@ const GRIP := 0.004
 ## Au-dela, on considere qu'il n'y a plus de surface a portee : il est en l'air.
 const REACH := 0.12
 ## De combien un recollage peut deplacer la tete AU-DELA du pas qu'elle vient de
-## faire. Voir _advance : une bestiole ne se teleporte pas.
-const MAX_SNAP := 0.012
+## faire. Voir _advance : une bestiole ne se teleporte pas. Serre : la ou deux
+## boites du releve se contredisent, l'ecart est de 2-3 mm — 5 suffisent a la
+## relaxation. A 12, le banc a vu la lèvre du nez de planche la faire SAUTER
+## 17 mm en contrebas, et la morsure la renvoyer sur la face : un cycle a
+## quatre images dont elle ne sortait plus.
+const MAX_SNAP := 0.005
+## Le mou de la SORTIE d'un dedans, lui, reste large : "ne traverse rien" est
+## une contrainte, et la face de sortie peut etre a GRIP + RIDE d'ici — serrer
+## ce budget-la laissait la tete UNE image dans la tole au banc.
+const EXIT_SNAP := 0.012
 ## De combien la tete doit avoir franchi la bouche avant de chercher a se
 ## raccrocher. 2 cm : de quoi degager le cadre de la grille et l'epaisseur de la
 ## garniture, pas assez pour qu'on voie un saut en se reposant.
@@ -134,6 +127,20 @@ const TRAIL_MAX := 160
 const GOAL_REACHED := 0.07
 ## Au bout de ce temps sur la meme etape, on en change : jamais coince.
 const GOAL_TIMEOUT := 9.0
+
+## JAMAIS COINCE, cette fois au ras du sol. GOAL_TIMEOUT change d'etape au bout
+## de neuf secondes, mais une etape neuve ne debloque pas une tete CALEE : la ou
+## deux boites du releve se contredisent, le recollage rend chaque pas aussitot,
+## et la bestiole piétine sur place — neuf secondes de sur-place, ca se voit.
+## On mesure donc le PROGRES, pas l'age de l'etape : quelques battements de
+## course sans avancer, et elle tourne franchement — une bestiole ne s'obstine
+## pas contre un angle, elle le contourne.
+const STUCK_TIME := 0.7
+const STUCK_MOVE := 0.012
+
+## Jour minimal au-dessus de la glace pour qu'un corps de 6 mm et ses pattes
+## passent en VOL — jete, pas en rampant : en l'air, rien ne se faufile.
+const THROW_GAP := 0.03
 
 ## Ses coins de predilection, en espace voiture, avec leur poids. Ce ne sont pas
 ## des cases d'un quadrillage : c'est une liste de PLACES, et un mille-pattes va
@@ -180,6 +187,10 @@ var walked := 0.0
 
 var rng := RandomNumberGenerator.new()
 
+## Section du corps sous les doigts, pour interaction.gd (l'axe de prise
+## traverse la longueur, seule la section compte pour fermer la main).
+var half := Vector3(0.011, 0.13, 0.011)
+
 var _dir := Vector3.FORWARD
 var _goal := Vector3.ZERO
 var _goal_age := 0.0
@@ -187,6 +198,12 @@ var _wait := 0.0
 var _running := true
 var _phase := 0.0
 var _emerged := 0.0
+var _vel := Vector3.ZERO           # vitesse en vol, espace voiture
+var _through := false              # en vol : engage dans le jour d'une vitre
+var _stuck_t := 0.0
+var _stuck_ref := Vector3.ZERO
+var _shell_mat: ShaderMaterial
+var _shell_base := Color(0.26, 0.115, 0.048)
 var _trail_pos: Array[Vector3] = []
 var _trail_nrm: Array[Vector3] = []
 var _segments: Array[Node3D] = []
@@ -222,8 +239,14 @@ func _physics_process(delta: float) -> void:
 			_advance(delta, _emerge_step(delta), false)
 		ROAMING:
 			_advance(delta, _roam_step(delta), true)
+		CARRIED:
+			# La main promene le NOEUD (interaction.gd) ; nous, on se debat
+			# dedans, en espace local.
+			_carried_pose(delta)
+		FLYING:
+			_fly_step(delta)
 
-	if state != WAITING:
+	if state != WAITING and state != CARRIED:
 		_place_segments()
 
 
@@ -250,6 +273,8 @@ func _emerge_step(delta: float) -> float:
 func _land() -> void:
 	state = ROAMING
 	_pick_goal()
+	_stuck_ref = head_pos
+	_stuck_t = 0.0
 
 
 ## Idem en promenade : cap vers l'etape en cours, avec la respiration
@@ -283,6 +308,20 @@ func _roam_step(delta: float) -> float:
 		var to := want.normalized()
 		var t := clampf(TURN_RATE * delta, 0.0, 1.0)
 		_dir = (_dir.lerp(to, t)).normalized()
+
+	# Le garde-fou du sur-place (STUCK_*) : il ne compte que le temps de COURSE
+	# — fige, il ne progresse pas, et c'est voulu.
+	_stuck_t += delta
+	if head_pos.distance_to(_stuck_ref) > STUCK_MOVE:
+		_stuck_ref = head_pos
+		_stuck_t = 0.0
+	elif _stuck_t > STUCK_TIME:
+		# Un ecart franc, pas une fuite : l'etape reste la meme — si elle est
+		# vraiment injoignable, GOAL_TIMEOUT s'en chargera.
+		var a := rng.randf_range(PI * 0.35, PI * 0.75)
+		_dir = _dir.rotated(head_nrm, a if rng.randf() < 0.5 else -a).normalized()
+		_stuck_ref = head_pos
+		_stuck_t = 0.0
 	return RUN_SPEED * delta
 
 
@@ -293,27 +332,59 @@ func _advance(delta: float, step: float, stick: bool) -> void:
 		return
 
 	var from := head_pos
+	var nrm_prev := head_nrm
 	var probe := head_pos + _dir * step - head_nrm * GRIP
 	var hit := _nearest(probe)
+	var glued := false
 	if stick and hit["d"] < REACH:
-		head_pos = hit["q"] + (hit["n"] as Vector3) * RIDE
-		head_nrm = hit["n"]
+		var glue: Vector3 = hit["q"] + (hit["n"] as Vector3) * RIDE
+		if hit["inside"] or glue.distance_to(from) <= step + MAX_SNAP:
+			head_pos = glue
+			head_nrm = hit["n"]
+			glued = true
+		else:
+			# UNE BESTIOLE NE SE TELEPORTE PAS. La surface la plus proche est a
+			# plus d'un pas : y coller la tete d'un coup, c'est le saut que le
+			# banc a vu a la lèvre du nez de planche — la tole derriere est
+			# 17 mm plus bas, le recollage y jetait la tete, la morsure la
+			# renvoyait sur la face, quatre images en boucle. On MARCHE vers la
+			# surface a la vitesse du pas, SANS changer d'appui : le recollage
+			# aboutira dans deux ou trois images, quand elle sera vraiment sous
+			# le ventre — et l'appui ne bascule qu'une fois, a l'arrivee.
+			# (Dedans, en revanche, on sort toujours : "ne traverse rien" est
+			# une contrainte, pas un souhait — voir _nearest.)
+			head_pos = from + (glue - from).limit_length(step)
+			# Et l'approche n'a pas le droit de couper un angle A TRAVERS la
+			# tole : si ce pas vient d'entrer dans une piece, on en sort tout
+			# de suite, par la face la plus proche, comme toujours.
+			var mid := _nearest(head_pos)
+			if mid["inside"]:
+				head_pos = (mid["q"] as Vector3) + (mid["n"] as Vector3) * RIDE
+				head_nrm = mid["n"]
+				glued = true
 	else:
 		# Rien a portee, ou bien il traverse encore son trou : il continue tout
 		# droit plutot que de se teleporter sur la paroi la plus proche.
 		head_pos = probe + head_nrm * GRIP
 
-	# UNE BESTIOLE NE SE TELEPORTE PAS. La ou deux boites se recouvrent, "la
-	# surface la plus proche" peut changer de face d'une image a l'autre, et le
-	# recollage ferait alors sauter la tete de plusieurs centimetres — ce qui se
-	# voit, et ce qui creuse un trou dans la trace ou les anneaux s'ecartent. On
-	# borne donc son deplacement au pas qu'elle vient de faire ; s'il reste du
-	# chemin, elle le fera a l'image suivante. C'est une relaxation, pas une
-	# contrainte : elle converge en deux ou trois images.
-	head_pos = from + (head_pos - from).limit_length(step + MAX_SNAP)
+	# Meme un recollage "dedans" reste borne : la ou deux boites se recouvrent,
+	# la face de sortie peut changer d'une image a l'autre — la relaxation
+	# converge en deux ou trois images au lieu de faire sauter les anneaux.
+	head_pos = from + (head_pos - from).limit_length(
+		step + (EXIT_SNAP if hit["inside"] else MAX_SNAP))
 	if stick:
-		_contain()
+		_contain(glued)
 
+	# LE CAP TOURNE AVEC L'APPUI. Basculer par-dessus une arete, c'est subir la
+	# rotation qui amene l'ancienne normale sur la nouvelle — le cap la subit
+	# aussi : arrivee perpendiculaire a l'arete du nez de planche, la bestiole
+	# CONTINUE vers le bas de la face. L'ancienne projection donnait zero dans
+	# ce cas precis, et le fallback vertical la renvoyait vers le haut — donc
+	# vers l'arete : elle faisait la navette sur la lèvre, et c'etait "il se
+	# bloque a certains endroits".
+	var swing := nrm_prev.cross(head_nrm)
+	if swing.length_squared() > 0.000001:
+		_dir = _dir.rotated(swing.normalized(), nrm_prev.angle_to(head_nrm))
 	_dir -= head_nrm * _dir.dot(head_nrm)
 	if _dir.length_squared() < 0.000001:
 		_dir = _any_tangent(head_nrm)
@@ -354,7 +425,7 @@ func _advance(delta: float, step: float, stick: bool) -> void:
 ## se pose quand il marche sur une face de la coque : le plancher, le pavillon
 ## et la lunette arriere ne sont declares nulle part ailleurs, et il y marche
 ## sans que la coque et le recollage se contredisent d'un millimetre.
-func _contain() -> void:
+func _contain(glued := false) -> void:
 	var lo: Vector3 = cabin.HULL_MIN + Vector3(RIDE, RIDE, RIDE)
 	var hi: Vector3 = cabin.HULL_MAX - Vector3(RIDE, RIDE, RIDE)
 	for a in 3:
@@ -368,10 +439,15 @@ func _contain() -> void:
 			over = head_pos[a] - hi[a]
 			head_pos[a] = hi[a]
 			sign = -1.0
-		# La normale ne bascule que sur un VRAI depassement. A l'exact
+		# La normale ne bascule que sur un VRAI depassement — a l'exact
 		# millimetre pres, marcher sur le plancher touche la borne a chaque
-		# image : la reecrire la ferait vibrer pour rien.
-		if over > 0.001:
+		# image — et JAMAIS quand la tete est collee a une vraie surface : au
+		# pied du pare-brise, l'auvent vit a 4 mm dans la marge de la coque, et
+		# reecrire la normale du recollage y fabriquait un pat parfait — la
+		# vitre reprenait l'appui, le cap se retransportait vers le bas, et la
+		# meme image se rejouait a l'infini. La coque borne la POSITION ; la
+		# normale, elle, appartient a ce qu'on touche.
+		if over > 0.001 and not glued:
 			var n := Vector3.ZERO
 			n[a] = sign
 			head_nrm = n
@@ -584,12 +660,9 @@ func enter_by(entry: Dictionary) -> void:
 	head_nrm = _any_tangent(_dir)
 	_emerged = 0.0
 	walked = 0.0
-	_trail_pos.clear()
-	_trail_nrm.clear()
-	var n := int(ceil(BODY_LEN / TRAIL_STEP)) + 4
-	for i in n:
-		_trail_pos.append(head_pos - _dir * (float(i) * TRAIL_STEP))
-		_trail_nrm.append(head_nrm)
+	_seed_trail()
+	_stuck_ref = head_pos
+	_stuck_t = 0.0
 	state = ENTERING
 	visible = true
 	_running = true
@@ -613,6 +686,226 @@ func rewind() -> void:
 	entry_label = ""
 	walked = 0.0
 	_wait = 0.0
+	transform = Transform3D()
+
+
+## La trace de depart : droite, semee en arriere de la tete. A l'entree elle
+## remplit le conduit ; posee ou jetee, elle donne au corps de quoi se re-payer
+## anneau par anneau.
+func _seed_trail() -> void:
+	_trail_pos.clear()
+	_trail_nrm.clear()
+	var n := int(ceil(BODY_LEN / TRAIL_STEP)) + 4
+	for i in n:
+		_trail_pos.append(head_pos - _dir * (float(i) * TRAIL_STEP))
+		_trail_nrm.append(head_nrm)
+
+
+# ---------------------------------------------------------------------------
+# La main : il s'attrape comme un objet, et il se jette
+# ---------------------------------------------------------------------------
+#
+# C'est le seul geste qui le sorte de la voiture — et il ne marche que vitre
+# assez baissee. Le trajet complet : attraper (il se debat dans le poing),
+# viser le jour au-dessus de la glace, clic molette. Rate, il retombe quelque
+# part dans l'habitacle et y detale. Vitre fermee, il rebondit sur la glace —
+# on ne jette rien a travers une vitre. La regle du jeu est symetrique de son
+# entree : la vitre ouverte le laisse entrer, et c'est aussi par elle qu'on
+# s'en debarrasse.
+
+## Rayon de visee. On n'attrape que ce qui SE PROMENE : ni l'absent, ni celui
+## encore dans l'epaisseur de la planche, ni ce qu'on tient deja.
+func grab_radius() -> float:
+	return 0.065 if state == ROAMING else 0.0
+
+
+## L'axe du corps en main se couche sur l'axe du poing : on le tient comme un
+## baton — qui se tortille.
+func grip_axis() -> Vector3:
+	return Vector3.UP
+
+
+func front_axis() -> Vector3:
+	return Vector3.BACK
+
+
+func rest_height() -> float:
+	return RIDE
+
+
+func set_highlight(on: bool) -> void:
+	_shell_mat.set_shader_parameter("modulate",
+		_shell_base * 1.6 if on else _shell_base)
+
+
+## Attrape : la marche se tait, interaction.gd promene le noeud, et le corps se
+## debat en espace LOCAL autour du poing (_carried_pose).
+func hold() -> void:
+	state = CARRIED
+	_through = false
+
+
+## Pose : interaction.gd vient d'ecrire notre transform sur la surface visee,
+## tourne vers le conducteur. On y reprend la promenade — droit devant, c'est
+## la fuite, pas le retour.
+func release() -> void:
+	head_pos = position
+	head_nrm = Vector3.UP
+	var d := -transform.basis.z
+	d.y = 0.0
+	_dir = d.normalized() if d.length_squared() > 0.000001 else Vector3.FORWARD
+	transform = Transform3D(Basis(), head_pos)
+	_seed_trail()
+	_resume(rng.randf_range(0.9, 1.4))
+	_place_segments()
+
+
+## Jete : il part en l'air — un etat que la marche ne connait pas. La trace est
+## reprise sur le corps TEL QU'IL EST dans le poing : il se deroule en vol au
+## lieu d'apparaitre tout droit.
+func throw(v: Vector3) -> void:
+	_trail_pos.clear()
+	_trail_nrm.clear()
+	for s in _segments:
+		_trail_pos.append(transform * (s as Node3D).position)
+		_trail_nrm.append((transform.basis * (s as Node3D).basis.y).normalized())
+	head_pos = _trail_pos[0]
+	transform = Transform3D(Basis(), head_pos)
+	_vel = v
+	_dir = v.normalized() if v.length_squared() > 0.000001 else Vector3.FORWARD
+	head_nrm = _any_tangent(_dir)
+	_through = false
+	state = FLYING
+
+
+## En main : le corps s'enroule le long de l'axe du poing et se debat. Les
+## pattes rament au TEMPS, pas a la distance — une bestiole tenue ne marche
+## pas, elle panique. Les extremites gigotent plus que le milieu, qui est
+## serre dans les doigts.
+func _carried_pose(delta: float) -> void:
+	var t := Time.get_ticks_msec() * 0.001
+	var hl := BODY_LEN * 0.5
+	var pts: Array[Vector3] = []
+	for i in SEGMENTS:
+		var s := float(i) * SEG_SPACING
+		var amp := 0.006 + 0.022 * absf(hl - s) / hl
+		pts.append(Vector3(
+			amp * sin(s * 34.0 - t * 9.0),
+			hl - s,
+			amp * 0.6 * cos(s * 27.0 - t * 11.5)))
+	for i in SEGMENTS:
+		var fwd: Vector3 = pts[maxi(i - 1, 0)] - pts[mini(i + 1, SEGMENTS - 1)]
+		fwd = fwd.normalized() if fwd.length_squared() > 0.000001 else Vector3.UP
+		var up := Vector3.BACK - fwd * Vector3.BACK.dot(fwd)
+		up = up.normalized() if up.length_squared() > 0.000001 else Vector3.RIGHT
+		var right := up.cross(fwd).normalized()
+		_segments[i].transform = Transform3D(Basis(right, up, -fwd), pts[i])
+		var pair: Array = _legs[i]
+		var flail := sin(t * 16.0 + float(i) * 0.9) * 0.8
+		var claw := 0.35 + 0.25 * sin(t * 7.0 + float(i) * 1.7)
+		(pair[0] as Node3D).rotation = Vector3(0.0, flail, claw)
+		(pair[1] as Node3D).rotation = Vector3(0.0, -flail, -claw)
+	_animate(delta)
+
+
+## En vol. La marche colle a la tole ; ici rien ne colle — gravite, l'elan de
+## la voiture en moins (meme raisonnement que prop.gd), et deux issues : le
+## jour d'une vitre baissee, ou n'importe quelle tole ou il retombe.
+func _fly_step(delta: float) -> void:
+	var drive := Vector3.ZERO
+	if carrier != null:
+		drive = -carrier.frame_accel
+		drive.y = 0.0
+	_vel += (drive + Vector3.DOWN * 9.8) * delta
+	head_pos += _vel * delta
+	walked += _vel.length() * delta       # les pattes rament dans l'air
+	if _vel.length_squared() > 0.000001:
+		head_nrm = _any_tangent(_vel.normalized())
+
+	# Le jour au-dessus de la glace baissee — le geste demande au joueur :
+	# ouvrir AVANT de jeter. La glace, elle, est toujours dans les boites du
+	# vitrage : une trajectoire trop basse la cogne comme une vraie vitre.
+	if not _through:
+		for w in cabin.windows:
+			var gap: float = w.travel * w.open
+			if gap < THROW_GAP:
+				continue
+			if signf(head_pos.x) != signf(w.side):
+				continue
+			var box: AABB = w.glass_box
+			# Le plan de sortie est celui de la COQUE, pas celui de la glace :
+			# la glace du modele est montee dans la peau de porte, a 8 cm
+			# AU-DELA de la coque — un seuil pris sur sa boite serait
+			# inatteignable, la borne de vol rabattant la tete avant. C'est la
+			# convention de l'entree (_window_entry), rejouee en sens inverse.
+			if absf(head_pos.x) < cabin.HULL_MAX.x - RIDE - 0.005:
+				continue
+			if head_pos.y < box.end.y - gap + 0.006 or head_pos.y > box.end.y:
+				continue
+			if head_pos.z < box.position.z + 0.02 or head_pos.z > box.end.z - 0.02:
+				continue
+			_through = true
+			break
+
+	if _through:
+		# Engage dans le jour : plus rien ne l'arrete. Dehors pour de bon une
+		# fois la QUEUE passee — elle est a une longueur de corps de la tete.
+		if absf(head_pos.x) > cabin.HULL_MAX.x + BODY_LEN + 0.15:
+			_escape()
+			return
+	else:
+		var hit := _nearest(head_pos)
+		if hit["inside"] or (hit["d"] as float) <= RIDE:
+			_land_on((hit["q"] as Vector3) + (hit["n"] as Vector3) * RIDE, hit["n"])
+		else:
+			# La coque le retient partout ou il n'y a pas de vitre : pavillon,
+			# lunette, plancher n'ont pas de boite a eux.
+			var lo: Vector3 = cabin.HULL_MIN + Vector3(RIDE, RIDE, RIDE)
+			var hi: Vector3 = cabin.HULL_MAX - Vector3(RIDE, RIDE, RIDE)
+			for a in 3:
+				var n := Vector3.ZERO
+				if head_pos[a] < lo[a]:
+					head_pos[a] = lo[a]
+					n[a] = 1.0
+				elif head_pos[a] > hi[a]:
+					head_pos[a] = hi[a]
+					n[a] = -1.0
+				if n != Vector3.ZERO:
+					_land_on(head_pos, n)
+					break
+
+	_push_trail()
+	_animate(delta)
+
+
+## Retombe : il se raccroche ou il a touche et DETALE — une longue course
+## d'abord, les pauses reviendront apres.
+func _land_on(q: Vector3, n: Vector3) -> void:
+	head_pos = q
+	head_nrm = n
+	var tang := _vel - n * _vel.dot(n)
+	_dir = tang.normalized() if tang.length_squared() > 0.000001 else _any_tangent(n)
+	_resume(rng.randf_range(1.0, 1.6))
+
+
+func _resume(dash: float) -> void:
+	state = ROAMING
+	_running = true
+	_wait = dash
+	_pick_goal()
+	_stuck_ref = head_pos
+	_stuck_t = 0.0
+
+
+## Dehors. Ce n'est pas une mort : la voiture n'a pas moins de bouches
+## qu'avant, et la vitre est peut-etre restee ouverte. Il reviendra — mais on a
+## achete du calme, et c'etait le prix du geste.
+func _escape() -> void:
+	state = WAITING
+	visible = false
+	entry_label = ""
+	transform = Transform3D()
+	_wait = rng.randf_range(25.0, 45.0)
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +948,11 @@ func _push_trail() -> void:
 ## pendant que la tete est deja sur la face verticale, ce qu'aucune chaine de
 ## ressorts ne donnerait aussi simplement.
 func _place_segments() -> void:
+	# Le NOEUD chevauche la tete, et les anneaux s'expriment par rapport a elle.
+	# Ce n'est pas une coquetterie : interaction.gd vise `global_position` — un
+	# noeud reste a l'origine de la voiture serait une cible fantome a un metre
+	# de la bestiole. Le repere, lui, reste celui de la voiture (base identite).
+	position = head_pos
 	var last := _trail_pos.size() - 1
 	# On avance dans la trace en cumulant sa LONGUEUR, pas ses indices. C'est ce
 	# qui rend l'espacement des anneaux exact quel que soit le pas des
@@ -692,7 +990,7 @@ func _place_segments() -> void:
 
 		var right := up.cross(fwd).normalized()
 		var seg := _segments[i]
-		seg.transform = Transform3D(Basis(right, up, -fwd), p)
+		seg.transform = Transform3D(Basis(right, up, -fwd), p - head_pos)
 
 		# Ondulation metachronale : une VAGUE qui descend le corps, pas des
 		# pattes qui battent ensemble. C'est la seule chose qui distingue un
@@ -741,93 +1039,63 @@ func _animate(_delta: float) -> void:
 ## plastique mat de la planche (0,94) ne renvoie rien. C'est ce qui la trahit
 ## quand elle bouge, et c'est exactement ce que fait un insecte a la lumiere.
 func _build_body() -> void:
-	var shell := Retro.mat(Color(0.26, 0.115, 0.048), 0.32, 0.22)
+	_shell_mat = Retro.mat(_shell_base, 0.32, 0.22)
 	var limb := Retro.mat(Color(0.46, 0.26, 0.075), 0.48, 0.05)
+	var eye := Retro.mat(Color(0.02, 0.02, 0.025), 0.12, 0.30)
+	var fang := Retro.mat(Color(0.30, 0.14, 0.05), 0.35, 0.15)
 
+	# Le corps vient du .glb (assets/blender/build_centipede.py) : plaques
+	# bombees, pattes arquees a pointe griffue, antennes en fouet — la ou les
+	# BoxMesh d'origine faisaient un train de cubes. Les pivots y portent les
+	# memes places que ceux qu'on construisait ici : le jeu continue d'ecrire
+	# rotation = (0, houle, ±droop) sur chaque hanche, sans rien savoir de la
+	# geometrie qui pend dessous.
+	var scene: Node = BODY_SCENE.instantiate()
 	for i in SEGMENTS:
-		var seg := Node3D.new()
-		seg.name = "Seg%02d" % i
+		var seg := scene.find_child("CPD_Seg%02d" % i, true, false) as Node3D
+		seg.get_parent().remove_child(seg)
+		_disown(seg)
 		add_child(seg)
+		seg.transform = Transform3D()
 		_segments.append(seg)
+		_legs.append([
+			seg.find_child("CPD_LegL%02d" % i, true, false) as Node3D,
+			seg.find_child("CPD_LegR%02d" % i, true, false) as Node3D,
+		])
+		if i == 0:
+			# L d'abord : _animate donne side = +1 au premier, et c'est ce qui
+			# ecarte chaque antenne vers SON exterieur.
+			_antennae.append(seg.find_child("CPD_AntL", true, false) as Node3D)
+			_antennae.append(seg.find_child("CPD_AntR", true, false) as Node3D)
+		_dress(seg, limb, eye, fang)
+	scene.free()
 
-		var head := i == 0
-		# Le corps s'affine vers la queue : les trois derniers anneaux passent de
-		# pleine largeur a 45 %. Un tube d'epaisseur constante se lit comme un
-		# cable, pas comme un animal.
-		var taper := 1.0 - 0.55 * clampf(
-			(float(i) - float(SEGMENTS - 4)) / 3.0, 0.0, 1.0)
-		var w := HEAD_W if head else BODY_W * taper
-		# PLUS COURT QUE L'ESPACEMENT, pour qu'il reste 3 mm entre deux anneaux.
-		# A 1,25 fois l'espacement ils se recouvraient et le corps se lisait comme
-		# un ruban : c'est la SEGMENTATION qui fait le myriapode, pas la longueur.
-		var l := HEAD_L if head else SEG_SPACING * 0.84
 
-		var mesh := BoxMesh.new()
-		mesh.size = Vector3(w, BODY_T, l)
-		var mi := MeshInstance3D.new()
-		mi.name = "Shell"
-		mi.mesh = mesh
-		mi.material_override = shell
+## Les matieres du jeu sur les maillages du .glb, pas celles de l'export : tout
+## le jeu passe par le shader de tramage (retro.gd), et ces couleurs-la ont ete
+## remontees deux fois pour se detacher de la planche — on ne laisse pas
+## l'importeur les rejouer en StandardMaterial.
+func _dress(n: Node, limb: Material, eye: Material, fang: Material) -> void:
+	if n is MeshInstance3D:
+		var mi := n as MeshInstance3D
+		var nm := String(mi.name)
+		if nm.begins_with("CPD_Shell"):
+			mi.material_override = _shell_mat
+		elif nm.begins_with("CPD_Eye"):
+			mi.material_override = eye
+		elif nm.begins_with("CPD_Fang"):
+			mi.material_override = fang
+		else:
+			mi.material_override = limb
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		seg.add_child(mi)
-
-		var pair: Array = []
-		for s in [-1.0, 1.0]:
-			var pivot := Node3D.new()
-			pivot.name = "Leg%s" % ("L" if s < 0.0 else "R")
-			pivot.position = Vector3(s * w * 0.45, 0.0, 0.0)
-			seg.add_child(pivot)
-			pivot.add_child(_limb(limb, s))
-			pair.append(pivot)
-		_legs.append(pair)
-
-		if head:
-			for s in [-1.0, 1.0]:
-				var pivot := Node3D.new()
-				pivot.name = "Antenna%s" % ("L" if s < 0.0 else "R")
-				pivot.position = Vector3(s * HEAD_W * 0.3, 0.0, -HEAD_L * 0.5)
-				seg.add_child(pivot)
-				var ant := MeshInstance3D.new()
-				var am := BoxMesh.new()
-				am.size = Vector3(LEG_THICK * 0.8, LEG_THICK * 0.8, ANTENNA_LEN)
-				ant.mesh = am
-				ant.position = Vector3(0.0, 0.0, -ANTENNA_LEN * 0.5)
-				ant.material_override = limb
-				ant.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-				pivot.add_child(ant)
-				_antennae.append(pivot)
+	for c in n.get_children():
+		_dress(c, limb, eye, fang)
 
 
-## Une patte : cuisse presque a plat, puis tarse coude vers le sol. Le tarse est
-## ENFANT de la cuisse, donc il suit la foulee sans qu'on ait a l'animer : une
-## seule rotation par patte, comme avant, pour deux fois plus de lisibilite.
-func _limb(mat: Material, s: float) -> Node3D:
-	var thigh := MeshInstance3D.new()
-	thigh.name = "Thigh"
-	var tm := BoxMesh.new()
-	tm.size = Vector3(LEG_LEN * LEG_THIGH, LEG_THICK, LEG_THICK)
-	thigh.mesh = tm
-	thigh.position = Vector3(s * LEG_LEN * LEG_THIGH * 0.5, 0.0, 0.0)
-	thigh.material_override = mat
-	thigh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-
-	var knee := Node3D.new()
-	knee.name = "Knee"
-	# Au BOUT de la cuisse, exprime dans le repere de la cuisse elle-meme.
-	knee.position = Vector3(s * LEG_LEN * LEG_THIGH * 0.5, 0.0, 0.0)
-	knee.rotation.z = -s * LEG_KNEE
-	thigh.add_child(knee)
-
-	var toe := MeshInstance3D.new()
-	toe.name = "Tarsus"
-	var sm := BoxMesh.new()
-	sm.size = Vector3(LEG_LEN * (1.0 - LEG_THIGH), LEG_THICK * 0.75, LEG_THICK * 0.75)
-	toe.mesh = sm
-	toe.position = Vector3(s * LEG_LEN * (1.0 - LEG_THIGH) * 0.5, 0.0, 0.0)
-	toe.material_override = mat
-	toe.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	knee.add_child(toe)
-	return thigh
+func _disown(n: Node) -> void:
+	n.owner = null
+	for c in n.get_children():
+		_disown(c)
 
 
 # ---------------------------------------------------------------------------
@@ -840,15 +1108,18 @@ func clearance() -> float:
 	return _nearest(head_pos)["d"]
 
 
-## Position monde de la tete, pour viser ou pour cadrer une capture.
+## Position monde de la tete, pour viser ou pour cadrer une capture. Le noeud
+## chevauche deja la tete (_place_segments) : head_pos est en espace voiture,
+## donc dans le repere du PARENT.
 func head_point() -> Vector3:
-	return global_transform * head_pos
+	return get_parent_node_3d().global_transform * head_pos
 
 
 ## Position en espace voiture de chaque anneau : de quoi verifier que le corps
-## ne se decoud pas.
+## ne se decoud pas. Les anneaux sont locaux au noeud, qui chevauche la tete —
+## on les repasse par sa transform.
 func segment_points() -> Array[Vector3]:
 	var out: Array[Vector3] = []
 	for s in _segments:
-		out.append((s as Node3D).position)
+		out.append(transform * (s as Node3D).position)
 	return out

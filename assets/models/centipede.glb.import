@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://vmee2insmm4o"
-path="res://.godot/imported/webley.glb-76f85514f402d854179356275bdf330f.scn"
+uid="uid://cftn5eemaeo3v"
+path="res://.godot/imported/centipede.glb-fbddc1b6bb697831886d919ccf9839ef.scn"
 
 [deps]
 
-source_file="res://assets/models/webley.glb"
-dest_files=["res://.godot/imported/webley.glb-76f85514f402d854179356275bdf330f.scn"]
+source_file="res://assets/models/centipede.glb"
+dest_files=["res://.godot/imported/centipede.glb-fbddc1b6bb697831886d919ccf9839ef.scn"]
 
 [params]
 
