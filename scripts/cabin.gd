@@ -19,6 +19,10 @@ extends Node3D
 ##
 
 const Retro := preload("res://scripts/retro.gd")
+## La geometrie de collision, relevee sur le .glb par tools/bake_cabin.gd.
+## Chargee et non prechargee : si elle manque, on veut le dire et continuer,
+## pas refuser de compiler.
+const SHAPE_PATH := "res://assets/cabin_shape.res"
 const INTERIOR := preload("res://assets/models/civic_interior.glb")
 const EXTERIOR := preload("res://assets/models/civic_exterior.glb")
 const CigPack := preload("res://scripts/cig_pack.gd")
@@ -179,31 +183,37 @@ const GAUGE_SWEEP_DEG := 270.0
 const SPEEDO_MAX_KMH := 200.0
 const TACHO_MAX_RPM := 8000.0
 
-## Surfaces de depose, exposees a interaction.gd (visee analytique).
-var surfaces: Array = []
-## Boites pleines de l'habitacle, en espace voiture (collision des objets).
-var solids: Array = []
+## LA FORME DE L'HABITACLE, RELEVEE SUR LE MODELE (cabin_shape.gd).
+##
+## Elle remplace les trois listes de boites que ce fichier declarait a la main —
+## `surfaces` (ou l'on pose), `solids` (ce qui arrete) et `crawl_solids` (ou
+## l'on rampe). Elles disaient chacune une partie du meme habitacle, aucune ne
+## disait le vrai, et les trois defauts que voyait le joueur etaient le meme :
+##
+##   - un objet lance s'arretait DANS la portiere, parce que la boite etait a
+##     x 0,79 (la tole) quand la garniture visible est a 0,70 — mesure :
+##     28 % des lancers pour le paquet, 59 % pour une canette ;
+##   - on ne pouvait pas poser sur tout le tableau de bord, parce que le fond de
+##     planche n'avait de boite que cote passager, alors que la tole court d'un
+##     montant a l'autre a 93-95 cm ;
+##   - le mille-pattes ne marchait que sur les faces auxquelles on avait pense.
+##
+## Une seule geometrie, relevee et non saisie, les fait disparaitre ensemble.
+## Voir cabin_shape.gd pour ce qu'elle contient et pourquoi elle est cuite.
+var shape: Resource
 
-## BOITES SUR LESQUELLES ON RAMPE, en plus des `solids` (centipede.gd).
+## LE VITRAGE, qui lui n'est PAS dans le releve.
 ##
-## Elles sont a part, et ce n'est pas de la timidite. `solids` est fait pour des
-## objets qui TOMBENT : c'est du mobilier horizontal, plus les parois qu'il faut
-## pour qu'une canette ne parte pas dans la caisse. Ce qui manque a une bestiole
-## qui MARCHE, ce sont justement les faces verticales que personne n'a jamais
-## heurtees — le nez de la planche de bord, ou vivent les aerateurs, et les
-## contre-portes.
+## Le releve ignore les glaces a dessein : on les regarde AU TRAVERS, et une
+## vitre pleine dans la grille rendrait l'habitacle aveugle. Il reste donc a
+## fermer le haut de caisse a la main — mais c'est de la geometrie qu'on
+## connait, pas des cotes de garniture qu'il faudrait deviner : le pare-brise
+## est un plan, defini par ses deux lignes de baie, et les autres glaces sont
+## des plaques.
 ##
-## Les verser dans `solids` serait pourtant un vrai changement de physique : une
-## canette lancee rebondirait desormais sur le nez de la planche au lieu de
-## passer dans le vide qu'il y a derriere, et les quatre bancs qui mesurent les
-## objets (packtest, throwtest) relevent tous des chiffres dans cette zone. On
-## ne deplace pas ces chiffres pour donner un chemin a un mille-pattes.
-##
-## Deux listes coutent aussi moins cher qu'il n'y parait : le marcheur cherche
-## la surface LA PLUS PROCHE, pas les recouvrements. Ces boites peuvent donc se
-## chevaucher librement entre elles et avec `solids`, ce qu'aucune boite de
-## `solids` ne s'autorise.
-var crawl_solids: Array = []
+## Ces boites-la peuvent se chevaucher sans dommage : cabin_shape.gd resout
+## contre l'UNION, pas boite par boite.
+var shell: Array = []
 ## Bouches d'aeration relevees sur le modele : [{label, pos, dir, half}].
 var vents: Array = []
 ## Le mille-pattes (centipede.gd). Il vit dans l'habitacle, pas dans la voiture.
@@ -237,8 +247,40 @@ var centipede: Node3D
 ## Le pare-brise est INCLINE : il reste fait de marches dans `solids`, qui
 ## renvoient l'objet selon la bonne pente. La coque n'est la que derriere elles,
 ## au plan du tablier, pour le cas ou un lancer rapide passerait entre deux.
-const HULL_MIN := Vector3(-0.76, 0.35, -0.92)
-const HULL_MAX := Vector3(0.76, 1.30, 1.43)
+## LE PLANCHER DE LA COQUE EST PASSE DE 0,35 A 0,33, ni plus ni moins, et les
+## deux bornes ont ete essayees.
+##
+## Le plancher MODELISE est a 0,33. A 0,35, la coque passait 2 cm AU-DESSUS de
+## lui : c'est elle qui arretait les objets, et ils flottaient — le releve
+## n'avait plus voix au chapitre puisque, de deux planchers en desaccord, c'est
+## le plus haut qui gagne.
+##
+## A 0,30, en revanche, elle passe DESSOUS, et c'est pire. Le maillage ne couvre
+## pas tout : dans les coins arriere il n'y a pas de sol du tout, et la coque y
+## est le seul plancher. Les objets y descendaient alors 3 cm sous le plan du
+## plancher, c'est-a-dire DANS la tole qui le borde. Mesure : 92 % des lancers
+## finissaient dans BODY_Floor, contre 28 % avant qu'on y touche.
+##
+## A 0,33 les deux sont d'accord au millimetre : la ou il y a du sol, le releve
+## pose l'objet dessus et la coque ne dit rien ; la ou il n'y en a pas, la coque
+## le pose au niveau du sol voisin. Un filet ne doit ni depasser ni manquer.
+##
+## SES FLANCS SE SONT RESSERRES DE 0,76 A 0,72, POUR LA MEME RAISON.
+##
+## Au droit du bas de caisse, le plancher modelise s'arrete a x 0,71 et le bas de
+## caisse forme une levre a y 0,43 : entre les deux il y a un VIDE, que le modele
+## ne remplit pas. Une coque a 0,76 y laissait entrer les objets — poussee par
+## l'inertie d'un virage, une canette glissait sous la levre et s'y arretait, le
+## coin superieur dans la tole. Mesure : 124 canettes sur 900 dans DOOR_R_Sill,
+## a x 0,727, qui est exactement l'ancienne borne moins la demi-largeur.
+##
+## La regle est la meme que pour le plancher : la coque ne doit jamais etre plus
+## LARGE que la garniture dont elle tient lieu, sinon elle ouvre un logement dans
+## ce qui a l'air plein. Au niveau du bas de caisse, la garniture la plus etroite
+## est a 0,71 ; a 0,72 la coque passe juste derriere elle, et au-dessus c'est de
+## toute facon la contre-porte relevee (0,70) qui arrete, pas la coque.
+const HULL_MIN := Vector3(-0.72, 0.33, -0.92)
+const HULL_MAX := Vector3(0.72, 1.30, 1.43)
 
 ## Pivots exposes a driver.gd.
 var wheel_tilt: Node3D            # STR_Root, deja incline de 68 degres
@@ -280,15 +322,14 @@ var _lamp_red: ShaderMaterial
 func _ready() -> void:
 	_build_materials()
 	_build_interior()
-	_build_surfaces()
-	_build_walls()
+	_load_shape()         # la geometrie de collision, relevee sur le .glb
 	_build_exterior()
 	_build_windows()      # apres l'exterieur : la glace exterieure en fait partie
+	_build_shell()        # apres les vitres : les glaces en donnent les cotes
 	_build_mirrors()
 	_build_ignition()
-	_build_crawl()
 	_build_vents()        # apres l'interieur : les grilles y sont relevees
-	_spawn_centipede()    # en dernier : il lui faut les boites ET les bouches
+	_spawn_centipede()    # en dernier : il lui faut la forme ET les bouches
 
 
 ## Articule les deux vitres de portiere et leur manivelle.
@@ -524,16 +565,84 @@ func aim_mirrors(eye: Vector3) -> void:
 # Objets et surfaces de depose
 # --------------------------------------------------------------------------
 
-## Surfaces sur lesquelles on peut reposer un objet, en ESPACE VOITURE.
+## Charge la forme relevee sur le .glb (assets/cabin_shape.res).
 ##
-## Pas de corps physique : elles sont declarees comme de simples boites
-## horizontales et interaction.gd les teste analytiquement. Un corps statique
-## accroche a une caisse qui roule ne transmet sa position au serveur physique
-## qu'au pas suivant, et le rayon tombe a cote des qu'on avance.
+## PAS DE CORPS PHYSIQUE, et c'est inchange : la forme est interrogee
+## analytiquement, en espace voiture, ou la camera, les objets et la tole sont
+## immobiles les uns par rapport aux autres. Un corps statique accroche a une
+## caisse qui roule ne transmet sa position au serveur physique qu'au pas
+## suivant, et a 24 m/s le rayon tombe 40 cm a cote — c'etait "je ne peux pas
+## saisir le paquet en roulant".
 ##
-## Sept boites relevees sur le modele couvrent tout ce qui est plat et
-## atteignable ; generer la collision des 300 meshes du .glb serait absurde.
+## Ce qui change est ce qu'on interroge : la tole elle-meme, au lieu de vingt-
+## trois boites saisies a la main qui ne lui correspondaient pas.
+func _load_shape() -> void:
+	if not ResourceLoader.exists(SHAPE_PATH):
+		push_error(("%s manquant : l'habitacle n'a pas de collision.\n" +
+			"  Le cuire avec :  godot --headless --path . --script res://tools/bake_cabin.gd")
+			% SHAPE_PATH)
+		return
+	shape = load(SHAPE_PATH)
+	if shape == null or shape.nx <= 0:
+		push_error("%s illisible ou vide : l'habitacle n'a pas de collision" % SHAPE_PATH)
+		shape = null
+
+
+## LE HAUT DE CAISSE, qui est en verre et n'est donc pas dans le releve.
+##
+## Le pare-brise est INCLINE — bas de baie a (COWL_Y, COWL_Z), haut de baie a
+## (HEADER_Y, HEADER_Z) — et la pente n'est pas saisie, elle est DEDUITE de ces
+## deux lignes, exactement comme le reflet du pare-brise (_build_glare). Bouger
+## COWL/HEADER emmene les marches avec.
+##
+## Les marches font 6 cm et non plus 10 : elles servent maintenant aussi de
+## chemin au mille-pattes, dont le corps fait 27 cm — six marches, il drape
+## dessus sans qu'on les lise. Rien d'autre ne les voit, elles ne coutent rien.
+func _build_shell() -> void:
+	var steps := 6
+	var y0 := COWL_Y
+	var slope := (HEADER_Z - COWL_Z) / (HEADER_Y - COWL_Y)
+	var h := (HEADER_Y - y0) / float(steps)
+	for i in steps:
+		var y := y0 + h * (float(i) + 0.5)
+		var z := COWL_Z + (y - COWL_Y) * slope
+		_shell(Vector3(1.52, h, 0.04), Vector3(0.0, y, z - 0.02))
+
+	# La lunette arriere, et les glaces laterales AU-DESSUS DE LA CEINTURE : en
+	# dessous c'est la garniture de portiere, et celle-la est dans le releve, a
+	# sa vraie place (0,70) et non a celle de la tole (0,79) ou l'ancienne boite
+	# l'avait mise. C'est la que les objets s'enfoncaient.
+	_shell(Vector3(1.52, 0.10, 0.37), Vector3(0.0, 1.25, 1.245))
+	for w in windows:
+		var g: AABB = w.glass_box
+		if g.size == Vector3.ZERO:
+			continue
+		# La glace remontee, epaissie vers l'exterieur : un objet s'y arrete a la
+		# vitre, pas dans la portiere.
+		var x: float = g.get_center().x
+		_shell(Vector3(0.06, g.size.y + 0.06, g.size.z),
+			Vector3(x + signf(x) * 0.02, BELT_Y + g.size.y * 0.5, g.get_center().z))
+
+
+## Une boite du haut de caisse, en ESPACE VOITURE.
+func _shell(size: Vector3, pos: Vector3) -> void:
+	shell.append({"min": pos - size * 0.5, "max": pos + size * 0.5})
+
+
+## LES ANCIENNES BOITES, gardees pour memoire et pour rien d'autre.
+##
+## Elles ne sont plus appelees par le jeu — `_ready()` ne les construit pas.
+## tools/probe_surfaces.gd et tools/probe_collisions.gd les demandent encore,
+## pour montrer chiffres a l'appui l'ecart entre ce qui etait DECLARE et ce qui
+## est MODELISE : c'est cet ecart qui a motive le releve, et un avant/apres
+## qu'on efface est un avant/apres qu'on ne peut plus refaire.
+var surfaces: Array = []
+var solids: Array = []
+
+
 func _build_surfaces() -> void:
+	surfaces.clear()
+	solids.clear()
 	# Les boites sont EPAISSES vers le bas. Elles sont invisibles, et une dalle
 	# de 2 cm se fait traverser : un objet qui tombe parcourt 6 cm par image.
 	_surface(Vector3(0.48, 0.30, 0.50), Vector3(0.33, 0.344, 0.24))     # assise passager
@@ -624,59 +733,6 @@ func _surface(size: Vector3, pos: Vector3) -> void:
 		"max": Vector2(pos.x + size.x * 0.5, pos.z + size.z * 0.5),
 	})
 	_solid(size, pos)
-
-
-# --------------------------------------------------------------------------
-# Ramper : les faces que le mobilier ne declare pas
-# --------------------------------------------------------------------------
-
-## Ce sur quoi on marche en plus de `solids` — voir `crawl_solids`.
-##
-## Trois manques, et ils ont tous la meme cause : ce sont des faces VERTICALES,
-## et aucun objet pose n'est jamais alle les toucher.
-##
-##   - LE NEZ DE LA PLANCHE DE BORD. `solids` n'en a que le dessus (la casquette,
-##     la planche passager) et le tablier tout au fond, a z -0.95. Entre les
-##     deux, rien : 40 cm de vide sur toute la largeur — la ou sont precisement
-##     les six aerateurs. Sans cette boite, une bestiole qui sort d'un aerateur
-##     n'a rien a portee et se retrouve a chercher la paroi la plus proche a
-##     quatorze centimetres de la.
-##   - LES CONTRE-PORTES. `solids` place les portieres a 0,79, qui est la TOLE ;
-##     la garniture qu'on voit et qu'on longe est a 0,70, et c'est sur elle
-##     qu'est vissee la grille de haut-parleur.
-##   - LE PARE-BRISE. `solids` le ferme en trois marches de 10 cm, ce qui suffit
-##     a renvoyer une canette. On y grimpe en escalier. Six marches de 6 cm le
-##     suivent d'assez pres pour qu'un corps de 27 cm draine dessus sans qu'on
-##     lise les marches — et elles ne coutent rien, personne d'autre ne les voit.
-##
-## La pente n'est pas saisie : elle est DEDUITE des deux lignes de baie que ce
-## fichier declare deja, comme le reflet du pare-brise (_build_glare). Bouger
-## COWL/HEADER emmene les marches avec.
-func _build_crawl() -> void:
-	# Le bloc de planche de bord s'arrete a 0,60 : c'est le DESSUS DE CONSOLE, et
-	# descendre plus bas l'avalait sur ses 12 cm avant. Une bestiole posee sur la
-	# console se retrouvait alors DANS le bloc, ou "la surface la plus proche"
-	# n'est plus celle sur laquelle elle marche — elle sautait d'une face a
-	# l'autre, et le corps s'etirait derriere elle. Les recouvrements sont permis
-	# ici, mais ils ne sont pas gratuits.
-	_crawl(Vector3(1.44, 0.345, 0.355), Vector3(0.0, 0.7725, -0.7225))   # planche de bord, le bloc
-	for x in [-0.73, 0.73]:
-		_crawl(Vector3(0.06, 0.50, 1.24), Vector3(x, 0.72, 0.0))         # contre-porte
-
-	var steps := 6
-	var y0 := COWL_Y + 0.01
-	var slope := (HEADER_Z - COWL_Z) / (HEADER_Y - COWL_Y)
-	var h := (HEADER_Y - y0) / float(steps)
-	for i in steps:
-		var y := y0 + h * (float(i) + 0.5)
-		var z := COWL_Z + (y - COWL_Y) * slope
-		_crawl(Vector3(1.52, h, 0.03), Vector3(0.0, y, z - 0.015))
-
-
-## Une boite de reptation. Elle ne va PAS dans `solids` : rien de ce qui tombe
-## ne doit la sentir.
-func _crawl(size: Vector3, pos: Vector3) -> void:
-	crawl_solids.append({"min": pos - size * 0.5, "max": pos + size * 0.5})
 
 
 # --------------------------------------------------------------------------

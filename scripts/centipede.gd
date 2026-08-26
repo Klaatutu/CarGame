@@ -192,7 +192,6 @@ var _trail_nrm: Array[Vector3] = []
 var _segments: Array[Node3D] = []
 var _legs: Array = []              # [[gauche, droite], ...] par anneau
 var _antennae: Array[Node3D] = []
-var _crawl: Array = []             # boites sur lesquelles il marche
 
 
 func _ready() -> void:
@@ -208,8 +207,6 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if cabin == null or delta <= 0.0:
 		return
-	if _crawl.is_empty():
-		_crawl = cabin.solids + cabin.crawl_solids
 
 	match state:
 		WAITING:
@@ -333,11 +330,11 @@ func _advance(delta: float, step: float, stick: bool) -> void:
 ## Deux familles, et elles se mesurent de la meme facon pour pouvoir se
 ## departager d'un seul comparatif :
 ##
-##   - LE MOBILIER (`solids` + `crawl_solids`) — il marche DESSUS, la normale
-##     sort de la boite. Un point deja dedans compte comme une distance egale a
-##     sa penetration, ce qui fait gagner la boite dans laquelle il est le moins
-##     enfonce : il reste ainsi sur la peau exterieure quand deux boites se
-##     recouvrent.
+##   - LA TOLE (`cabin.shape`, plus le vitrage de `cabin.shell`) — il marche
+##     DESSUS, la normale sort de la matiere. Un point deja dedans compte comme
+##     une distance egale a sa penetration, ce qui le fait ressortir par la face
+##     la plus proche : il reste ainsi sur la peau exterieure la ou plusieurs
+##     epaisseurs se superposent.
 ##   - LA COQUE (`HULL_MIN/MAX`) — il marche DEDANS, la normale rentre. C'est ce
 ##     qui lui donne le pavillon et la lunette arriere sans avoir a les declarer
 ##     deux fois.
@@ -406,7 +403,30 @@ func _nearest(p: Vector3) -> Dictionary:
 	var deep := {"q": p, "n": head_nrm, "d": INF, "inside": true}
 	var buried := false
 
-	for s in _crawl:
+	# LA TOLE, relevee case par case sur le .glb (cabin_shape.gd). C'est ce qui
+	# a remplace `solids + crawl_solids` : une vingtaine de boites saisies a la
+	# main, dont trois n'existaient QUE pour lui — le nez de la planche de bord,
+	# les contre-portes, le pare-brise — parce que personne n'avait pense aux
+	# autres faces verticales. Les montants, le tunnel, le capot des compteurs,
+	# les dossiers, les bas de caisse n'y etaient pas, donc ils n'existaient pas
+	# pour lui : c'etait "il ne marche pas sur toutes les surfaces visibles".
+	#
+	# Il n'y a plus de liste a tenir. Ce qui se voit se parcourt, et ajouter du
+	# mobilier au modele lui donne de nouveaux chemins sans qu'on rebranche rien
+	# — il suffit de recuire.
+	if cabin.shape != null:
+		var r: Dictionary = cabin.shape.nearest(p, REACH)
+		if r["d"] < INF:
+			if r["inside"]:
+				buried = true
+				deep = r
+			else:
+				best = r
+
+	# LE VITRAGE, qui n'est pas dans le releve : c'est par la qu'il grimpe au
+	# pare-brise. Ces boites peuvent se recouvrir librement — on cherche la
+	# surface LA PLUS PROCHE, pas les intersections.
+	for s in cabin.shell:
 		var lo: Vector3 = s["min"]
 		var hi: Vector3 = s["max"]
 		var q := p.clamp(lo, hi)
@@ -432,9 +452,9 @@ func _nearest(p: Vector3) -> Dictionary:
 				n = Vector3(0.0, 0.0, signf(out_z))
 			q = p + n * d
 		if inside:
-			buried = true
-			if d < deep["d"]:
+			if not buried or d < deep["d"]:
 				deep = {"q": q, "n": n, "d": d, "inside": true}
+			buried = true
 		elif d < best["d"]:
 			best = {"q": q, "n": n, "d": d, "inside": false}
 

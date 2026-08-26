@@ -102,9 +102,12 @@ func _physics_process(delta: float) -> void:
 				vel.z -= d.z * stop
 	vel += drive * delta
 
-	# Sous-pas : au-dela de 2 cm parcourus dans une image, l'objet peut traverser
-	# une boite sans jamais se trouver dedans au moment du test.
-	var steps := clampi(int(ceil(vel.length() * delta / 0.02)), 1, 8)
+	# Sous-pas. Il vaut la MOITIE d'une case de la grille (cabin_shape.gd, 2 cm) :
+	# la tole y fait souvent une seule case d'epaisseur, et un objet qui
+	# avancerait d'une case entiere pourrait se retrouver de part et d'autre sans
+	# jamais etre dedans au moment du test. A un demi-pas, deux positions
+	# successives se recouvrent toujours.
+	var steps := clampi(int(ceil(vel.length() * delta / 0.01)), 1, 16)
 	var h := delta / float(steps)
 	for i in steps:
 		position += vel * h
@@ -127,38 +130,110 @@ func _physics_process(delta: float) -> void:
 		vel = Vector3.ZERO
 
 
-## Collisions contre les boites de l'habitacle, alignees sur les axes.
-## On sort par l'axe de moindre penetration : simple, stable, et suffisant pour
-## un objet de 5 cm dans une boite a chaussures.
+## Collisions contre la TOLE RELEVEE (cabin_shape.gd), puis contre le vitrage,
+## puis la coque.
+##
+## CE QUI A CHANGE, ET POURQUOI LE JOUEUR LE VOIT.
+##
+## Avant, on parcourait une vingtaine de boites SAISIES A LA MAIN dans cabin.gd
+## et on sortait de chacune INDEPENDAMMENT, par son axe de moindre penetration.
+## Deux defauts, et le second est celui qu'on rapportait :
+##
+##   - Sortir boite par boite suppose qu'aucune ne recouvre l'autre, sans quoi
+##     la seconde defait ce que la premiere vient de faire. cabin.gd s'imposait
+##     donc la regle "aucune boite ne doit en chevaucher une autre" — et
+##     l'enfreignait treize fois (tools/probe_collisions.gd). Ici on resout
+##     contre l'UNION : le resultat ne depend plus de l'ordre, et il n'y a plus
+##     rien a s'interdire.
+##   - Surtout, ces boites ne collaient pas au modele. La portiere etait
+##     declaree a x 0,79, qui est la tole ; la garniture visible est a 0,70. Un
+##     objet lance s'arretait donc proprement — NEUF CENTIMETRES DERRIERE LE
+##     PANNEAU — et le joueur le voyait "coince dans la paroi". Releve avant
+##     correction : 28 % des lancers pour le paquet, 59 % pour une canette,
+##     immobilises DANS une piece du modele.
+##
+## Le banc `-- throwtest`, lui, etait vert : il mesurait les FUITES hors de la
+## caisse, et un objet enfonce dans une portiere n'a fui nulle part. Les deux
+## defauts sont opposes, et la coque ne promettait que le premier.
+##
+## Trois etapes, du plus precis au plus grossier — chacune ne rattrape que ce
+## que la precedente ne couvre pas :
+##
+##   1. LA TOLE, relevee case par case sur le .glb. C'est elle qui arrete tout
+##      ce qui se voit : garnitures, sieges, planche, tunnel, bas de caisse.
+##   2. LE VITRAGE, absent du releve puisqu'on regarde au travers.
+##   3. LA COQUE, une borne par axe. Elle ne peut pas fuir, quels que soient
+##      l'angle, la vitesse ou le pas de temps.
 func _resolve(_delta: float) -> void:
 	_grounded = false
-	for s in cabin.solids:
-		var lo: Vector3 = s["min"] - half
-		var hi: Vector3 = s["max"] + half
-		if position.x <= lo.x or position.x >= hi.x: continue
-		if position.y <= lo.y or position.y >= hi.y: continue
-		if position.z <= lo.z or position.z >= hi.z: continue
-
-		var out_x := hi.x - position.x if hi.x - position.x < position.x - lo.x \
-			else lo.x - position.x
-		var out_y := hi.y - position.y if hi.y - position.y < position.y - lo.y \
-			else lo.y - position.y
-		var out_z := hi.z - position.z if hi.z - position.z < position.z - lo.z \
-			else lo.z - position.z
-
-		if absf(out_y) <= absf(out_x) and absf(out_y) <= absf(out_z):
-			position.y += out_y
-			if out_y > 0.0:
-				_grounded = true
-			vel.y = -vel.y * bounce if absf(vel.y) > 0.5 else 0.0
-		elif absf(out_x) <= absf(out_z):
-			position.x += out_x
-			vel.x = -vel.x * bounce if absf(vel.x) > 0.5 else 0.0
-		else:
-			position.z += out_z
-			vel.z = -vel.z * bounce if absf(vel.z) > 0.5 else 0.0
-
+	if cabin.shape != null:
+		# Deux passes : sortir par un axe peut engager l'objet sur un autre, et
+		# la relaxation converge en une de plus. Ce n'est pas une boucle ouverte
+		# — deux passes bornent le cout, et la coque ferme le reste.
+		for pass_i in 2:
+			# Les bornes de l'habitacle sont passees a la grille : sans elles,
+			# contre le bas de caisse, "la sortie la moins couteuse" est vers
+			# l'exterieur de la voiture, et la coque et la grille se renvoient
+			# l'objet a chaque image. Voir cabin_shape.gd, push_out().
+			var r: Array = cabin.shape.push_out(position, half,
+				cabin.HULL_MIN, cabin.HULL_MAX)
+			if not r[2]:
+				break
+			position = r[0]
+			_bounce_off(r[1])
+	_push_shell()
 	_contain()
+	# ET ON SE POSE, UNE SEULE FOIS, A LA FIN. Sur la tole relevee et non sur le
+	# bord de la case — voir cabin_shape.gd, settle(). L'ordre compte : pose sur
+	# le triangle, l'objet est DANS la case qui le contient, et repasser la
+	# resolution derriere le ferait remonter, redescendre, remonter.
+	if _grounded and cabin.shape != null:
+		position.y = cabin.shape.settle(position, half)
+
+
+## Le vitrage (cabin.shell), resolu contre l'union comme la tole.
+func _push_shell() -> void:
+	var need := PackedFloat32Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+	var touched := false
+	var b_lo := position - half
+	var b_hi := position + half
+	for s in cabin.shell:
+		var lo: Vector3 = s["min"]
+		var hi: Vector3 = s["max"]
+		var d := Vector3(minf(hi.x, b_hi.x) - maxf(lo.x, b_lo.x),
+			minf(hi.y, b_hi.y) - maxf(lo.y, b_lo.y),
+			minf(hi.z, b_hi.z) - maxf(lo.z, b_lo.z))
+		if d.x <= 0.0 or d.y <= 0.0 or d.z <= 0.0:
+			continue
+		touched = true
+		need[0] = maxf(need[0], hi.x - b_lo.x)
+		need[1] = maxf(need[1], b_hi.x - lo.x)
+		need[2] = maxf(need[2], hi.y - b_lo.y)
+		need[3] = maxf(need[3], b_hi.y - lo.y)
+		need[4] = maxf(need[4], hi.z - b_lo.z)
+		need[5] = maxf(need[5], b_hi.z - lo.z)
+	if not touched:
+		return
+	var best := 0
+	for a in range(1, 6):
+		if need[a] < need[best]:
+			best = a
+	const DIRS := [Vector3.RIGHT, Vector3.LEFT, Vector3.UP, Vector3.DOWN,
+		Vector3.BACK, Vector3.FORWARD]
+	var n: Vector3 = DIRS[best]
+	position += n * need[best]
+	_bounce_off(n)
+
+
+## Rebond et appui sur une normale de sortie. Seule une sortie VERS LE HAUT pose
+## l'objet : c'est ce qui lui donne son frottement, et une paroi n'en donne pas.
+func _bounce_off(n: Vector3) -> void:
+	if n.y > 0.5:
+		_grounded = true
+	for a in 3:
+		if absf(n[a]) < 0.5:
+			continue
+		vel[a] = -vel[a] * bounce if absf(vel[a]) > 0.5 else 0.0
 
 
 ## Retient l'objet DANS la coque (cabin.gd, HULL_MIN/HULL_MAX). L'exact inverse

@@ -463,8 +463,8 @@ paquet vole dans tous les sens ». Les rustines intermédiaires — `AnimatableB
 adhérence simulée, frottement coupé — n'ont fait que déplacer le problème.
 
 Dans le repère de la voiture, **rien ne bouge**. [cig_pack.gd](scripts/cig_pack.gd)
-y intègre lui-même sa vitesse et résout ses collisions contre les boîtes
-déclarées par `cabin.gd`, par axe de moindre pénétration. C'est stable à
+y intègre lui-même sa vitesse et résout ses collisions contre la **forme relevée
+sur le modèle** ([cabin_shape.gd](scripts/cabin_shape.gd)). C'est stable à
 n'importe quelle vitesse, parce qu'il n'y a plus de vitesse du tout de ce point
 de vue.
 
@@ -472,17 +472,14 @@ Ce qu'on ressent quand la voiture accélère, freine ou tourne vient des **force
 d'inertie** : `car.gd` publie `frame_accel`, son accélération dans son propre
 repère (longitudinale, plus la centripète ω·v), et l'objet en subit l'opposé.
 
-Six pièges rencontrés, tous corrigés :
+Quatre pièges rencontrés, tous corrigés — les deux qui manquent à la liste
+d'origine (boîtes qui se chevauchent, plancher trop court) ont disparu avec les
+boîtes elles-mêmes, voir « Une seule géométrie » plus bas :
 
-- **Boîtes qui se chevauchent** — un objet coincé dans une intersection se fait
-  éjecter. La console est désormais une seule boîte, pas un dessus posé sur un
-  caisson, et les quatre morceaux de planche de bord sont jointifs — ils se
-  touchent en z sans jamais se recouvrir.
-- **Tunnelling** — une dalle de 2 cm se fait traverser par un objet qui tombe de
-  6 cm par image. Les boîtes sont épaisses vers le bas (elles sont invisibles) et
-  l'intégration se fait en sous-pas de 2 cm.
-- **Plancher trop court** — il s'arrêtait aux pieds, et ce qui glissait vers
-  l'arrière tombait dans le vide. Il court maintenant sur toute la longueur.
+- **Tunnelling** — une tôle d'une case se fait traverser par un objet qui tombe
+  de 6 cm par image. L'intégration se fait donc en sous-pas d'**une demi-case**
+  (1 cm) : deux positions successives se recouvrent toujours, et rien ne peut
+  passer entre.
 - **Pas d'adhérence statique** — le frottement était *visqueux* : il amortissait
   la vitesse après coup, sans jamais empêcher le départ. La moindre poussée
   mettait donc l'objet en mouvement, et il dérivait indéfiniment. C'est un
@@ -525,63 +522,163 @@ surfaces sont immobiles les uns par rapport aux autres :
 
 - **objets** — test rayon/sphère (rayon 7,5 cm ; viser une boîte de 5 cm à un
   mètre au pixel près serait injouable) ;
-- **surfaces** — intersection avec le plan de leur dessus, puis test d'emprise
-  en x/z. Elles sont toutes horizontales, ça suffit.
+- **surfaces** — on marche dans la grille de l'habitacle jusqu'à la première
+  case pleine, et on se pose sur la tôle qu'elle contient.
 
 C'est ce qui a corrigé « je ne peux pas saisir le paquet en roulant » : un
 `StaticBody3D` accroché à une caisse qui roule ne transmet sa position au
 serveur physique qu'au pas suivant. À 24 m/s le rayon passait **40 cm à côté** —
 à l'arrêt l'écart était nul, d'où l'impression que ça ne marchait que garé.
 
-Les surfaces de dépose sont **dix boîtes** déclarées dans
-[cabin.gd](scripts/cabin.gd) : les deux assises avant, la banquette arrière, le
-dessus de console, le plancher en deux morceaux, et le tableau de bord en
-quatre — la casquette pleine largeur au ras du pare-brise, puis la partie
-profonde côté passager, chacune en deux bandes. Côté conducteur cette partie-là
-est exclue : c'est le bloc compteurs, encastré dans la planche.
+**On ne pose que sur ce qui est à peu près plat.** Un pare-brise, une
+contre-porte sont de la tôle comme le reste et le rayon les trouve ; y poser un
+paquet n'aurait aucun sens. C'est la normale rendue par la grille qui tranche.
 
-### Elles sont relevées sur le maillage, pas estimées
+## Une seule géométrie, relevée sur le modèle
 
-Ces boîtes étaient saisies à la main, et rien ne garantissait qu'elles collent
-au modèle. [probe_surfaces.gd](tools/probe_surfaces.gd) lit le `.glb`, projette
-tous les triangles **tournés vers le haut** sur une grille en x/z, garde le plus
-haut — c'est exactement ce sur quoi un objet se poserait — et compare le relevé
-à chaque boîte déclarée :
+Trois choses posaient chacune leur question à l'habitacle — où peut-on poser un
+objet, qu'est-ce qui l'arrête, sur quoi le mille-pattes marche-t-il — et
+`cabin.gd` répondait par **trois listes de boîtes saisies à la main** :
+`surfaces`, `solids`, `crawl_solids`. Elles décrivaient chacune une partie du
+même habitacle, aucune ne décrivait le vrai, et **les trois défauts que voyait
+le joueur étaient le même défaut**.
+
+- **Un objet lancé s'arrêtait dans la paroi.** Les portières étaient déclarées à
+  x 0,79, qui est la **tôle** ; la garniture qu'on voit est à 0,70. L'objet
+  s'arrêtait donc proprement — **neuf centimètres derrière le panneau**. Rien ne
+  le mesurait : `-- throwtest` contrôle les *fuites* hors de la caisse, et un
+  objet enfoncé dans une portière n'a fui nulle part. Les deux défauts sont
+  opposés, et la coque ne promettait que le premier.
+- **On ne pouvait pas poser sur tout le tableau de bord.** Le fond de planche
+  n'avait de boîte que côté passager. Le maillage, lui, court d'un montant à
+  l'autre à 93-95 cm : la tôle était là, la surface de dépose non. Le commentaire
+  qui justifiait l'absence — « c'est le bloc compteurs, encastré » — était faux,
+  et la carte de hauteurs le dit : le capot des compteurs est à **0,944**, au ras
+  de la planche.
+- **Le mille-pattes ne marchait pas partout.** `crawl_solids` ajoutait à la main
+  les trois faces verticales auxquelles on avait pensé — nez de planche,
+  contre-portes, pare-brise. Les montants, le tunnel, le capot des compteurs, les
+  dossiers, les bas de caisse n'y étaient pas, donc ils n'existaient pas pour lui.
+
+Et les boîtes se contredisaient entre elles. `cabin.gd` s'imposait en toutes
+lettres « aucune boîte ne doit en chevaucher une autre », parce que `prop.gd` les
+résolvait **l'une après l'autre** et qu'un recouvrement fait défaire à la seconde
+ce que la première vient de faire. La règle était tenue à la main : elle était
+enfreinte **treize fois**.
+
+### Ce qui remplace les trois listes
+
+Un relevé du `.glb`, et un seul. [cabin_shape.gd](scripts/cabin_shape.gd) en
+porte deux formes, parce qu'aucune ne sait faire les deux choses :
+
+- **une grille de cases de 2 cm** — une case est pleine si un triangle du modèle
+  la traverse. C'est ce qui **arrête**, et c'est ce qui attrape les faces
+  *verticales* que rien d'autre ne voit : contre-portes, nez de planche, bas de
+  caisse, tunnel, dossiers. Deux cases ne peuvent pas se contredire, ce qui
+  retire la règle du chevauchement au lieu de la faire respecter ;
+- **un champ de hauteurs** — la cote exacte de la tôle sous chaque colonne. C'est
+  ce qui **porte** : la grille poserait l'objet au demi-centimètre près, ce qui
+  se verrait ; le champ le pose au millimètre.
+
+Les **surplombs tombent tout seuls** : une case n'est pleine que là où il y a de
+la matière, donc le pédalier reste vide sous une planche de bord pleine, 60 cm
+plus haut. Un simple champ de hauteurs aurait rempli le pédalier jusqu'à la
+planche — c'est la raison d'être de la grille.
+
+Le vitrage, lui, n'est **pas** dans le relevé : on le regarde au travers, et une
+vitre pleine rendrait l'habitacle aveugle. Le haut de caisse reste donc quelques
+boîtes (`cabin.shell`), mais c'est de la géométrie qu'on connaît — le pare-brise
+est un plan, défini par ses deux lignes de baie, et les autres glaces sont des
+plaques.
+
+### Elle est cuite, pas calculée au démarrage
+
+Rastériser 108 000 triangles coûte une minute. On ne la paie pas à chaque
+lancement :
+
+```bash
+godot --headless --path . --script res://tools/bake_cabin.gd
+```
+
+écrit `assets/cabin_shape.res` (83 ko), que `cabin.gd` charge au démarrage. À
+relancer quand `civic_interior.glb` change ; `cabin.gd` prévient si le fichier
+manque, avec la commande.
+
+Le relevé est **le même pour le jeu et pour les sondes**
+([mesh_probe.gd](scripts/mesh_probe.gd)) : deux réponses à « où est la tôle ? »
+finissent par diverger, et c'est exactement le défaut qu'on corrige.
+
+### Quatre pièges de la cuisson, tous relevés au banc
+
+- **Les creux fermés étaient vides.** La rastérisation ne marque que les cases
+  *traversées* : elle produit une coque, pas un volume. Le tunnel, la console et
+  les sièges étaient donc creux, et un objet qui y entrait n'avait plus rien pour
+  l'en sortir — il tombait au fond et y restait. On remplit maintenant ce qui ne
+  communique pas avec l'extérieur (**47 935 cases**). L'habitacle, lui, communique
+  largement : le vitrage étant absent du relevé, les baies sont des trous béants.
+  Un garde-fou vérifie que la place du conducteur est restée vide et refuse
+  d'écrire sinon — si un jour le modèle fermait ses baies, ce remplissage
+  avalerait la voiture entière sans que rien ne le montre.
+- **Le champ de hauteurs était pris au centre de la case.** `prop.gd` s'en sert
+  pour *poser* un objet, et un objet couvre plusieurs cases : il lui faut une
+  borne **supérieure** de la tôle sous lui. Sur un coussin de siège, bombé, la
+  tôle entre deux centres monte plus haut qu'aux deux centres, et l'objet s'y
+  enfonçait. On prend donc le maximum sur neuf échantillons par case. Sur une
+  surface plane les neuf sont égaux et le relevé reste exact : on ne perd de la
+  précision que là où il y a une pente, et **du bon côté**.
+- **Le recalage se battait avec la résolution.** Posé sur la tôle exacte, un
+  objet est forcément *dans* la case qui contient cette tôle — une case fait
+  2 cm. Les enchaîner faisait remonter l'objet à la case, redescendre au
+  triangle, remonter : **9 %** des lancers ne se stabilisaient jamais. On résout
+  d'abord, autant de fois qu'il faut, et on se pose **une seule fois**, à la fin.
+- **La sortie la moins coûteuse passait par dehors.** La grille ne sait pas où
+  est l'intérieur de la voiture : contre le bas de caisse, l'objet est à quelques
+  centimètres de la portière et à un demi-mètre du milieu de l'habitacle, donc le
+  moins coûteux est de le pousser **à travers la tôle**. La coque le ramenait,
+  la grille le repoussait, et il restait planté dans le panneau. On passe
+  maintenant les bornes de l'habitacle à la résolution : une direction qui fait
+  sortir n'est pas candidate.
+
+### Le plancher de la coque, et pourquoi 0,33
+
+La coque (`HULL_MIN`/`HULL_MAX`) reste ce qu'elle était : une borne par axe, qui
+ne peut pas fuir quels que soient l'angle, la vitesse ou le pas de temps. Mais
+son plancher devait se mettre d'accord avec le relevé, et **les deux mauvaises
+valeurs ont été essayées** :
+
+| plancher de coque | ce qui se passe |
+|---|---|
+| **0,35** (l'ancien) | 2 cm **au-dessus** du plancher modélisé : c'est la coque qui arrête les objets, et ils flottent — de deux planchers en désaccord, c'est le plus haut qui gagne, et c'était le faux |
+| **0,30** | elle passe **dessous**, et c'est pire : le maillage ne couvre pas les coins arrière, la coque y est le seul plancher, et les objets descendaient 3 cm sous le plan du sol, c'est-à-dire dans la tôle qui le borde — **92 %** des lancers finissaient dans `BODY_Floor` |
+| **0,33** | les deux sont d'accord au millimètre |
+
+Un filet ne doit ni dépasser ni manquer.
+
+### L'écart qu'il y avait, et qui a motivé tout ça
+
+[probe_surfaces.gd](tools/probe_surfaces.gd) lit le `.glb`, projette les
+triangles plats sur une grille en x/z, garde le plus haut — c'est exactement ce
+sur quoi un objet se poserait — et le compare aux boîtes historiques, que
+`cabin.gd` garde pour cette comparaison-là et pour rien d'autre :
 
 ```bash
 godot --headless --path . --script res://tools/probe_surfaces.gd
 ```
 
-Il a trouvé deux boîtes fausses, et le défaut ne se lisait dans aucune
-coordonnée : il fallait la carte du maillage réel.
+Le défaut ne se lisait dans **aucune coordonnée** : il fallait la carte du
+maillage réel.
 
-- **La casquette flottait de 8 à 22 mm.** Un seul plan à 0,955 sur toute sa
-  profondeur, alors que la tôle est **galbée** : 0,933 au ras du pare-brise,
-  0,947 en arrière sur le capot des compteurs.
-- **La planche passager flottait de 35 mm**, et son emprise était fausse deux
-  fois. Elle courait jusqu'à z −0,50, soit **6 cm au-dessus du vide** — la tôle
-  s'arrête à −0,56, après quoi c'est la boîte à gants. Et son bord x 0,75
-  mordait sur le **montant A**, qui monte à 1,09 : d'où une couverture de 73 %,
-  et un objet qui pouvait aussi bien flotter de 30 cm que s'enfoncer de 13.
-
-Chaque morceau est maintenant **deux bandes** qui suivent le galbe, calées sur
-le point **haut** de ce qu'elles couvrent. Le sens du calage n'est pas
-symétrique : un plan trop haut fait léviter l'objet, un plan trop bas l'enfonce
-dans la tôle, et l'enfoncement est le pire des deux. C'est ce qui décide des
-grilles de dégivrage — 21 et 3 triangles, assez petites pour qu'on les ignore,
-mais elles **dépassent** de la planche, et les négliger mettait le plan 5 mm
-sous elles.
-
-Écart au maillage, avant et après :
-
-| | flottement | couverture |
+| boîte déclarée | ce qu'il y a dessous | écart |
 |---|---|---|
-| casquette | 8 à 22 mm | 92 % |
-| planche passager | jusqu'à 35 mm | 73 % |
-| **les quatre bandes** | **0 à 15 mm** | **100 %** (92 % pour la casquette avant) |
+| assises avant (plan 0,494) | 0,330 à 0,481 | **−164 à −13 mm** |
+| banquette (plan 0,488) | 0,407 à 0,478 | −81 à −10 mm |
+| casquette (plan 0,945) | 0,933 à 0,945 | −12 à 0 mm |
+| planche passager (plan 0,930) | 0,915 à 0,930 | −15 mm |
+| console (plan 0,600) | 0,330 à 0,830 | −270 à **+230 mm** |
 
-Les 92 % qui restent sont structurels : ce sont les coins avant, où le
-pare-brise vient couper la planche en biais.
+Un objet posé sur le siège flottait donc de 1 à 16 cm, et la console dépassait
+de 23 cm au-dessus de son propre plan — c'est le levier de vitesses, qui la
+traverse.
 
 La surbrillance passe par l'uniforme `emission` de `retro.gdshader`, noir par
 défaut donc sans effet sur le reste. Elle pulse lentement : dans le noir, un
@@ -589,11 +686,6 @@ défaut donc sans effet sur le reste. Elle pulse lentement : dans le noir, un
 
 Banc d'essai : `godot --path . -- packtest` vise, prend, déplace et repose le
 paquet en injectant de vrais clics, et vérifie qu'il redevient attrapable.
-
-Rétrécir ces boîtes rétrécit aussi les **parois** — `_surface()` déclare une
-surface de visée *et* une boîte pleine. C'est `-- throwtest` qui le contrôle,
-avec son balayage de 60 lancers dans tout l'éventail : **0 fuite**, dépassement
-maximal 0,000 m.
 
 ### Lancer
 
@@ -623,9 +715,16 @@ objets ne faisaient que tomber et glisser, personne n'y montait jamais. Un objet
 *lancé*, si : jeté vers le haut du pare-brise il passait par-dessus le tablier,
 sortait de la caisse, et le filet de sécurité le reposait sur le siège — une
 canette qui disparaît dans la vitre et réapparaît sur vos genoux. `cabin.gd`
-ferme maintenant le pare-brise (**trois marches** de 10 cm, il est incliné du
-bas de baie à 0,93 m au haut de baie à 1,28 m), le pavillon, la lunette arrière
-et les glaces latérales.
+ferme donc le haut de caisse : le pare-brise en **six marches** dont la pente est
+*déduite* des deux lignes de baie (bas 0,93 m, haut 1,28 m), la lunette arrière,
+et les glaces latérales, dont les cotes sont **lues sur la glace du modèle**
+plutôt qu'écrites. En dessous de la ceinture, c'est la garniture qui arrête, et
+elle vient du relevé — à sa vraie place (0,70) et non à celle de la tôle (0,79)
+où l'ancienne boîte l'avait mise. C'est là que les objets s'enfonçaient.
+
+Le pavillon n'a plus de boîte : le ciel de toit est dans le relevé, donc il
+arrête ce qui monte, et un peu plus bas que la coque — à la garniture, pas à la
+tôle.
 
 Mesuré (`godot --path . -- throwtest`), paquet pris puis jeté au clic molette :
 
@@ -1362,6 +1461,11 @@ change un `volume_db` dans un script, le reporter dans `LEVELS`.
 | `scripts/window.gd` | vitres de portière, descendues à la manivelle |
 | `scripts/ignition.gd` | clé de contact : prise au clic, tournée à la molette |
 | `scripts/prop.gd` | objets libres de l'habitacle : simulation en repère voiture, frottement de Coulomb |
+| `scripts/cabin_shape.gd` | **la forme de l'habitacle relevée sur le `.glb`** : grille de 2 cm et champ de hauteurs. Une seule géométrie pour la dépose, les collisions et la reptation |
+| `scripts/mesh_probe.gd` | le maillage rangé pour être interrogé vite (dessus d'une colonne, boîte contre triangles). Partagé par le jeu et les sondes |
+| `tools/bake_cabin.gd` | cuit `assets/cabin_shape.res` depuis `civic_interior.glb` : rastérisation, remplissage des creux fermés, champ de hauteurs |
+| `tools/check_shape.gd` | relit la forme cuite et vérifie qu'elle répond juste (dépose, visée, reptation) |
+| `tools/probe_collisions.gd` | avant/après du même balayage de lancers : combien s'immobilisent **dans** la tôle visible |
 | `scripts/road.gd` | route infinie et lisse, arbres, poteaux, voiture de police, apparition du géant |
 | `scripts/police_car.gd` | voiture de police garée (`police_car.glb`) : gyrophares rotatifs, faisceaux bleus |
 | `scripts/giant.gd` | le géant : anatomie déduite du pied, course procédurale sans patinage, piétinement |
@@ -1375,7 +1479,7 @@ change un `volume_db` dans un script, le reporter dans `LEVELS`.
 | `tools/make_cabin_sounds.py` | synthèse des sons d'habitacle (`assets/audio/cabin/`) |
 | `tools/make_starter_sounds.py` | synthèse du démarreur et du calage (`assets/audio/starter/`) |
 | `scripts/centipede.gd` | mille-pattes : entre par les grilles ou la vitre, marche sur les surfaces de l'habitacle |
-| `tools/probe_surfaces.gd` | carte de hauteurs du maillage, comparée aux surfaces de dépose de `cabin.gd` |
+| `tools/probe_surfaces.gd` | carte de hauteurs du maillage, comparée aux boîtes **historiques** de `cabin.gd` — l'écart qui a motivé le relevé |
 | `tools/probe_vents.gd` | bouches d'aération du `.glb` : boîte englobante et axe du flux |
 | `tools/render_audio_demo.py` | rendu hors ligne de tous les sons aux niveaux du jeu, pour la balance |
 | `shaders/retro.gdshader` | tramage ordonné (Bayer 4×4) |
@@ -1860,9 +1964,14 @@ aussi ce que fait une vraie bestiole, qui ne « décide » pas de passer un angl
 elle ne lâche simplement jamais prise.
 
 Aucune topologie, aucun graphe de navigation, aucune arête à recoudre : la
-question « où est la surface ? » est reposée de zéro à chaque image sur une
-vingtaine de boîtes. Ajouter du mobilier à l'habitacle lui donne de nouveaux
-chemins sans rien rebrancher.
+question « où est la surface ? » est reposée de zéro à chaque image, sur la tôle
+relevée. On la cherche en couronnes croissantes autour de la tête et on s'arrête
+dès qu'une couronne ne peut plus faire mieux que ce qu'on tient — le coût ne
+dépend donc pas de la taille de l'habitacle mais de la distance à la tôle, qui
+est de quelques millimètres puisqu'elle marche dessus.
+
+Ajouter du mobilier au modèle lui donne de nouveaux chemins sans rien
+rebrancher : il suffit de recuire.
 
 ### Être dedans prime sur être près
 
@@ -1879,37 +1988,43 @@ cherche la surface voisine que quand on n'est plus dans rien. Le mille-pattes
 **grimpe** alors sur la banquette au lieu d'y disparaître, sans qu'on ait eu à
 lui parler de banquette.
 
-### Les boîtes sur lesquelles on rampe
+### Ce sur quoi on rampe : tout ce qui se voit
 
-`cabin.gd` déclare `crawl_solids` **à part** de `solids`, et ce n'est pas de la
-timidité. `solids` est fait pour des objets qui tombent : c'est du mobilier
+Il n'y a plus de liste à tenir. La bestiole marche sur **la tôle relevée**
+([cabin_shape.gd](scripts/cabin_shape.gd)), c'est-à-dire sur tout ce que le
+modèle contient.
+
+Avant, `cabin.gd` déclarait `crawl_solids` à part de `solids`, et la raison était
+bonne : `solids` était fait pour des objets qui *tombent* — du mobilier
 horizontal, plus les parois qu'il faut pour qu'une canette ne parte pas dans la
-caisse. Ce qui manque à une bestiole qui *marche*, ce sont justement les faces
-verticales que personne n'a jamais heurtées :
+caisse — et il manquait à une bestiole qui *marche* les faces verticales que
+personne n'avait jamais heurtées. On en avait donc ajouté trois à la main : le
+nez de la planche de bord (40 cm de vide sur toute la largeur, là où sont
+précisément les six aérateurs), les contre-portes, le pare-brise.
 
-- **le nez de la planche de bord** — `solids` n'en a que le dessus et le tablier
-  tout au fond, à z −0,95. Entre les deux, rien : 40 cm de vide sur toute la
-  largeur, là où sont précisément les six aérateurs ;
-- **les contre-portes** — `solids` place les portières à 0,79, qui est la
-  *tôle* ; la garniture qu'on longe est à 0,70, et c'est sur elle qu'est vissée
-  la grille de haut-parleur ;
-- **le pare-brise** — `solids` le ferme en trois marches de 10 cm, ce qui suffit
-  à renvoyer une canette. On y grimpe en escalier. Six marches de 6 cm le suivent
-  d'assez près pour qu'un corps de 27 cm drape dessus. La pente n'est pas saisie,
-  elle est **déduite** des deux lignes de baie, comme le reflet du pare-brise.
+**Trois, parce qu'on y avait pensé.** Les montants, le tunnel, le capot des
+compteurs, les dossiers, les bas de caisse, les enjoliveurs de ceinture n'y
+étaient pas, donc ils n'existaient pas pour elle — et c'est exactement ce que
+décrit « il ne marche pas sur toutes les surfaces visibles ». Une liste écrite à
+la main ne peut pas être complète : elle contient ce dont quelqu'un s'est
+souvenu.
 
-Les verser dans `solids` serait un vrai changement de physique : une canette
-lancée rebondirait désormais sur le nez de la planche au lieu de passer dans le
-vide qu'il y a derrière, et `packtest` et `throwtest` relèvent tous deux des
-chiffres dans cette zone. **On ne déplace pas ces chiffres pour donner un chemin
-à un mille-pattes.**
+Ce qui justifiait de garder deux listes a disparu en même temps. « Les verser
+dans `solids` serait un vrai changement de physique » était vrai tant que
+`solids` était une approximation grossière : y ajouter le nez de la planche
+faisait rebondir une canette là où elle passait avant. Le relevé, lui, **n'est
+l'approximation de personne** — il n'y a plus de choix à faire entre « ce sur
+quoi on marche » et « ce qui arrête », puisque les deux sont la même tôle, et
+c'est celle qu'on voit.
 
-Deux listes coûtent aussi moins cher qu'il n'y paraît : le marcheur cherche la
-surface *la plus proche*, pas les recouvrements. Ces boîtes peuvent donc se
-chevaucher librement, ce qu'aucune boîte de `solids` ne s'autorise. Le
-recouvrement n'est pas gratuit pour autant — le bloc de planche de bord s'arrête
-à 0,60 parce qu'en descendant plus bas il avalait le dessus de console, et la
-bestiole posée dessus se retrouvait *dans* le bloc.
+Le recouvrement, lui, n'est plus un sujet non plus : deux cases ne peuvent pas se
+chevaucher. Le réglage délicat qu'imposait l'ancien système — le bloc de planche
+de bord s'arrêtait à 0,60 parce qu'en descendant plus bas il avalait le dessus de
+console, et la bestiole posée dessus se retrouvait *dans* le bloc — n'a plus lieu
+d'être.
+
+Restent les glaces (`cabin.shell`), absentes du relevé puisqu'on regarde au
+travers : c'est par leurs six marches qu'elle grimpe au pare-brise.
 
 ### La coque borne la tête
 
@@ -2084,8 +2199,10 @@ et `head_point()` donne sa tête à viser.
   course/arrêt), `HAUNTS` (où il va, et avec quel poids). `GRIP` et `RIDE` ne se
   touchent qu'ensemble : `GRIP` doit rester inférieur à `RIDE`, sinon il ne se
   décolle jamais de la tôle. `cabin.gd` : `VENT_MOUTHS` pour ajouter une bouche
-  (le nom d'une pièce du `.glb` suffit, tout le reste en est relevé) et
-  `crawl_solids` pour lui ouvrir un chemin sans toucher à la physique des objets.
+  (le nom d'une pièce du `.glb` suffit, tout le reste en est relevé). Pour lui
+  ouvrir un chemin, il n'y a plus rien à déclarer : on ajoute la pièce au `.glb`
+  et on recuit — elle devient un chemin parce qu'elle est visible, pas parce
+  qu'on l'a inscrite quelque part.
 - **Prises sur le volant** — `driver.gd` : `GRIP_PULL` et `GRIP_PUSH` (jusqu'où
   une main suit la jante avant de lâcher, en tirant et en poussant),
   `REGRIP_TIME` / `REGRIP_LIFT` (durée et hauteur du passage de main),
@@ -2200,6 +2317,27 @@ Ils injectent de vrais événements d'entrée, ils ne rejouent pas la logique en
 double — à une exception près, assumée et écrite dans le banc : `centipedetest`
 avance la bestiole **à la main**, au pas fixe, pour ne pas mesurer le débit
 d'images à la place de son adhérence.
+
+### Les sondes, qui ne sont pas des bancs
+
+Elles ne jouent pas le jeu : elles lisent le `.glb` et disent ce qu'il contient.
+C'est la différence qui compte — un banc vérifie que le jeu fait ce qu'il dit, une
+sonde vérifie que ce qu'il dit correspond au **modèle**, et c'est le second qui
+manquait.
+
+```bash
+godot --headless --path . --script res://tools/bake_cabin.gd       # cuit la forme
+godot --headless --path . --script res://tools/check_shape.gd      # la relit
+godot --headless --path . --script res://tools/probe_collisions.gd # avant / après
+godot --headless --path . --script res://tools/probe_surfaces.gd   # cartes de hauteurs
+godot --headless --path . --script res://tools/probe_vents.gd      # bouches d'aération
+```
+
+`probe_collisions.gd` est celle qui a nommé le défaut. Elle rejoue **le même
+balayage de 900 lancers avec les deux géométries** — les boîtes d'avant et le
+relevé d'après — et pose au maillage une question que ni `packtest` ni
+`throwtest` ne posaient : *où l'objet s'est-il arrêté ?* Un chiffre d'« après »
+seul ne dirait pas s'il y avait un défaut ; les deux, si.
 
 **Aucun banc à clics ne tourne en `--headless`** : `interaction.gd` ignore la
 souris tant qu'elle n'est pas capturée, ce qu'un moteur sans fenêtre ne peut pas

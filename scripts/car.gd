@@ -929,21 +929,21 @@ func _lean_offset(seated: Vector3) -> Vector3:
 	return _fit_cabin(seated + follow.lerp(wrapped, _wrap) * _lean, seated) - seated
 
 
-## Hauteur de la surface de l'habitacle la plus haute SOUS ce point — les memes
-## que celles ou l'on repose les objets (cabin.gd) : assises, banquette, console,
-## planche, plancher. -INF s'il n'y a rien dessous.
+## Hauteur de la tole SOUS ce point, lue dans le releve (cabin_shape.gd) : la
+## meme surface que celle ou se posent les objets, puisqu'il n'y en a plus
+## qu'une. -INF s'il n'y a rien dessous.
+##
+## Le test "sous ce point" compte : le releve rend le dessus de la COLONNE, et
+## sous la planche de bord ce dessus est la planche elle-meme, 60 cm au-dessus
+## des pieds. Une tete qui plonge vers le plancher ne doit pas etre remontee
+## par une planche qu'elle a deja passee.
 func _surface_under(p: Vector3) -> float:
-	var best := -INF
-	for s in cabin.surfaces:
-		var y: float = s["y"]
-		if y > p.y or y <= best:
-			continue
-		var lo: Vector2 = s["min"]
-		var hi: Vector2 = s["max"]
-		if p.x < lo.x or p.x > hi.x or p.z < lo.y or p.z > hi.y:
-			continue
-		best = y
-	return best
+	if cabin.shape == null:
+		return -INF
+	var y: float = cabin.shape.height_at(p.x, p.z)
+	if y < -90.0 or y > p.y:
+		return -INF
+	return y
 
 
 ## Ramene un point dans l'habitacle : la boite LEAN_MIN..LEAN_MAX, ELARGIE a ce

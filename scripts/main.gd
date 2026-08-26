@@ -9,6 +9,9 @@ const RoadScript := preload("res://scripts/road.gd")
 const Retro := preload("res://scripts/retro.gd")
 const DriverScript := preload("res://scripts/driver.gd")
 const GiantScript := preload("res://scripts/giant.gd")
+## Le maillage de l'habitacle, pour les BANCS D'ESSAI seulement : c'est le seul
+## juge de "il est dans la tole" qui n'ait pas participe a y mettre la bestiole.
+const MeshProbeScript := preload("res://scripts/mesh_probe.gd")
 
 @export_group("Ambiance")
 ## Densite du brouillard : plus c'est haut, moins on voit loin.
@@ -53,6 +56,8 @@ var _ground: MeshInstance3D
 var _moon: Node3D
 var _env: Environment
 var _auto_shot := -1
+## Charge a la premiere question d'un banc, jamais en jeu. Voir _mesh_probe().
+var _mesh_cache
 
 
 func _ready() -> void:
@@ -1254,16 +1259,15 @@ func _centipede_test() -> void:
 	#
 	# IL NE FLOTTE JAMAIS. `clearance()` est la distance a la surface la plus
 	# proche, et elle ne doit jamais depasser RIDE : au-dela il marche sur rien.
-	# Elle descend en revanche legitimement a zero — la ou deux boites de
-	# reptation se recouvrent, il est pose sur l'une tout en etant DANS l'autre,
-	# et le recouvrement est autorise ici (cabin.gd, crawl_solids). Ce n'est donc
-	# pas un plancher a exiger.
+	# Elle descend en revanche legitimement a zero, la ou plusieurs epaisseurs de
+	# tole se superposent : il est pose sur l'une tout en etant DANS l'autre. Ce
+	# n'est donc pas un plancher a exiger.
 	#
-	# IL NE S'ENFONCE JAMAIS DANS LE MOBILIER. Voila la mesure qui manquait, et
-	# celle qui a un sens : `solids` sont les boites du VRAI mobilier, celles que
-	# le joueur voit, et elles ne se recouvrent jamais entre elles. La bestiole
-	# ne doit etre dans aucune. Cette mesure-la n'est pas circulaire — elle ne
-	# passe pas par la fonction qui a place la bete.
+	# IL NE S'ENFONCE JAMAIS DANS LA TOLE. La mesure est posee AU MAILLAGE, pas a
+	# la grille de collision, et c'est ce qui la rend non circulaire : la grille
+	# est ce qui a place la bestiole. L'ancienne version interrogeait `solids`,
+	# c'est-a-dire des boites saisies a la main qui ne correspondaient pas au
+	# modele — elle repondait juste par accident.
 	#
 	# IL NE SORT JAMAIS DE LA COQUE, et LE CORPS NE SE DECOUD PAS.
 	var lo := INF
@@ -1280,8 +1284,11 @@ func _centipede_test() -> void:
 		lo = minf(lo, c)
 		hi = maxf(hi, c)
 		out_hull = maxf(out_hull, _outside(bug.head_pos, cabin.HULL_MIN, cabin.HULL_MAX))
-		for s in cabin.solids:
-			sunk = maxf(sunk, -_outside(bug.head_pos, s["min"], s["max"]))
+		# La tete fait 27 x 6 x 21 mm et le ventre est porte a RIDE (5 mm) : sa
+		# demi-hauteur de 3 mm ne doit toucher aucun triangle. Si elle en touche
+		# un, il est dans la piece, pas dessus.
+		if _mesh_probe().hits_box(bug.head_pos, Vector3(0.0135, 0.003, 0.0105)) != "":
+			sunk += 1.0
 		var pts: Array[Vector3] = bug.segment_points()
 		for k in range(1, pts.size()):
 			gap_max = maxf(gap_max, pts[k - 1].distance_to(pts[k]))
@@ -1303,8 +1310,8 @@ func _centipede_test() -> void:
 		lo * 1000.0, hi * 1000.0, bug.RIDE * 1000.0])
 	print("  IL NE FLOTTE PAS  : %s   (jamais au-dela de l'assise)" % (
 		hi <= bug.RIDE + 0.0002))
-	print("  PAS DANS LA TOLE  : %s   (enfoncement maxi dans le mobilier %.1f mm)" % [
-		sunk <= 0.0, maxf(sunk, 0.0) * 1000.0])
+	print("  PAS DANS LA TOLE  : %s   (%d images sur %d avec la tete dans une piece)" % [
+		sunk <= 0.0, int(sunk), int(40.0 / dt)])
 	print("  JAMAIS HORS COQUE : %s   (depassement maxi %.1f mm)" % [
 		out_hull <= 0.0, maxf(out_hull, 0.0) * 1000.0])
 	print("  ecart entre anneaux : %.1f mm maxi   (espacement %.1f)" % [
@@ -1424,14 +1431,35 @@ func _centipede_test() -> void:
 ## Combien d'anneaux sont encore DANS la tole — planche de bord, garniture,
 ## mobilier. C'est ce qui dit qu'il sort d'un trou au lieu d'y apparaitre, et ca
 ## vaut pour les huit bouches sans avoir a savoir de quel cote elles soufflent.
-func _buried(cabin, pts: Array[Vector3]) -> int:
+##
+## LA QUESTION EST POSEE AU MAILLAGE, pas a la grille de collision. C'est ce qui
+## la rend non circulaire : la grille est ce qui a PLACE la bestiole, lui
+## demander ensuite si elle est bien placee ne prouverait rien. Le .glb, lui,
+## n'a pas participe — et c'est lui que le joueur regarde.
+##
+## L'ancienne version interrogeait `solids + crawl_solids`, c'est-a-dire des
+## boites saisies a la main qui, elles, ne correspondaient pas au modele : elle
+## repondait juste par accident.
+func _buried(_cabin, pts: Array[Vector3]) -> int:
+	var mesh = _mesh_probe()
+	# Un anneau : 22 mm de large, 6 mm d'epaisseur, 16 mm de long (centipede.gd).
+	var half := Vector3(0.011, 0.003, 0.008)
 	var n := 0
 	for p in pts:
-		for s in cabin.solids + cabin.crawl_solids:
-			if _outside(p, s["min"], s["max"]) < 0.0:
-				n += 1
-				break
+		if mesh.hits_box(p, half) != "":
+			n += 1
 	return n
+
+
+## Le maillage de l'habitacle, charge une seule fois pour les bancs.
+##
+## 108 000 triangles et 400 ms : c'est cher pour le jeu, c'est gratuit pour un
+## banc, et c'est le seul juge qui n'ait pas participe a ce qu'il juge.
+func _mesh_probe():
+	if _mesh_cache == null:
+		_mesh_cache = MeshProbeScript.new()
+		_mesh_cache.load_glb("res://assets/models/civic_interior.glb")
+	return _mesh_cache
 
 
 ## De combien un point sort de la boite [lo, hi]. Negatif ou nul : il est dedans.

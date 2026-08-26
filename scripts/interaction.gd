@@ -501,25 +501,43 @@ func _aimed_object(origin: Vector3, dir: Vector3) -> Node3D:
 	return best
 
 
-## Surface de depose sous le viseur. Toutes sont horizontales : une intersection
-## avec le plan de leur dessus suffit.
+## Surface de depose sous le viseur : la premiere tole que le rayon rencontre,
+## en ESPACE VOITURE.
+##
+## TOUJOURS AUCUN RAYON PHYSIQUE — c'est ce qui avait corrige "je ne peux pas
+## saisir le paquet en roulant" : un corps statique accroche a une caisse qui
+## roule ne transmet sa position au serveur qu'au pas suivant, et a 24 m/s le
+## rayon tombe 40 cm a cote. Ici la camera et la tole sont immobiles l'une par
+## rapport a l'autre, que la caisse roule a 5 ou a 170 km/h.
+##
+## CE QUI CHANGE EST CE QU'ON PEUT VISER. Avant, dix boites horizontales saisies
+## a la main dans cabin.gd : les deux assises, la banquette, la console, le
+## plancher, et la planche de bord en quatre morceaux dont AUCUN ne couvrait le
+## fond de planche cote conducteur. Le maillage, lui, y court d'un montant a
+## l'autre a 93-95 cm — la tole etait la, la surface de depose non, et c'etait
+## "je ne peux pas poser les objets sur tout le tableau de bord".
+##
+## Maintenant on marche dans la grille relevee sur le .glb : tout ce qui se voit
+## se vise. Le fond de planche cote conducteur, le capot des compteurs, le
+## tunnel, les bas de caisse, le dessus des contre-portes — sans que personne
+## ait eu a en taper les cotes, et sans qu'aucun ne puisse se desynchroniser du
+## modele.
+##
+## ON NE POSE QUE SUR CE QUI EST A PEU PRES PLAT. Un pare-brise ou une
+## contre-porte sont de la tole comme le reste et le rayon les trouve ; y poser
+## un paquet n'aurait aucun sens. Le seuil est la normale rendue par la grille.
 func _aim_surface(origin: Vector3, dir: Vector3) -> void:
 	_surface_hit = false
-	if absf(dir.y) < 0.0001:
+	if cabin.shape == null:
 		return
-	var best_t := reach
-	for s in cabin.surfaces:
-		var t: float = (float(s["y"]) - origin.y) / dir.y
-		if t < 0.05 or t > best_t:
-			continue
-		var p := origin + dir * t
-		var lo: Vector2 = s["min"]
-		var hi: Vector2 = s["max"]
-		if p.x < lo.x or p.x > hi.x or p.z < lo.y or p.z > hi.y:
-			continue
-		best_t = t
-		_surface_point = p
-		_surface_hit = true
+	var hit: Array = cabin.shape.raycast(origin, dir, reach)
+	if not hit[0]:
+		return
+	var n: Vector3 = hit[2]
+	if n.y < 0.5:
+		return                            # une paroi : on n'y pose rien
+	_surface_point = hit[1]
+	_surface_hit = true
 
 
 ## Pose l'objet a plat sur la surface, tourne vers le conducteur. Espace voiture.
