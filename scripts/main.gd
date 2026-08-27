@@ -4117,17 +4117,38 @@ func _strangler_test() -> void:
 			gun = obj
 	var eye: Vector3 = car.cam.global_position
 	var found_who: String = "-"
+	var fired := 0
+	var flinch_peak := 0.0
+	var snap := 0.0
 	for shot_i in 5:
 		var aim_dir: Vector3 = (s.skull_point() - eye).normalized()
 		var found: Dictionary = gun._nearest_shootable(eye, aim_dir)
 		if found.is_empty():
 			break
 		found_who = (found["who"] as Node).name
+		var skull_before: Vector3 = s.skull_point()
 		(found["who"] as Node).call("hit", found["pos"], found["n"])
+		fired += 1
+		# La balle doit SE VOIR porter : l'encaissement monte d'un coup, et
+		# le crane — pousse par le buste — bouge a l'image. Quatre images
+		# suffisent, et on ne mesure pas un corps qui tombe.
+		for f in 4:
+			await get_tree().process_frame
+			if s.state == StranglerScript.FALLING:
+				break
+			flinch_peak = maxf(flinch_peak, s._flinch)
+			snap = maxf(snap, skull_before.distance_to(s.skull_point()))
+		if shot_i == 0:
+			# L'image du coup qui porte : gerbe en vol, corps qui encaisse.
+			await _shot("63a_etrangleur_balle.png")
 		if s.state == StranglerScript.FALLING:
 			break
 	print("  LA VISEE LE TROUVE : %s   (nearest_shootable -> %s)" % [
 		found_who == "Strangler", found_who])
+	print("  IL ENCAISSE VISIBLEMENT : %s   (encaissement %.2f au sommet, crane deplace de %.0f mm)" % [
+		flinch_peak > 0.5 and snap > 0.04, flinch_peak, snap * 1000.0])
+	print("  LES BALLES MARQUENT : %s   (%d tirs -> %d impacts restes, %d gouttes parties)" % [
+		s.wounds == fired and s.gore > 0, fired, s.wounds, s.gore])
 	print("  LES BALLES LE FONT LACHER : %s   (%s)" % [
 		s.state == StranglerScript.FALLING or s.state == StranglerScript.CORPSE,
 		s.debug_line()])
@@ -4136,6 +4157,18 @@ func _strangler_test() -> void:
 		doom_mode == "" and not game_over_shown, mid_choke, _choke, game_over_shown])
 	var landed: bool = await _until(func(): return s.state == StranglerScript.CORPSE, 8.0)
 	print("  IL FINIT AU SOL   : %s   (y %.2f m)" % [landed, s.global_position.y])
+	# Une balle sur le tas : elle eclabousse et marque encore — le monde ne
+	# devient pas muet parce qu'il est mort — mais elle ne le reveille pas.
+	var w_before: int = s.wounds
+	var aim_corpse: Vector3 = (s.skull_point() - car.cam.global_position).normalized()
+	var found_corpse: Dictionary = gun._nearest_shootable(
+		car.cam.global_position, aim_corpse)
+	if not found_corpse.is_empty():
+		(found_corpse["who"] as Node).call("hit",
+			found_corpse["pos"], found_corpse["n"])
+	print("  LE CADAVRE ENCAISSE ENCORE : %s   (impact n. %d, et il reste en tas : %s)" % [
+		s.wounds == w_before + 1 and s.state == StranglerScript.CORPSE,
+		s.wounds, s.state == StranglerScript.CORPSE])
 	await _look_toward_yaw(0.0)
 	await _strangler_shot(s, "63b_etrangleur_abattu.png", 4.0, 0.3)
 

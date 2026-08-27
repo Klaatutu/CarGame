@@ -2276,6 +2276,44 @@ squelette lisait à l'envers — le « poignet » était le coude, la capsule de
 l'avant-bras un point, et le banc mesurait des doigts à 65 cm du sol sur un
 corps dont ils le touchent (0,07 m une fois remis à l'endroit).
 
+### Chaque balle qui porte se voit porter
+
+Un `hit()` qui décomptait la vie en silence était vrai au chiffre et faux à
+l'image : le joueur vidait son barillet sans savoir si les balles portaient.
+Trois retours par impact, désormais, et aucun n'est un chiffre.
+
+Le corps **encaisse** : le buste part avec le coup (`flinch_deg`, 15° —
+moitié sur un tir en tête, là c'est la tête qui claque en arrière), le bassin
+recule d'un pas de rien (`flinch_shift`, 9 cm, un peu plus en pendaison où le
+corps balance sous les prises), et tout revient pendant le temps d'arrêt
+(`stagger_time`). Les mains, elles, ne bougent pas : la règle du volant tient
+aussi sous les balles — le corps est secoué SOUS des prises qui tiennent.
+Relevé au banc : le crâne bouge de **156 mm** à l'image sur une balle pendant
+l'étreinte. Conséquence émergente qu'on garde : un corps qui encaisse est plus
+dur à viser en tête — la balle suivante atterrit souvent dans un bras, et les
+cinq coups du barillet retrouvent leur raison d'être.
+
+Une **gerbe** de gouttes sombres part le long de la normale
+([impact_burst.gd](scripts/impact_burst.gd) : une poignée de MeshInstance3D
+simulée à la main, comme tout le reste du monde — pas de moteur de
+particules). Elle vit en espace **monde** et part avec la vitesse du corps :
+le sang d'un corps accroché à 90 km/h part avec la caisse, puis la caisse
+s'en va et les gouttes retombent où elles sont, sur la chaussée qui ne bouge
+pas. C'est l'éclair de bouche — trois images de lumière — qui les éclaire.
+
+Et l'impact **reste** : un point sombre planté dans l'os touché — sur une
+peau à 0,34, des trous lisent mieux que des braises, le même choix que les
+yeux. La pose réécrit les os à chaque image, donc la marque mémorise *sa
+place* — quel segment du squelette (la même table `CAPS` que `ray_hit`), où
+le long de lui, de quel côté — et se repose après chaque pose ; sur le crâne
+elle est fille de la tête et suit toute seule, jusque dans la culbute et le
+tas final. On compte ses coups au but sur la silhouette. Un tir sur le
+cadavre éclabousse et marque encore ; il ne fait plus rien d'autre.
+
+Les balles perdues répondent aussi : ce qui n'a pas de `hit()` — le bitume,
+le décor — crache une gerbe de poussière grise au point d'impact
+([revolver.gd](scripts/revolver.gd)). On voit enfin où passe un coup manqué.
+
 ### Blême, et c'est un choix d'éclairage
 
 Tout le décor absorbe (troncs 0,075, géant 0,070) ; lui renvoie **0,34** —
@@ -2324,8 +2362,11 @@ godot --path . -- stranglertest
 | secousses de poignée avant que ça cède | **5** |
 | porte ouverte | **62°**, garniture à x −0,89 (tôle −0,79), manivelle partie avec (−1,37) |
 | voiture arrêtée | mode **« strangle »**, noir à 0,50 à mi-étreinte |
-| trois balles pendant l'étreinte (visée réelle, `_nearest_shootable`) | il lâche, noir **annulé**, partie **pas** perdue |
+| les balles pendant l'étreinte (visée réelle, `_nearest_shootable`) | il lâche, noir **annulé**, partie **pas** perdue |
+| il encaisse visiblement | encaissement à **1,00** au sommet, crâne déplacé de **156 mm** à l'image |
+| les balles marquent | 5 tirs → **5 impacts restés**, **35 gouttes** parties |
 | il finit | au sol, y **0,16 m**, en tas |
+| une balle sur le tas | elle éclabousse et marque (**impact n° 6**), il **reste** en tas |
 | voiture tenue à 20 m/s | mode **« throw »**, caméra reparentée au monde, `driverless` |
 | la voiture quand l'écran s'éteint | à **379 m** |
 
@@ -2340,7 +2381,8 @@ Il écrit `60_etrangleur_route.png` (posé par la route), `60b_etrangleur_phares
 (pendu au flanc, caméra montée SUR la voiture, sinon le cadrage fuit de huit
 mètres pendant la pose), `61b_etrangleur_vitre.png` (le crâne à la glace, vu du
 siège), `62_etrangleur_porte.png` (les bras dans l'ouverture),
-`63_etrangleur_etreinte.png`, `63b_etrangleur_abattu.png` et
+`63_etrangleur_etreinte.png`, `63a_etrangleur_balle.png` (le coup qui porte —
+gerbe en vol, corps qui encaisse), `63b_etrangleur_abattu.png` et
 `64_etrangleur_jete.png` (l'écran de fin). Comme pour le mille-pattes, deux
 défauts ne se lisaient dans **aucun chiffre** — la tête qui dépassait du toit en
 pendaison, le visage caché derrière son propre avant-bras pendant l'étreinte —

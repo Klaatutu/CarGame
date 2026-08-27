@@ -53,11 +53,24 @@ extends Node3D
 ## le paquet de cigarettes a 24 m/s (README, la visee sans physique). La tete
 ## compte double : c'est une tete.
 ##
+## CHAQUE BALLE QUI PORTE SE VOIT PORTER.
+## -------------------------------------------------------------------------
+## Trois retours par impact, aucun n'est un chiffre. Le corps ENCAISSE : le
+## buste part avec le coup, le bassin recule d'un pas de rien, la tete claque
+## en arriere — et tout revient pendant le temps d'arret. Les mains, elles,
+## ne bougent pas : la regle du volant tient aussi sous les balles. Une GERBE
+## de gouttes s'echappe le long de la normale, en espace monde et avec la
+## vitesse de la caisse (impact_burst.gd — l'eclair de bouche l'eclaire). Et
+## l'impact RESTE : un point sombre plante dans l'os touche, qui suit le
+## membre jusqu'au tas final. Un tir sur le cadavre eclabousse et marque
+## encore ; il ne fait plus rien d'autre.
+##
 ## Mort, il lache tout : parti avec la vitesse de la voiture, il culbute sur la
 ## chaussee et y reste, tas d'os dans le retroviseur.
 ##
 
 const Retro := preload("res://scripts/retro.gd")
+const Burst := preload("res://scripts/impact_burst.gd")
 
 # --------------------------------------------------------------------------
 # Anatomie. Un homme trop grand dont TOUT l'exces est parti dans les bras.
@@ -96,6 +109,33 @@ const THICK_FORE := 0.037
 const THICK_THIGH := 0.058
 const THICK_SHIN := 0.046
 const THICK_FINGER := 0.012
+
+## Les os qui arretent une balle : les segments du squelette de l'image (_j),
+## testes capsule par capsule. Le crane est une sphere a part — il compte
+## double. La meme table sert au rayon (ray_hit) et a poser les marques.
+const CAPS := [
+	["chest", "pelvis", 0.13],
+	["neck", "chest", 0.07],
+	["shoulder_l", "elbow_l", THICK_ARM + 0.02],
+	["elbow_l", "wrist_l", THICK_FORE + 0.02],
+	["shoulder_r", "elbow_r", THICK_ARM + 0.02],
+	["elbow_r", "wrist_r", THICK_FORE + 0.02],
+	["hip_l", "knee_l", THICK_THIGH + 0.02],
+	["knee_l", "ankle_l", THICK_SHIN + 0.02],
+	["hip_r", "knee_r", THICK_THIGH + 0.02],
+	["knee_r", "ankle_r", THICK_SHIN + 0.02],
+]
+
+## Le sang : sombre, a peine rouge — dans les phares un rouge de nuit, hors
+## d'eux un trou de plus dans la silhouette pale. La marque est plus sombre
+## encore : sur une peau a 0,34, des trous lisent mieux que des braises.
+const BLOOD := Color(0.11, 0.022, 0.018)
+const WOUND := Color(0.045, 0.010, 0.009)
+## La gerbe d'un impact : combien de gouttes, a quelle vitesse, vivant combien.
+const GORE_COUNT := 7
+const GORE_SPEED := 3.4
+const GORE_SIZE := 0.017
+const GORE_LIFE := 0.55
 
 # --------------------------------------------------------------------------
 # Les prises. En espace voiture, cote GAUCHE ; la droite est le miroir en x.
@@ -205,6 +245,11 @@ const DRIVER_EYE := Vector3(-0.33, 1.15, 0.28)
 @export var health_max := 5.0
 ## Temps d'arret apres une balle : il encaisse, il ne l'ignore pas.
 @export var stagger_time := 0.45
+## L'encaissement qui se VOIT : debattement du buste (degres) et recul du
+## bassin (metres) sous une balle. L'un et l'autre partent avec le coup et
+## reviennent pendant le temps d'arret — les mains, elles, restent plantees.
+@export var flinch_deg := 15.0
+@export var flinch_shift := 0.09
 ## Une fois mort sur la chaussee, temps avant de s'eteindre.
 @export var corpse_time := 9.0
 
@@ -244,6 +289,8 @@ var plants := 0                        ## mains posees depuis l'accrochage
 var yanks := 0                         ## secousses de poignee
 var last_grip := ""                    ## derniere prise atteinte par le corps
 var caught_mode := ""
+var wounds := 0                        ## impacts marques sur le corps
+var gore := 0                          ## gouttes parties, en cumul
 
 var _home: Node                        ## parent d'origine (la route)
 var _rng := RandomNumberGenerator.new()
@@ -265,6 +312,11 @@ var _body_grip := ""
 var _lead := 0                         ## la main qui volera la prochaine
 var _pause := 0.0
 var _stagger := 0.0
+## L'encaissement d'une balle, 1 a l'impact puis 0 : les poses le lisent.
+var _flinch := 0.0
+var _flinch_dir := Vector3.FORWARD     ## espace noeud : ou la balle pousse
+var _flinch_head := false
+var _wound_marks: Array = []           ## les impacts poses sur les os
 var _pelvis := Vector3.ZERO            ## espace parent
 var _basis := Basis()
 ## Pieds : point plante en espace parent, et vol de rattrapage.
@@ -289,6 +341,7 @@ var _corpse_t := 0.0
 # --- corps ------------------------------------------------------------------
 var _mat_skin: ShaderMaterial
 var _mat_dark: ShaderMaterial
+var _mat_wound: ShaderMaterial
 var _hips_m: MeshInstance3D
 var _chest_m: MeshInstance3D
 var _shoulder_m: MeshInstance3D
@@ -343,8 +396,12 @@ func arm(car: Node3D) -> void:
 	yanks = 0
 	last_grip = ""
 	caught_mode = ""
+	wounds = 0
+	gore = 0
+	_clear_wounds()
 	_spread = 0.0
 	_stagger = 0.0
+	_flinch = 0.0
 	_door_amount = 0.0
 	_through_window = false
 	_jaw_open = 0.0
@@ -384,6 +441,7 @@ func _process(delta: float) -> void:
 	if target == null or not is_instance_valid(target):
 		return
 	_stagger = maxf(_stagger - delta, 0.0)
+	_flinch = maxf(_flinch - delta / maxf(stagger_time, 0.05), 0.0)
 
 	match state:
 		ROAD:
@@ -729,19 +787,7 @@ func ray_hit(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 	var best_d := max_d
 	var best_q := Vector3.ZERO
 	var head := false
-	var caps := [
-		["chest", "pelvis", 0.13, false],
-		["neck", "chest", 0.07, false],
-		["shoulder_l", "elbow_l", THICK_ARM + 0.02, false],
-		["elbow_l", "wrist_l", THICK_FORE + 0.02, false],
-		["shoulder_r", "elbow_r", THICK_ARM + 0.02, false],
-		["elbow_r", "wrist_r", THICK_FORE + 0.02, false],
-		["hip_l", "knee_l", THICK_THIGH + 0.02, false],
-		["knee_l", "ankle_l", THICK_SHIN + 0.02, false],
-		["hip_r", "knee_r", THICK_THIGH + 0.02, false],
-		["knee_r", "ankle_r", THICK_SHIN + 0.02, false],
-	]
-	for c in caps:
+	for c in CAPS:
 		var r := _ray_capsule(from, dir, _j[c[0]], _j[c[1]], c[2])
 		if r >= 0.0 and r < best_d:
 			best_d = r
@@ -759,18 +805,132 @@ func ray_hit(from: Vector3, dir: Vector3, max_d: float) -> Dictionary:
 
 
 ## Une balle. Le revolver appelle hit(position, normale) sur ce qu'il touche —
-## le meme contrat que pour tout le reste du monde.
-func hit(pos: Vector3, _nrm: Vector3) -> void:
-	if state in [HIDDEN, FALLING, CORPSE]:
+## le meme contrat que pour tout le reste du monde. La normale sert a la
+## gerbe (elle part vers l'air) et a l'encaissement (le corps part a l'oppose).
+func hit(pos: Vector3, nrm: Vector3) -> void:
+	if state == HIDDEN:
 		return
 	var head := pos.distance_to(_j.get("skull", Vector3.INF)) < 0.24
+	# L'impact se voit TOUJOURS, cadavre compris : la marque reste plantee
+	# dans l'os, la gerbe part avec la vitesse du corps.
+	_mark(pos, head)
+	_splash(pos, nrm)
+	if state in [FALLING, CORPSE]:
+		return
 	health -= 2.0 if head else 1.0
 	_stagger = stagger_time
+	# L'encaissement : le corps part avec le coup — buste, bassin, tete — et
+	# revient pendant le temps d'arret. Les poses le lisent dans _flinch.
+	_flinch = 1.0
+	_flinch_head = head
+	var push := -nrm
+	if push.length() < 0.5:
+		push = global_transform.basis.z
+	_flinch_dir = (global_transform.basis.inverse() * push).normalized()
+	_jaw_open = 1.0
 	if _hurt_snd != null and _hurt_snd.stream != null:
 		_hurt_snd.pitch_scale = 1.0 + _rng.randf_range(-0.1, 0.1)
 		_hurt_snd.play()
 	if health <= 0.0:
 		_die()
+
+
+## La marque d'une balle : un point sombre plante dans l'os touche. Sur la
+## tete il est fils du crane et suit tout seul ; sur le reste du corps, la
+## pose reecrit les os a chaque image, donc la marque memorise SA place —
+## quel segment, ou le long de lui, de quel cote — et _update_wounds la
+## repose apres chaque pose.
+func _mark(pos_w: Vector3, head: bool) -> void:
+	wounds += 1
+	var m := MeshInstance3D.new()
+	var ball := SphereMesh.new()
+	ball.radius = 0.023
+	ball.height = 0.046
+	ball.radial_segments = 6
+	ball.rings = 3
+	m.mesh = ball
+	m.material_override = _mat_wound
+	m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if head:
+		_head.add_child(m)
+		var lp: Vector3 = _head.global_transform.affine_inverse() * pos_w
+		m.position = lp * 1.05
+		_wound_marks.append({"m": m})
+		return
+	# Le segment le plus proche du point d'impact — le meme squelette que
+	# ray_hit, la meme table CAPS.
+	var best_a := ""
+	var best_b := ""
+	var best_t := 0.0
+	var best_d := INF
+	for c in CAPS:
+		var a: Vector3 = _j[c[0]]
+		var b: Vector3 = _j[c[1]]
+		var ab := b - a
+		var t := 0.0
+		if ab.length_squared() > 0.0001:
+			t = clampf((pos_w - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+		var d := pos_w.distance_to(a.lerp(b, t))
+		if d < best_d:
+			best_d = d
+			best_a = c[0]
+			best_b = c[1]
+			best_t = t
+	var axis_p: Vector3 = (_j[best_a] as Vector3).lerp(_j[best_b], best_t)
+	var rad := pos_w - axis_p
+	if rad.length() < 0.005:
+		rad = global_transform.basis.x
+	add_child(m)
+	_wound_marks.append({"m": m, "a": best_a, "b": best_b, "t": best_t,
+		"rad": (global_transform.basis.inverse() * rad).normalized(),
+		"r": clampf(rad.length(), 0.02, 0.20)})
+	_update_wounds()
+
+
+## Repose les marques sur les os de l'image. La direction radiale est gardee
+## en espace noeud puis reprojetee hors de l'axe : le membre peut se replier,
+## la marque reste du cote ou la balle est entree, a l'epaisseur de l'os.
+func _update_wounds() -> void:
+	for w in _wound_marks:
+		if not w.has("a"):
+			continue
+		var a: Vector3 = _j[w["a"]]
+		var b: Vector3 = _j[w["b"]]
+		var ax := b - a
+		if ax.length_squared() < 0.0001:
+			continue
+		ax = ax.normalized()
+		var rad: Vector3 = global_transform.basis * (w["rad"] as Vector3)
+		rad -= ax * ax.dot(rad)
+		if rad.length() < 0.01:
+			rad = ax.cross(Vector3.UP)
+			if rad.length() < 0.01:
+				rad = ax.cross(Vector3.RIGHT)
+		rad = rad.normalized()
+		(w["m"] as Node3D).global_position = a.lerp(b, w["t"]) \
+			+ rad * (w["r"] as float)
+
+
+func _clear_wounds() -> void:
+	for w in _wound_marks:
+		if is_instance_valid(w["m"]):
+			(w["m"] as Node).queue_free()
+	_wound_marks.clear()
+
+
+## La gerbe. Elle part le long de la normale AVEC la vitesse du corps : celle
+## de la caisse quand il y est accroche, la sienne quand il tombe. Elle vit
+## en espace monde — la caisse s'en va, les gouttes retombent ou elles sont.
+func _splash(pos_w: Vector3, nrm: Vector3) -> void:
+	var v := Vector3.ZERO
+	if state == FALLING:
+		v = _fall_vel
+	elif target != null and is_instance_valid(target) \
+			and get_parent() == target and "velocity" in target:
+		v = target.velocity
+	gore += GORE_COUNT
+	Burst.spawn(self, pos_w, nrm, BLOOD, GORE_COUNT, GORE_SPEED, GORE_SIZE,
+		GORE_LIFE, v)
 
 
 func _die() -> void:
@@ -864,6 +1024,7 @@ func _pose(delta: float) -> void:
 		FALLING, CORPSE:
 			_pose_limp(delta)
 	_record_joints()
+	_update_wounds()
 
 
 ## Debout dans la voie. Les bras pendent — jusqu'aux chevilles — puis
@@ -873,6 +1034,15 @@ func _pose_stand(delta: float) -> void:
 	var hip := Vector3(0.0, HIP_STAND + sin(_sway * 0.8) * 0.012, 0.0)
 	var lean := deg_to_rad(6.0) + _spread * deg_to_rad(7.0)
 	var torso := Basis(Vector3.RIGHT, -lean)
+	# La balle : le buste part avec le coup, le bassin recule d'un pas de
+	# rien, et tout revient pendant le temps d'arret. Les pieds sont plantes.
+	var punch := _flinch * _flinch
+	var fl_off := Vector3.ZERO
+	if punch > 0.001:
+		torso = _flinch_swing(punch) * torso
+		fl_off = Vector3(_flinch_dir.x, 0.0, _flinch_dir.z) \
+			* (flinch_shift * punch)
+		hip += fl_off
 	var up: Vector3 = torso * Vector3.UP
 	var chest := hip + up * TORSO
 
@@ -886,7 +1056,7 @@ func _pose_stand(delta: float) -> void:
 	# Jambes : plantees ou elles sont (espace parent -> local).
 	for i in 2:
 		var side := -1.0 if i == 0 else 1.0
-		var hipw := Vector3(side * HIP_HALF, HIP_STAND, 0.0)
+		var hipw := Vector3(side * HIP_HALF, HIP_STAND, 0.0) + fl_off
 		var ankle := to_local_p(_stand_foot(i, delta)) + Vector3.UP * 0.06
 		var knee := _two_bone(hipw, ankle, THIGH, SHIN, Vector3.FORWARD)
 		_bone(_thigh_m[i], hipw, knee, THICK_THIGH)
@@ -979,6 +1149,11 @@ func _pose_climb(delta: float) -> void:
 			DRIVER_EYE.z - 0.05 + (0.0 if _through_window else 0.05))
 		want = want.lerp(door_p, clampf(_reach_t / (reach_time * 0.6), 0.0, 1.0)) \
 			if state == ATTACKING else door_p
+	# L'encaissement : la balle pousse le CORPS, pas les mains — le bassin
+	# part sous les prises, et le ressort du dessous le ramene.
+	var punch := _flinch * _flinch
+	if punch > 0.001:
+		want += (transform.basis * _flinch_dir) * (flinch_shift * 1.4 * punch)
 	var k := 1.0 - exp(-7.0 * delta) if delta > 0.0 else 1.0
 	_pelvis = _pelvis.lerp(want, k)
 
@@ -1005,6 +1180,8 @@ func _pose_climb(delta: float) -> void:
 	if state == ATTACKING or state == CAUGHT:
 		hunch = deg_to_rad(46.0)
 	var torso := Basis(Vector3.RIGHT, -hunch)
+	if punch > 0.001:
+		torso = _flinch_swing(punch) * torso
 	var up: Vector3 = torso * Vector3.UP
 	var chest := hip + up * TORSO
 
@@ -1164,7 +1341,26 @@ func _head_pose(chest: Vector3, up: Vector3, delta: float) -> void:
 		var pitch := clampf(atan2(aim.y, Vector2(aim.x, aim.z).length()),
 			deg_to_rad(-45.0), deg_to_rad(45.0))
 		_head.rotation = Vector3(pitch, yaw, 0.0)
+		if _flinch > 0.001:
+			# La tete claque — en arriere sur un tir en tete, un sursaut
+			# sinon — puis le regard revient : il n'a jamais cesse de viser.
+			var punch := _flinch * _flinch
+			var amp := 0.85 if _flinch_head else 0.22
+			_head.rotation.x += punch * amp
+			_head.rotation.y += clampf(-_flinch_dir.x, -1.0, 1.0) \
+				* punch * amp * 0.7
 	_jaw.rotation.x = deg_to_rad(34.0) * _jaw_open
+
+
+## La rotation d'encaissement : le haut du buste part dans la direction ou la
+## balle pousse. Moitie moins sur un tir en tete — la, c'est la tete qui
+## claque, pas le buste.
+func _flinch_swing(k: float) -> Basis:
+	var ax := Vector3.UP.cross(_flinch_dir)
+	if ax.length() < 0.05:
+		return Basis()
+	return Basis(ax.normalized(),
+		deg_to_rad(flinch_deg) * k * (0.5 if _flinch_head else 1.0))
 
 
 ## Paume et doigts. Le poignet est un point, la main est une BASE : -Z les
@@ -1299,6 +1495,7 @@ func _build_body() -> void:
 	# ne trouvait RIEN a viser. Avec, c'est un cadavre au clair de lune.
 	_mat_skin.set_shader_parameter("emission", Color(0.040, 0.038, 0.034))
 	_mat_dark = Retro.mat(Color(0.012, 0.010, 0.010), 0.9)
+	_mat_wound = Retro.mat(WOUND, 0.7)
 
 	var limb := CylinderMesh.new()
 	limb.top_radius = 0.42

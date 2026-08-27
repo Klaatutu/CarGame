@@ -30,6 +30,7 @@ extends "res://scripts/prop.gd"
 
 const DriverScript := preload("res://scripts/driver.gd")
 const GunAudioScript := preload("res://scripts/gun_audio.gd")
+const BurstScript := preload("res://scripts/impact_burst.gd")
 const WEBLEY := preload("res://assets/models/webley.glb")
 
 ## Debattements des pieces mobiles, en degres (voir l'entete de build_webley.py).
@@ -66,6 +67,11 @@ const R_SHUT := 1.34           # le canon est referme
 
 ## Portee du rayon de tir. Au-dela, dans le brouillard, il n'y a rien a toucher.
 const RANGE := 220.0
+
+## Ce qu'une balle arrache a ce qu'elle touche quand ce n'est pas de la
+## chair : de la poussiere de bitume, des eclats de decor. Gris froid, vite
+## retombe — la chair, elle, repond elle-meme dans son hit().
+const IMPACT_DUST := Color(0.10, 0.096, 0.088)
 
 ## En espace ARME (avant la rotation du modele).
 ## Axe de la poignee, du talon vers le haut de la crosse : c'est lui qui se
@@ -526,6 +532,12 @@ func _shoot() -> void:
 	_last_shot = "touche %s" % best.name
 	if best.has_method("hit"):
 		best.call("hit", best_pos, best_nrm)
+	else:
+		# Le monde marque le coup la ou la chair le fait elle-meme : une
+		# gerbe de poussiere au point d'impact, le long de sa normale — on
+		# voit enfin ou passe un coup manque.
+		BurstScript.spawn(self, best_pos, best_nrm, IMPACT_DUST,
+			6, 2.4, 0.014, 0.4)
 
 
 ## La creature du groupe "shootable" la plus proche sur le rayon. Separee de
