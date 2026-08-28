@@ -1617,6 +1617,56 @@ marche, même en plein virage.
 Piège : l'enroulement des triangles doit être **horaire vu du dessus**, sinon
 Godot les prend pour des faces arrière et la route est purement invisible.
 
+## Le cycle jour/nuit
+
+La nuit n'est plus une constante : c'est un **moment** d'un cycle
+([daycycle.gd](scripts/daycycle.gd)). Une horloge tourne — 2 s réelles = 1 min
+de jeu, journée de 48 min, réglable (`day_seconds`) — et l'ambiance entière
+(ciel, lumière ambiante, brouillard, saturation, soleil, lune) est interpolée
+en `smoothstep` entre six moments clés : nuit, aube (6 h 18), matin, plein jour
+(13 h), crépuscule (19 h), nuit. Le cycle est le **seul propriétaire** de
+l'`Environment` : personne d'autre n'y écrit, sinon les réglages se marchent
+dessus. Un drapeau `override` lui fait rendre la main (le cauchemar s'en
+servira) ; au relâchement il ré-applique l'heure courante — on peut s'endormir
+à minuit et se réveiller dans l'aube.
+
+**Le jour est blême, et c'est un choix.** Toute la palette du jeu (troncs
+0,075, sol 0,075) est écrite pour la nuit et les phares ; un midi d'été la
+trahirait. Le jour est donc un jour **couvert** : pas de disque de soleil
+(il est derrière la couche), lumière laiteuse, brouillard encore là mais
+clair — la campagne d'une fin d'automne. Le soleil est **le montage de la
+lune** : le même Node3D orienté (−élévation, 180 − azimut) portant une
+DirectionalLight sans ombres (la moitié des meshes ne projettent pas, un
+soleil à ombres révélerait l'artifice), énergie et teinte suivant l'heure —
+chaude et rasante à l'aube (r 1,00 / b 0,40), blanche à midi. La lune
+s'efface avec le jour, lumière et disque ensemble.
+
+**La nuit de référence est un instantané, pas une copie.** Le moment « nuit »
+est photographié sur l'`Environment` après `_build_environment` : régler la
+nuit dans main règle donc la nuit du cycle, et à 23 h le monde est au bit près
+celui d'avant le cycle. Les bancs d'essai existants tournent **gelés** sur
+cette heure-là (`frozen`, posé dès qu'un argument de banc est présent) et ne
+voient rien changer — `daytest` est le seul à manœuvrer l'horloge.
+
+### Banc d'essai
+
+```bash
+godot --path . -- daytest
+```
+
+| | relevé |
+|---|---|
+| la nuit de référence à 23 h | écart maxi à `_build_environment` : **0,000000** |
+| la lune y est, le soleil s'y tait | lumière 0,15, disque visible ; soleil 0,00 |
+| le jour se lève (13 h) | soleil **0,80**, ambiante **×7,6**, brouillard 0,030 → **0,012**, lune éteinte |
+| l'aube est chaude | soleil r 1,00 / b 0,40, levé de 4° |
+| rien ne saute (balayage minute par minute) | par min de jeu : ciel 0,0024, soleil 0,0042, brouillard 0,00012 |
+| l'horloge tourne, et se gèle | 1,01 min de jeu en 2 s réelles (attendu 1,00) ; gelée : immobile |
+
+Il écrit `70_aube.png` (l'aube mauve dans le pare-brise), `71_jour_bleme.png`
+(le plein jour laiteux) et `72_crepuscule.png`. Les deux premières sont la
+preuve qui compte : la palette nocturne **tient** le jour couvert.
+
 ## La voiture de police
 
 Sur l'accotement de droite, une berline de police de 1990 (gabarit Peugeot 405,

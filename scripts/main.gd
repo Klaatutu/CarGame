@@ -6,6 +6,7 @@ extends Node3D
 
 const CarScript := preload("res://scripts/car.gd")
 const RoadScript := preload("res://scripts/road.gd")
+const DayCycleScript := preload("res://scripts/daycycle.gd")
 const Retro := preload("res://scripts/retro.gd")
 const DriverScript := preload("res://scripts/driver.gd")
 const GiantScript := preload("res://scripts/giant.gd")
@@ -52,6 +53,8 @@ const MOON_HALO_RATIO := 6.0
 
 var car
 var road
+## Le cycle jour/nuit : le proprietaire de l'ambiance du monde normal.
+var daycycle
 var _ground: MeshInstance3D
 var _moon: Node3D
 var _env: Environment
@@ -67,6 +70,15 @@ func _ready() -> void:
 	_build_ground()
 	_build_dither_overlay()
 
+	# Le cycle jour/nuit. Il photographie la nuit que _build_environment vient
+	# de poser (sa reference), et devient le seul a ecrire dans l'Environment.
+	daycycle = DayCycleScript.new()
+	daycycle.name = "DayCycle"
+	daycycle.env = _env
+	daycycle.moon = _moon
+	daycycle.night_moon_energy = moon_energy
+	add_child(daycycle)
+
 	car = CarScript.new()
 	car.name = "Car"
 	add_child(car)
@@ -81,6 +93,13 @@ func _ready() -> void:
 	# camera. Voir la section "l'etrangleur" en fin de fichier.
 	road.strangler.caught.connect(_on_strangler_caught)
 	road.strangler.died.connect(_on_strangler_died)
+
+	# Les bancs et les captures supposent la nuit de reference : le cycle est
+	# gele a 23 h — l'image d'avant le cycle, au bit pres, puisque la nuit est
+	# photographiee sur l'Environment. daytest le manoeuvre lui-meme.
+	if not OS.get_cmdline_user_args().is_empty():
+		daycycle.frozen = true
+		daycycle.set_hour(23.0)
 
 	# Lance le jeu avec  -- shot  pour capturer des images puis quitter,
 	# ou  -- geartest  pour relever la vitesse maxi de chaque rapport.
@@ -124,6 +143,8 @@ func _ready() -> void:
 		_bugthrow_test()
 	elif "stranglertest" in OS.get_cmdline_user_args():
 		_strangler_test()
+	elif "daytest" in OS.get_cmdline_user_args():
+		_day_test()
 
 
 func _process(delta: float) -> void:
@@ -4204,5 +4225,127 @@ func _strangler_test() -> void:
 	var over: bool = await _until(func(): return game_over_shown, 10.0)
 	print("  PARTIE PERDUE     : %s   (\"%s\")" % [over, doom_mode])
 	await _shot("64_etrangleur_jete.png")
+
+	get_tree().quit()
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai du cycle jour/nuit
+# --------------------------------------------------------------------------
+
+func _color_diff(a: Color, b: Color) -> float:
+	return maxf(maxf(absf(a.r - b.r), absf(a.g - b.g)), absf(a.b - b.b))
+
+
+## Le cycle se prouve en trois temps : la nuit de reference est INTACTE (au
+## bit pres — tous les autres bancs tournent geles dessus), le jour se leve
+## vraiment (et il est bleme, pas solaire), et rien ne saute — l'ambiance est
+## une fonction CONTINUE de l'heure, pas une suite de decors.
+func _day_test() -> void:
+	await get_tree().create_timer(0.8).timeout
+	# Pas de monstres pendant qu'on photographie le ciel.
+	road._giant_next = 1000000000
+	road._strangler_next = 1000000000
+
+	# --- 1. la nuit de reference ------------------------------------------
+	print("--- la nuit de reference -----------------------------------------")
+	daycycle.set_hour(23.0)
+	await get_tree().process_frame
+	var d0 := 0.0
+	d0 = maxf(d0, _color_diff(_env.background_color, Color(0.038, 0.041, 0.050)))
+	d0 = maxf(d0, _color_diff(_env.ambient_light_color, Color(0.30, 0.34, 0.45)))
+	d0 = maxf(d0, absf(_env.ambient_light_energy - 0.055))
+	d0 = maxf(d0, _color_diff(_env.fog_light_color, Color(0.055, 0.060, 0.075)))
+	d0 = maxf(d0, absf(_env.fog_density - fog_density))
+	d0 = maxf(d0, absf(_env.adjustment_saturation - 0.70))
+	d0 = maxf(d0, absf(_env.adjustment_contrast - 1.06))
+	var moon_light := _moon.get_node("Light") as DirectionalLight3D
+	var moon_disc := _moon.get_node("Disc") as MeshInstance3D
+	var sun_light := daycycle._sun_light as DirectionalLight3D
+	print("  LA NUIT EST INTACTE : %s   (plus grand ecart a _build_environment : %.6f)" % [
+		d0 < 0.000001, d0])
+	print("  LA LUNE Y EST       : %s   (lumiere %.2f, attendu %.2f ; disque visible %s)" % [
+		absf(moon_light.light_energy - moon_energy) < 0.001 and moon_disc.visible,
+		moon_light.light_energy, moon_energy, moon_disc.visible])
+	print("  LE SOLEIL S'Y TAIT  : %s   (energie %.2f)" % [
+		sun_light.light_energy < 0.001, sun_light.light_energy])
+
+	# --- 2. le tour du cadran ---------------------------------------------
+	print("--- le tour du cadran --------------------------------------------")
+	for h in [3.0, 6.3, 8.5, 13.0, 16.0, 19.0, 21.5]:
+		daycycle.set_hour(h)
+		await get_tree().process_frame
+		var bgl := _env.background_color.get_luminance()
+		print("  %5s  ciel %.3f  ambiante %.3f  brouillard %.4f  soleil %.2f  lune %.3f  nuitosite %.2f" % [
+			daycycle.clock_text(), bgl, _env.ambient_light_energy,
+			_env.fog_density, sun_light.light_energy,
+			moon_light.light_energy, daycycle.night_amount()])
+	daycycle.set_hour(13.0)
+	await get_tree().process_frame
+	var noon_ok := sun_light.light_energy >= 0.7 \
+		and _env.ambient_light_energy >= 0.055 * 6.0 \
+		and _env.fog_density <= fog_density * 0.5 \
+		and moon_light.light_energy < 0.001 and not moon_disc.visible
+	print("  LE JOUR SE LEVE     : %s   (a 13 h : soleil %.2f, ambiante x%.1f, brouillard %.4f, lune eteinte %s)" % [
+		noon_ok, sun_light.light_energy,
+		_env.ambient_light_energy / 0.055, _env.fog_density,
+		not moon_disc.visible])
+	daycycle.set_hour(6.3)
+	await get_tree().process_frame
+	var dawn_warm := sun_light.light_color.r > sun_light.light_color.b + 0.3
+	print("  L'AUBE EST CHAUDE   : %s   (soleil r %.2f / b %.2f, eleve de %.0f deg)" % [
+		dawn_warm, sun_light.light_color.r, sun_light.light_color.b,
+		-daycycle._sun.rotation_degrees.x])
+
+	# --- 3. la continuite -------------------------------------------------
+	# L'ambiance est balayee minute par minute sur 24 h : le plus grand saut
+	# entre deux minutes consecutives doit rester sous le seuil de perception.
+	var max_lum := 0.0
+	var max_sun := 0.0
+	var max_fog := 0.0
+	var max_amb := 0.0
+	daycycle.set_hour(0.0)
+	var prev_lum := _env.background_color.get_luminance()
+	var prev_sun := sun_light.light_energy
+	var prev_fog := _env.fog_density
+	var prev_amb := _env.ambient_light_energy
+	for i in 1440:
+		daycycle.set_hour(float(i + 1) / 60.0)
+		max_lum = maxf(max_lum, absf(_env.background_color.get_luminance() - prev_lum))
+		max_sun = maxf(max_sun, absf(sun_light.light_energy - prev_sun))
+		max_fog = maxf(max_fog, absf(_env.fog_density - prev_fog))
+		max_amb = maxf(max_amb, absf(_env.ambient_light_energy - prev_amb))
+		prev_lum = _env.background_color.get_luminance()
+		prev_sun = sun_light.light_energy
+		prev_fog = _env.fog_density
+		prev_amb = _env.ambient_light_energy
+	print("  RIEN NE SAUTE       : %s   (par minute de jeu : ciel %.4f, soleil %.4f, brouillard %.5f, ambiante %.4f)" % [
+		max_lum < 0.010 and max_sun < 0.020 and max_fog < 0.0010 and max_amb < 0.020,
+		max_lum, max_sun, max_fog, max_amb])
+
+	# --- 4. l'horloge ------------------------------------------------------
+	print("--- l'horloge ----------------------------------------------------")
+	daycycle.set_hour(23.0)
+	daycycle.frozen = false
+	var t0: float = daycycle.time_h
+	await get_tree().create_timer(2.0).timeout
+	daycycle.frozen = true
+	var gained: float = fmod(daycycle.time_h - t0 + 24.0, 24.0) * 60.0   # minutes de jeu
+	var expected: float = 2.0 * 1440.0 / daycycle.day_seconds
+	print("  ELLE TOURNE         : %s   (%.2f min de jeu en 2 s reelles, attendu %.2f)" % [
+		absf(gained - expected) < expected * 0.35, gained, expected])
+	var t1: float = daycycle.time_h
+	await get_tree().create_timer(0.5).timeout
+	print("  ELLE SE GELE        : %s   (heure inchangee : %s)" % [
+		is_equal_approx(daycycle.time_h, t1), daycycle.clock_text()])
+
+	# --- 5. les images -----------------------------------------------------
+	for shot_def in [[6.5, "70_aube.png"], [13.0, "71_jour_bleme.png"],
+			[19.5, "72_crepuscule.png"]]:
+		daycycle.set_hour(shot_def[0])
+		await get_tree().process_frame
+		await get_tree().process_frame
+		await _shot(shot_def[1])
+	daycycle.set_hour(23.0)
 
 	get_tree().quit()
