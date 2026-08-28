@@ -8,12 +8,12 @@ extends Control
 ## bouton fait 48 px de haut : on les touche AU RETICULE, pas a la souris,
 ## et un doigt de regard tremble plus qu'un curseur.
 ##
-## Cette passe-ci pose l'appareil : l'ACCUEIL est vivant (heure du cycle,
-## batterie, solde, reseau — PAS DE RESEAU dans le cauchemar), les trois
-## autres pages annoncent ce qu'elles deviendront (la carte au jalon des
-## villes, les courses et les avis a celui des clients). Les donnees
-## remontent par la chaine des porteurs : le telephone connait sa voiture,
-## la voiture son monde — jamais de singleton.
+## Tout est vivant : l'ACCUEIL (heure du cycle, batterie, solde, reseau —
+## PAS DE RESEAU dans le cauchemar), les COURSES (l'offre qui sonne et ses
+## deux boutons, la course qui roule — taxi.gd), le GPS (la carte du graphe
+## et le point qui avance), les AVIS (la moyenne, les dix derniers). Les
+## donnees remontent par la chaine des porteurs : le telephone connait sa
+## voiture, la voiture son monde — jamais de singleton.
 ##
 
 const MapScript := preload("res://scripts/map.gd")
@@ -39,6 +39,14 @@ var _network_line: Label
 var _gps_line: Label
 var _gps_amen: Label
 var _gps_map: Control
+var _fare_title: Label
+var _fare_info: Label
+var _fare_price: Label
+var _fare_count: Label
+var _btn_yes: Button
+var _btn_no: Button
+var _avis_head: Label
+var _avis_rows: Array[Label] = []
 var _pages := {}
 var _tabs := {}
 
@@ -152,13 +160,31 @@ func _build_pages() -> void:
 	_money_line = _label(home, "0,00 EUR", 20, ACCENT)
 	_network_line = _label(home, "reseau : ok", 13, DIM)
 
-	# COURSES : vide pour l'instant, et il le dit.
+	# COURSES : l'offre qui sonne, la course qui roule, et les deux boutons
+	# qui se touchent au reticule. Le contenu suit l'etat du taxi (taxi.gd).
 	var fares := _page("courses")
 	var sp3 := Control.new()
-	sp3.custom_minimum_size = Vector2(0, 60)
+	sp3.custom_minimum_size = Vector2(0, 12)
 	fares.add_child(sp3)
-	_label(fares, "AUCUNE COURSE", 16, DIM)
-	_label(fares, "Les demandes arriveront ici.", 12, DIM)
+	_fare_title = _label(fares, "AUCUNE COURSE", 16, DIM)
+	_fare_info = _label(fares, "Les demandes arriveront ici.", 12, DIM)
+	_fare_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_fare_info.custom_minimum_size = Vector2(0, 58)
+	_fare_price = _label(fares, "", 22, ACCENT)
+	_fare_count = _label(fares, "", 13, ALERT)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	fares.add_child(row)
+	_btn_yes = _fare_button(row, "ACCEPTER", ACCENT)
+	_btn_no = _fare_button(row, "REFUSER", DIM)
+	_btn_yes.pressed.connect(func() -> void:
+		var m = _main()
+		if m != null and "taxi" in m and m.taxi != null:
+			m.taxi.accept_offer())
+	_btn_no.pressed.connect(func() -> void:
+		var m = _main()
+		if m != null and "taxi" in m and m.taxi != null:
+			m.taxi.refuse_offer())
 
 	# GPS : la carte du graphe, dessinee au _draw — villes, routes, et la
 	# position qui avance le long de l'arete courante.
@@ -171,13 +197,47 @@ func _build_pages() -> void:
 	gps.add_child(_gps_map)
 	_gps_amen = _label(gps, "", 10, DIM)
 
-	# AVIS : la reputation, encore vierge.
+	# AVIS : la moyenne en tete, puis les dix derniers — remplis par
+	# refresh(), jamais realloues : l'ecran se consulte a chaque image.
 	var ratings := _page("avis")
 	var sp5 := Control.new()
-	sp5.custom_minimum_size = Vector2(0, 60)
+	sp5.custom_minimum_size = Vector2(0, 8)
 	ratings.add_child(sp5)
-	_label(ratings, "AUCUN AVIS", 16, DIM)
-	_label(ratings, "Les clients vous noteront ici.", 12, DIM)
+	_avis_head = _label(ratings, "AUCUN AVIS", 16, DIM)
+	_label(ratings, "", 4, DIM)
+	for i in 7:
+		var r := _label(ratings, "", 10, DIM)
+		r.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		r.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_avis_rows.append(r)
+
+
+## Un bouton de page, au meme gabarit que les onglets : 46 px de haut, on
+## le touche au reticule et le reticule tremble.
+func _fare_button(parent: Control, text: String, color: Color) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(48, 46)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 12)
+	b.add_theme_color_override("font_color", color)
+	b.add_theme_color_override("font_hover_color", INK)
+	b.add_theme_color_override("font_pressed_color", ACCENT)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = PANEL
+	sb.corner_radius_top_left = 4
+	sb.corner_radius_top_right = 4
+	sb.corner_radius_bottom_left = 4
+	sb.corner_radius_bottom_right = 4
+	b.add_theme_stylebox_override("normal", sb)
+	var sbh := sb.duplicate() as StyleBoxFlat
+	sbh.bg_color = PANEL.lightened(0.08)
+	b.add_theme_stylebox_override("hover", sbh)
+	var sbp := sb.duplicate() as StyleBoxFlat
+	sbp.bg_color = PANEL.darkened(0.25)
+	b.add_theme_stylebox_override("pressed", sbp)
+	parent.add_child(b)
+	return b
 
 
 func _build_tabs() -> void:
@@ -261,6 +321,11 @@ func refresh() -> void:
 	_network_line.text = network
 	_network_line.add_theme_color_override("font_color", network_color)
 
+	# Les pages du metier suivent l'etat du taxi.
+	var taxi = main.taxi if main != null and "taxi" in main else null
+	_refresh_courses(taxi)
+	_refresh_avis(taxi)
+
 	# La page GPS : le bandeau d'en-tete, la carte redessinee, les
 	# commodites de la ville visee — de quoi choisir ou finir la nuit.
 	if main != null and "nav" in main and not main.nav.is_empty():
@@ -279,6 +344,80 @@ func refresh() -> void:
 		_gps_amen.text = ""
 	if _gps_map != null:
 		_gps_map.queue_redraw()
+
+
+## La page COURSES dit ou en est le metier : une offre et ses boutons, la
+## course en cours, la note qui vient de tomber. Textes remplis, jamais de
+## reconstruction — refresh passe a chaque image consultee.
+func _refresh_courses(taxi) -> void:
+	var st: String = taxi.state if taxi != null else "idle"
+	var show_offer: bool = st == "offer" and not taxi.offer.is_empty()
+	_btn_yes.visible = show_offer
+	_btn_no.visible = show_offer
+	_fare_price.text = ""
+	_fare_count.text = ""
+	if taxi == null or st == "idle":
+		_fare_title.text = "AUCUNE COURSE"
+		_fare_info.text = "Les demandes arriveront ici."
+		return
+	match st:
+		"offer":
+			_fare_title.text = "COURSE PROPOSEE"
+			_fare_info.text = "%s\n%s  vers  %s" % [taxi.offer["who"],
+				taxi.offer["from"], taxi.offer["to"]]
+			_fare_price.text = "%.2f EUR" % taxi.offer["price"]
+			_fare_count.text = "%d s pour repondre" % ceili(maxf(taxi.offer["left"], 0.0))
+		"accepted", "pickup_zone":
+			_fare_title.text = "COURSE ACCEPTEE"
+			_fare_info.text = "Prendre %s a %s.\nZone d'arret a droite, a l'arret." % [
+				taxi.fare["who"], taxi.fare["from"]]
+			_fare_price.text = "%.2f EUR" % taxi.fare["price"]
+		"boarding":
+			_fare_title.text = "EMBARQUEMENT"
+			_fare_info.text = "%s monte..." % taxi.fare["who"]
+		"riding":
+			_fare_title.text = "EN COURSE"
+			_fare_info.text = "%s  vers  %s" % [taxi.fare["who"], taxi.fare["to"]]
+			_fare_price.text = "%.2f EUR" % taxi.fare["price"]
+		"drop_zone":
+			_fare_title.text = "ARRIVEE"
+			_fare_info.text = "Deposez %s.\nZone d'arret a droite, a l'arret." % taxi.fare["who"]
+			_fare_price.text = "%.2f EUR" % taxi.fare["price"]
+		"payment":
+			_fare_title.text = "PAIEMENT"
+			_fare_info.text = "%s regle la course." % taxi.fare["who"]
+		"rated":
+			_fare_title.text = "COURSE TERMINEE"
+			if not taxi.reviews.is_empty():
+				var r: Dictionary = taxi.reviews[0]
+				_fare_info.text = "%s a note : %s" % [r["who"],
+					_stars_text(r["stars"])]
+
+
+## La reputation : la moyenne en tete, les derniers avis dessous — etoiles,
+## mots du client, signature.
+func _refresh_avis(taxi) -> void:
+	if taxi == null or taxi.reviews.is_empty():
+		_avis_head.text = "AUCUN AVIS"
+		_avis_head.add_theme_color_override("font_color", DIM)
+		for r in _avis_rows:
+			r.text = ""
+		return
+	_avis_head.text = "%s  —  %d avis" % [_stars_text(taxi.stars_avg()),
+		taxi.reviews.size()]
+	_avis_head.add_theme_color_override("font_color", ACCENT)
+	for i in _avis_rows.size():
+		if i < taxi.reviews.size():
+			var r: Dictionary = taxi.reviews[i]
+			_avis_rows[i].text = "%s  %s  — %s" % [_stars_text(r["stars"]),
+				r["text"], r["who"]]
+		else:
+			_avis_rows[i].text = ""
+
+
+## "4,5/5" — le meme texte que le HUD, sans importer taxi.gd en dur.
+static func _stars_text(stars: float) -> String:
+	return ("%.1f/5" % stars).replace(".", ",")
 
 
 ## La molette pendant la consultation. Les pages de cette passe tiennent a

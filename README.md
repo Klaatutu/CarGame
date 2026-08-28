@@ -1,7 +1,11 @@
 # Route de nuit — prototype
 
-FPS au volant d'une Honda Civic EF (1990), sur une route de campagne, la nuit,
-dans le brouillard. Pour l'instant : on conduit. C'est tout, et c'est fait exprès.
+FPS au volant d'une Honda Civic EF (1990), sur les nationales d'un petit pays
+de brouillard. On y est chauffeur de taxi, de nuit : les courses sonnent sur
+le téléphone, les clients paient et notent, et la vraie jauge est le sommeil
+— s'endormir bascule dans le cauchemar, celui où vivent les monstres, et on
+n'en sort qu'en roulant jusqu'au portail. Tout le reste se conduit à la
+main : la boîte, les vitres, la radio, le téléphone. C'est fait exprès.
 
 ## Lancer
 
@@ -20,7 +24,7 @@ Ouvrir le projet dans Godot 4.8 et appuyer sur F5.
 | **Molette ↑ / ↓**, clé en main | **démarrer** / **couper le moteur** |
 | H | phares |
 | Souris | regarder autour |
-| **Clic droit maintenu** | **se pencher dans la direction du regard** (sauf arme en main : elle se lève) |
+| **Clic droit maintenu** | **se pencher dans la direction du regard** — objet à usage en main, c'est lui qui se porte : l'arme se lève, la canette se boit, le téléphone se consulte |
 | **Clic gauche maintenu** sur le rétroviseur ou un pare-soleil | **le placer** (regard bloqué) |
 | **Clic gauche maintenu** sur une manivelle de vitre | **tenir la poignée** (caméra libre) |
 | **Molette ↓ / ↑**, poignée en main | **descendre** / **remonter** la vitre (la boîte ne bouge pas) |
@@ -1469,15 +1473,30 @@ change un `volume_db` dans un script, le reporter dans `LEVELS`.
 | `scripts/road.gd` | route infinie et lisse, arbres, poteaux, voiture de police, apparition du géant |
 | `scripts/police_car.gd` | voiture de police garée (`police_car.glb`) : gyrophares rotatifs, faisceaux bleus |
 | `scripts/giant.gd` | le géant : anatomie déduite du pied, course procédurale sans patinage, piétinement |
+| `scripts/strangler.gd` | l'étrangleur : marche, poursuite, portière arrachée — et ce qu'une balle lui fait |
+| `scripts/revolver.gd` | le revolver : barillet, six coups, rechargement à la molette |
+| `scripts/impact_burst.gd` | impacts : éclat de poussière ou de sang, sans moteur de particules |
 | `tools/make_giant_sounds.py` | synthèse du pas et du cri (`assets/audio/giant/`), dosés à la sonie |
 | `assets/blender/build_police_car.py` | construit, rend et exporte `police_car.glb` depuis Blender (ligne de commande) |
 | `assets/blender/build_police_car_simple.py` | idem pour la version basse-poly `police_car_simple.glb` (non utilisée) |
+| `scripts/daycycle.gd` | le cycle jour/nuit : seul propriétaire de l'ambiance du monde normal |
+| `scripts/sleep.gd` | la jauge de veille, ses facteurs, ses paupières — et l'endormissement |
+| `scripts/portal.gd` | le portail : la seule sortie du cauchemar, à rouler jusqu'à lui |
+| `scripts/map.gd` | la carte : huit villes, dix routes, Dijkstra, commodités |
+| `scripts/town.gd` | une ville au bord de la route : panneau, zone d'arrêt, lampadaires, silhouettes |
+| `scripts/taxi.gd` | le métier : offres, embarquement, confort, paiement, notes et avis |
+| `scripts/phone.gd` | le téléphone : objet libre, écran SubViewport, batterie, berceau |
+| `scripts/phone_apps.gd` | ce qui vit dans l'écran : accueil, courses, GPS, avis |
+| `scripts/radio.gd` | l'autoradio : sept crans, son bus à part, détuné dans le cauchemar |
+| `scripts/can.gd` | les canettes : on les boit, elles s'écrasent |
 | `scripts/retro.gd` | fabrique de matériaux, tous branchés sur le shader |
 | `scripts/engine_audio.gd` | son du moteur : fondu entre boucles, pitch, charge, rupteur |
 | `scripts/cabin_audio.gd` | route, vent, levier, frein à main |
 | `tools/make_engine_sounds.py` | synthèse des boucles moteur (`assets/audio/engine/`) |
 | `tools/make_cabin_sounds.py` | synthèse des sons d'habitacle (`assets/audio/cabin/`) |
 | `tools/make_starter_sounds.py` | synthèse du démarreur et du calage (`assets/audio/starter/`) |
+| `tools/make_taxi_sounds.py` | synthèse des sons du métier : gorgée, canette écrasée, sonnerie, TPE, billets, portière |
+| `tools/make_radio_music.py` | synthèse de la station : une boucle de 40 s, 96 BPM, passée à la chaîne de diffusion |
 | `scripts/centipede.gd` | mille-pattes : entre par les grilles ou la vitre, marche sur les surfaces de l'habitacle |
 | `tools/probe_surfaces.gd` | carte de hauteurs du maillage, comparée aux boîtes **historiques** de `cabin.gd` — l'écart qui a motivé le relevé |
 | `tools/probe_vents.gd` | bouches d'aération du `.glb` : boîte englobante et axe du flux |
@@ -1956,6 +1975,89 @@ ce que le passage prouve : sans toucher à rien, tout droit mène au vivant.
 Il écrit `81_ville.png` (l'entrée de Corbeny dans les phares),
 `82_y.png` (le panneau du Y) et `83_gps.png` (l'écran GPS, capturé du
 SubViewport même : carte, itinéraire, point orange en route).
+
+## Les courses
+
+La boucle se ferme ([taxi.gd](scripts/taxi.gd)). Le téléphone sonne :
+quelqu'un attend dans une ville de la carte, veut aller dans une autre, et
+paie au barème — **2 € de prise en charge plus 0,90 € du kilomètre** de plus
+court chemin. Le prix est fixé à l'offre (la carte est un contrat métrique :
+se perdre en chemin ne se facture pas), l'offre a un nom, un départ, une
+destination et **25 secondes** — et elle s'accepte **sur l'écran** : pas de
+touche magique, il faut décrocher une main du volant, porter le téléphone au
+regard et taper ACCEPTER. Accepter pose l'itinéraire du client dans le GPS,
+et les Y le suivent. Le cauchemar n'a pas de réseau — aucune offre n'y
+sonne, celle qui sonnait s'éteint — et un téléphone à plat est une nuit sans
+revenu.
+
+Le client est **abstrait, pas absent** : une portière qui s'ouvre, un poids
+qui s'assoit — un enfoncement de 3,2 m/s² dans les suspensions, sous le
+seuil de 2,4 g des objets posés : les canettes ne sautent pas quand
+quelqu'un monte —, des répliques au bas de l'écran. On le prend **arrêté
+dans la zone d'arrêt** (le pavé de sa ville, à droite du panneau), on le
+dépose pareil ; rater la ville de dépose se rattrape à la suivante, et le
+client le fait payer. La machine à états s'écrit en toutes lettres : idle →
+offer → accepted → pickup_zone → boarding → riding → drop_zone → payment →
+rated.
+
+**Le confort est la contrepartie de tout ce qui tient éveillé.** Deux fois
+par seconde, le client juge : plus de 105 km/h, virages au-delà de
+4,5 m/s², à-coups au-delà de 6 m/s², radio au cran 4, vitres ouvertes
+au-delà de 0,4, sortie de chaussée, calage. Chaque seuil dépassé pèse des
+points, et le premier dépassement de chacun le fait **parler** (« Vous
+pouvez baisser un peu ? ») — l'arbitrage veille/confort doit se lire dans
+l'habitacle, pas dans un tableau. Les taux se mesurent **par image** : une
+grosse image lisse sur sa durée, elle n'invente pas d'à-coup. La note tombe
+à l'arrivée : 5 moins l'inconfort normalisé par la durée (1,5 point par
+échantillon vaut une étoile), arrondie à la **demi-étoile**, plancher 1. Le
+pourboire suit par palier (15 % au-delà de 4,5 étoiles, puis 8, puis 3,
+puis rien) : **carte, au centime ; espèces, la pièce qu'on a** — même
+espérance, plus de variance, arrondie aux 10 centimes. Les dix derniers
+avis s'empilent sur la page AVIS, moyenne en tête, et chaque avis retient
+la plainte **dominante** (« Bon trajet. La radio, quand même... »).
+
+S'endormir avec un client à bord **annule la course** : une étoile, un avis
+qui le dit, pas d'argent — et la portière se referme avant que l'étrangleur
+n'hérite du monde : le taxi ne touche les portières qu'en monde normal,
+elles sont à lui dans l'autre.
+
+Deux pièges, tous les deux trouvés par le banc et corrigés ailleurs que là
+où ils faisaient mal. **La dépose n'arrivait jamais** : la navigation
+programme l'arête suivante *à l'entrée* du bourg, et `program_town()`
+éteignait au passage la ville qu'on est en train de traverser — celle où le
+client descend. Elle ne se désarme plus que si elle était encore *promise* ;
+celle qu'on traverse vit jusqu'à son extinction à 130 m derrière, et le pop
+le plus voyant du jeu disparaît avec le bug. **Le moteur calait à chaque
+arrêt** — s'immobiliser en 5e embrayage lâché, c'est un moteur mort, et un
+moteur mort compte « calage » à *chaque* échantillon de confort : la note
+tombait à 1,0 quoi qu'on fasse. Ce n'était pas un défaut du barème mais un
+défaut de conduite, celle du banc : il débraye maintenant à chaque arrêt,
+comme n'importe qui.
+
+### Banc d'essai
+
+```bash
+godot --path . -- faretest
+```
+
+| | relevé |
+|---|---|
+| l'offre sonne au téléphone | Iris, Corbeny → Vieux-Bourg, sonnerie en boucle, 25 s |
+| le prix est au barème | **3,26 €** pour 1 400 m (2 + 0,90/km) |
+| le tap accepte (vrai push_input sur ACCEPTER) | état accepted, sonnerie coupée, itinéraire au GPS |
+| la portière vit | ouverte jusqu'à **65°**, refermée à **0,0°** |
+| le poids s'assoit | impact **3,20 m/s²** pour 3,2 demandé — sous les 23,5 des objets |
+| le client parle (radio forte + vitre ouverte injectées) | plaintes **radio, vitres, à-coups**, une réplique chacune |
+| l'argent tombe au centime | **3,36 €** = 3,26 + **0,10** de pourboire (carte, palier 3 %) |
+| la note dit l'inconfort | **2,5 étoiles** (attendu entre 2,0 et 3,0) |
+| l'avis est en tête | « Correct, sans plus. La radio, quand même... » — Iris |
+| dormir en course annule et note 1 | **1,0 étoile**, état idle, portière refermée |
+| le poids descend à la sortie | impact **2,00 m/s²** — la caisse remonte |
+| l'invariant tient | [0] CigPack, dernier Phone, portière à 0,0° |
+
+Il écrit `84_offre.png` (l'écran COURSES qui sonne : le nom, le prix, les
+deux boutons), `85_embarquement.png` (arrêté dans la zone d'arrêt, la
+portière passager ouverte) et `86_avis.png` (la page AVIS après la course).
 
 ## La voiture de police
 

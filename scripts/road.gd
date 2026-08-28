@@ -306,7 +306,11 @@ func _append_sample() -> void:
 		_fork_state = "grow"
 		_grow_branch()
 	# La ville : posee a son echantillon, la traversee commence au panneau.
-	if _town_g >= 0 and g == _town_g and town != null and not town.visible:
+	# Sans condition de visibilite : l'echantillon arme est ~300 m devant la
+	# voiture, la ville precedente est loin derriere (l'arete la plus courte
+	# fait 950 m) — et une ville qui manque parce que la precedente trainait
+	# encore serait pire que tout.
+	if _town_g >= 0 and g == _town_g and town != null:
 		var r := _right[_pos.size() - 1]
 		town.arm(Transform3D(Basis(r, Vector3.UP, -Vector3.UP.cross(r)),
 			_pos[_pos.size() - 1]), _town_id)
@@ -559,11 +563,18 @@ func clear_monsters() -> void:
 
 ## Une ville a l'echantillon global g (a venir). Le ruban arrive droit
 ## dessus, le panneau tombe a g, l'evenement part quand la voiture y est.
+##
+## On ne desarme que la ville PROMISE et pas encore atteinte (_town_g >= 0 :
+## un reprogramme annule une annonce). Celle qu'on traverse — panneau passe,
+## _town_g rendu — reste allumee : la navigation programme l'arete suivante
+## A L'ENTREE de la ville, et eteindre le bourg sous les phares du joueur
+## (et sous le client qu'on y depose) etait le pop le plus voyant du jeu.
+## C'est l'extinction a 130 m derriere qui la rangera.
 func program_town(g: int, id: String) -> void:
+	if town != null and _town_g >= 0:
+		town.sleep()
 	_town_g = g
 	_town_id = id
-	if town != null:
-		town.sleep()
 
 
 ## Un Y a l'echantillon global g : le cote gauche mene a left_id, le droit a

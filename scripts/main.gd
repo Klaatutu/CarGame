@@ -9,6 +9,7 @@ const RoadScript := preload("res://scripts/road.gd")
 const DayCycleScript := preload("res://scripts/daycycle.gd")
 const SleepScript := preload("res://scripts/sleep.gd")
 const MapScript := preload("res://scripts/map.gd")
+const TaxiScript := preload("res://scripts/taxi.gd")
 const Retro := preload("res://scripts/retro.gd")
 const DriverScript := preload("res://scripts/driver.gd")
 const GiantScript := preload("res://scripts/giant.gd")
@@ -66,8 +67,12 @@ var world_mode := "normal"
 ## Le sommeil ne compte qu'en partie normale : les bancs d'essai gardent un
 ## conducteur d'acier. _start_normal_world le leve.
 var sleep_enabled := false
+## Le metier : offres, courses, argent, avis (taxi.gd). Dormant dans les
+## bancs — seul le jeu reel (et faretest) branche le standard.
+var taxi
 ## Ou l'on est sur le graphe (map.gd) : {at, to, start_g, route}. Vide hors
-## partie. Le suivi vit ici en attendant le systeme de courses.
+## partie. Le suivi vit ici — c'est le monde ; le taxi le consulte et y pose
+## l'itineraire de ses clients.
 var nav := {}
 var _ground: MeshInstance3D
 var _moon: Node3D
@@ -120,6 +125,14 @@ func _ready() -> void:
 	add_child(sleep)
 	sleep.fell_asleep.connect(_enter_nightmare)
 
+	# Le metier. Il ecoute la route (villes) et le sommeil (annulations) tout
+	# seul ; son standard ne sonne que si enabled — le jeu reel le leve.
+	taxi = TaxiScript.new()
+	taxi.name = "Taxi"
+	taxi.car = car
+	taxi.road = road
+	add_child(taxi)
+
 	# Les bancs et les captures supposent la nuit de reference : le cycle est
 	# gele a 23 h — l'image d'avant le cycle, au bit pres, puisque la nuit est
 	# photographiee sur l'Environment. daytest le manoeuvre lui-meme.
@@ -128,8 +141,9 @@ func _ready() -> void:
 		daycycle.set_hour(23.0)
 	else:
 		# Une PARTIE : le monde normal — pas de monstres sur la route du
-		# soir, le mille-pattes dort, et le sommeil compte.
+		# soir, le mille-pattes dort, le sommeil compte, le standard sonne.
 		_start_normal_world()
+		taxi.enabled = true
 
 	# Lance le jeu avec  -- shot  pour capturer des images puis quitter,
 	# ou  -- geartest  pour relever la vitesse maxi de chaque rapport.
@@ -185,6 +199,8 @@ func _ready() -> void:
 		_phone_test()
 	elif "maptest" in OS.get_cmdline_user_args():
 		_map_test()
+	elif "faretest" in OS.get_cmdline_user_args():
+		_fare_test()
 
 
 func _process(delta: float) -> void:
@@ -4006,7 +4022,8 @@ func _start_normal_world() -> void:
 # les longueurs d'aretes sont honorees. La navigation chaine les demandes :
 # une ville au bout de l'arete courante ; en ville, s'il y a deux sorties,
 # un Y un peu plus loin — et le cote que prend la voiture choisit l'arete.
-# Ce suivi vivra chez le taxi quand les courses existeront.
+# Le suivi vit ici, c'est le monde ; le taxi (taxi.gd) le consulte, et pose
+# dans nav["route"] l'itineraire de ses clients — les Y le suivent.
 
 ## Le Y se pose tant de metres apres le panneau de la ville qui le precede.
 const FORK_AFTER_TOWN_M := 120.0
@@ -5258,6 +5275,229 @@ func _map_test() -> void:
 	print("  LE GPS SAIT OU ON EST : %s   (\"%s\", progression %.2f)" % [
 		not nav.is_empty() and nav_progress() >= 0.0,
 		phone._apps._gps_line.text, nav_progress()])
+
+	Engine.time_scale = 1.0
+	get_tree().quit()
+
+
+## Gare la voiture dans la zone d'arret de la ville visee, tant que le taxi
+## reste dans l'etat donne : pose sur le pave, nez dans le sens de la
+## marche, a l'arret. Le stationnement appartient au joueur — le banc le
+## mime au plus court, il ne le mesure pas ; c'est _zone_stop (taxi.gd) qui
+## juge la geometrie, et c'est lui qu'on eprouve.
+func _fare_park(expected: String, town_id: String, timeout: float) -> void:
+	var t := 0.0
+	while t < timeout and taxi.state == expected:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		var tw: Node3D = road.town
+		if tw != null and tw.visible and tw.town_name == town_id:
+			var padw: Vector3 = tw.to_global(Vector3(4.6, 0.0, -27.0))
+			car.speed = 0.0
+			car.global_position.x = padw.x
+			car.global_position.z = padw.z
+			var fwd: Vector3 = -tw.global_transform.basis.z
+			car.rotation.y = atan2(-fwd.x, -fwd.z)
+		else:
+			car.speed = minf(maxf(car.speed, 10.0), 12.0)
+			_rail(1.2)
+
+
+## Banc d'essai des courses : la boucle du metier, scriptee bout en bout.
+## L'offre sonne et s'accepte D'UN TAP pousse dans l'ecran (le vrai chemin :
+## push_input, les Button de Godot) ; la voiture roule au rail jusqu'au
+## client, se gare dans la zone, la portiere s'anime, le poids s'assoit ;
+## la course se roule avec un inconfort INJECTE (radio forte, vitre
+## ouverte) pour que la note ait quelque chose a dire ; l'argent tombe au
+## centime, l'avis en tete. Et s'endormir avec un client : une etoile.
+func _fare_test() -> void:
+	await get_tree().create_timer(0.8).timeout
+	_start_normal_world()
+	seed(7)
+	taxi.enabled = true
+	taxi.pay_override = "cb"
+	# La jauge de veille ne bouge pas : ce banc scrute le metier, pas le
+	# sommeil — sleeptest s'occupe de l'autre moitie.
+	sleep.full_span = 1.0e9
+	Engine.time_scale = 5.0
+	var phone = car.interaction.grabbables.back()
+	car.gear = 5
+
+	# --- l'offre : elle sonne, elle s'affiche, elle s'accepte au doigt -----
+	print("--- l'offre ------------------------------------------------------")
+	taxi._cooldown = 0.5
+	var t := 0.0
+	while t < 40.0 and taxi.state != "offer":
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+	Engine.time_scale = 1.0        # le compte a rebours de l'offre est reel
+	var offer: Dictionary = taxi.offer.duplicate()
+	var explen: float = MapScript.path_length(MapScript.path(offer["from"], offer["to"]))
+	var expprice: float = roundf((2.0 + 0.9 * explen / 1000.0) * 100.0) / 100.0
+	print("  L'OFFRE SONNE : %s   (%s, %s -> %s, il reste %.0f s)" % [
+		taxi.state == "offer" and offer["from"] == nav["to"]
+		and phone._ring_snd.playing, offer["who"], offer["from"], offer["to"],
+		offer["left"]])
+	print("  LE PRIX EST AU BAREME : %s   (%.2f EUR pour %.0f m — 2 + 0,90/km)" % [
+		absf(offer["price"] - expprice) < 0.005, offer["price"], explen])
+
+	# L'ecran des courses, tel qu'il sonne : offre, prix, les deux boutons.
+	phone._apps.set_page("courses")
+	phone._view.render_target_update_mode = SubViewport.UPDATE_ONCE
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var img: Image = phone._view.get_texture().get_image()
+	img.save_png("user://84_offre.png")
+	print("SHOT: ", ProjectSettings.globalize_path("user://84_offre.png"))
+
+	# ACCEPTER : un tap synthetique au milieu du bouton — le chemin du jeu.
+	var b: Button = phone._apps._btn_yes
+	var uv: Vector2 = (b.global_position + b.size * 0.5) / Vector2(216.0, 384.0)
+	phone.tap(uv)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	print("  LE TAP ACCEPTE : %s   (etat %s, sonnerie coupee %s)" % [
+		taxi.state in ["accepted", "pickup_zone"] and not phone._ring_snd.playing,
+		taxi.state, not phone._ring_snd.playing])
+	print("  L'ITINERAIRE DU CLIENT PREND : %s   (%s)" % [
+		nav["route"] == MapScript.path(offer["from"], offer["to"]),
+		" > ".join(nav["route"])])
+
+	# --- l'embarquement : la zone, la portiere, le poids -------------------
+	# En approche de la ville, on ralentit TOUT (vitesse et horloge) : sous
+	# llvmpipe une image peut durer deux secondes, et a x5 et 25 m/s elle
+	# avalerait la traversee entiere — le client resterait sur le trottoir.
+	print("--- l'embarquement -----------------------------------------------")
+	t = 0.0
+	while t < 120.0 and taxi.state == "accepted":
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		var near_pick: bool = road.town != null and road.town.visible \
+			and road.town.town_name == offer["from"]
+		Engine.time_scale = 1.5 if near_pick else 5.0
+		car.speed = 12.0 if near_pick \
+			else maxf(car.speed, 25.0)
+		_rail(1.2)
+	Engine.time_scale = 1.5
+	# Debraye pour tout l'arret : en 5e, s'immobiliser embrayage lache CALE —
+	# et un moteur mort compterait "calage" a chaque echantillon de la course.
+	await _act("clutch", true)
+	await _fare_park("pickup_zone", offer["from"], 60.0)
+	# La sequence se joue en vraie vitesse : la portiere doit se VOIR ouverte
+	# — une grosse image l'avalerait, et le banc mesure la charniere.
+	Engine.time_scale = 1.0
+	car.last_impact = 0.0
+	var peak := 0.0
+	var shot_door := false
+	t = 0.0
+	while t < 30.0 and taxi.state == "boarding":
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = 0.0
+		peak = maxf(peak, car.cabin.door_amount("R"))
+		if not shot_door and car.cabin.door_amount("R") > deg_to_rad(45.0):
+			shot_door = true
+			await _shot("85_embarquement.png")
+	print("  LA PORTIERE VIT : %s   (ouverte jusqu'a %.0f deg, refermee a %.1f deg)" % [
+		peak > deg_to_rad(45.0) and car.cabin.door_amount("R") < deg_to_rad(2.0),
+		rad_to_deg(peak), rad_to_deg(car.cabin.door_amount("R"))])
+	print("  LE POIDS S'ASSOIT : %s   (impact %.2f m/s2 pour 3,2 — sous les 23,5 des objets)" % [
+		absf(car.last_impact - 3.2) < 0.05, car.last_impact])
+	print("  LE CLIENT EST LA : %s   (etat %s : \"%s\")" % [
+		taxi.state == "riding", taxi.state, offer["who"]])
+
+	# --- la course, inconfort injecte : radio forte, vitre ouverte ---------
+	# La vitesse AVANT de rendre l'embrayage : le lacher a l'arret en 5e, une
+	# image plus tard le moteur est mort — et un moteur mort compte "calage"
+	# a chaque echantillon jusqu'a l'arrivee.
+	print("--- la course ----------------------------------------------------")
+	Engine.time_scale = 5.0
+	car.speed = 22.0
+	await _act("clutch", false)
+	car.radio.volume = 5
+	car.radio._apply()
+	car.cabin.windows[0].open = 0.8
+	t = 0.0
+	while t < 300.0 and taxi.state == "riding":
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		var near_drop: bool = road.town != null and road.town.visible \
+			and road.town.town_name == taxi.fare.get("to", "")
+		Engine.time_scale = 1.5 if near_drop else 5.0
+		car.speed = 12.0 if near_drop \
+			else maxf(car.speed, 22.0)
+		_rail(1.2)
+	var flags: Dictionary = taxi.fare.get("flags", {})
+	var complained: bool = taxi.state == "drop_zone" \
+		and flags.has("radio") and flags.has("windows")
+	print("  LE CLIENT PARLE : %s   (arrive %s ; plaintes %s)" % [
+		complained, taxi.state == "drop_zone", flags.keys()])
+
+	# --- la depose : la zone, le reglement, la note ------------------------
+	print("--- le reglement -------------------------------------------------")
+	Engine.time_scale = 1.5
+	await _act("clutch", true)
+	await _fare_park("drop_zone", offer["to"], 90.0)
+	Engine.time_scale = 1.0
+	car.last_impact = 0.0
+	var money0: float = taxi.money
+	t = 0.0
+	while t < 30.0 and taxi.state in ["payment"]:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = 0.0
+	var rev: Dictionary = taxi.reviews[0] if not taxi.reviews.is_empty() \
+		else {"stars": 0.0, "text": "", "who": ""}
+	var rate := 0.0
+	if rev["stars"] >= 4.5:
+		rate = 0.15
+	elif rev["stars"] >= 3.5:
+		rate = 0.08
+	elif rev["stars"] >= 2.5:
+		rate = 0.03
+	var exptip: float = roundf(offer["price"] * rate * 100.0) / 100.0
+	print("  L'ARGENT TOMBE AU CENTIME : %s   (%.2f EUR = %.2f + %.2f de pourboire, carte)" % [
+		absf(taxi.money - money0 - offer["price"] - exptip) < 0.005,
+		taxi.money, offer["price"], exptip])
+	print("  LA NOTE DIT L'INCONFORT : %s   (%.1f etoiles, attendu entre 2,0 et 3,0)" % [
+		rev["stars"] >= 2.0 and rev["stars"] <= 3.0, rev["stars"]])
+	print("  L'AVIS EST EN TETE : %s   (\"%s\" — %s)" % [
+		rev["who"] == offer["who"] and rev["text"].length() > 0,
+		rev["text"], rev["who"]])
+	print("  LE POIDS DESCEND : %s   (impact %.2f m/s2 pour 2,0 — la caisse remonte)" % [
+		absf(car.last_impact - 2.0) < 0.05, car.last_impact])
+	await _act("clutch", false)
+
+	# --- s'endormir en course : l'avis que rien n'efface -------------------
+	print("--- s'endormir ---------------------------------------------------")
+	taxi.fare = {"from": offer["to"], "to": offer["from"], "price": 5.0,
+		"who": "Le veilleur", "points": 0.0, "samples": 4, "flags": {},
+		"over": false}
+	taxi.state = "riding"
+	taxi._on_fell_asleep()
+	var r1: Dictionary = taxi.reviews[0]
+	print("  DORMIR ANNULE ET NOTE 1 : %s   (%.1f etoile : \"%s\", etat %s)" % [
+		r1["stars"] == 1.0 and taxi.state == "idle"
+		and car.cabin.door_amount("R") < 0.01,
+		r1["stars"], r1["text"], taxi.state])
+
+	# --- l'ecran des avis, et les invariants -------------------------------
+	phone._apps.set_page("avis")
+	phone._view.render_target_update_mode = SubViewport.UPDATE_ONCE
+	await get_tree().process_frame
+	await get_tree().process_frame
+	img = phone._view.get_texture().get_image()
+	img.save_png("user://86_avis.png")
+	print("SHOT: ", ProjectSettings.globalize_path("user://86_avis.png"))
+	var inter = car.interaction
+	print("  L'INVARIANT TIENT : %s   ([0] %s, dernier %s, portiere %.1f deg)" % [
+		inter.grabbables[0].name == "CigPack"
+		and inter.grabbables.back().name == "Phone"
+		and car.cabin.door_amount("R") < 0.01,
+		inter.grabbables[0].name, inter.grabbables.back().name,
+		rad_to_deg(car.cabin.door_amount("R"))])
 
 	Engine.time_scale = 1.0
 	get_tree().quit()
