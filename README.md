@@ -1877,6 +1877,86 @@ godot --path . -- phonetest
 Il écrit `79_telephone_main.png` (consulté en main, onglets lisibles) et
 `80_telephone_dock.png` (au berceau, écran allumé dans l'habitacle).
 
+## La carte et les embranchements
+
+Le pays tient dans [map.gd](scripts/map.gd) : **huit villes, dix routes,
+écrites à la main** — une carte se lit, se mémorise, s'apprend ; un graphe
+procédural n'a pas de pays. Le degré ne dépasse jamais 3 : une bifurcation
+est un **Y**, jamais un carrefour — un choix au volant se fait entre deux
+sorties. Dijkstra (la version naïve, dix arêtes la méritent) donne
+l'itinéraire, chaque ville affiche ses commodités (station-service, hôtel,
+café de nuit…) pour choisir où finir la nuit.
+
+**La carte est un contrat métrique, pas géométrique.** Le ruban de la route
+serpente comme il veut ; il ne doit à la carte que les *longueurs* d'arêtes,
+comptées en échantillons (2 m chacun). Les coordonnées 2D des villes ne
+servent qu'à l'écran GPS. Le brouillard couvre toutes les coutures — c'est
+lui qui permet à une nationale infinie de devenir un réseau.
+
+Une ville ([town.gd](scripts/town.gd)) est une **présence minimale en pool**,
+armée à l'échantillon programmé comme la voiture de police : un panneau
+d'entrée à son nom, une zone d'arrêt élargie sur l'accotement droit (là où
+les clients attendront), quatre lampadaires au sodium dont **un seul** porte
+une vraie lumière, trois silhouettes de maisons avec une fenêtre tiède
+chacune. Assez pour savoir qu'on traverse quelque chose ; le reste dort.
+
+**Le Y est une bretelle de sortie, pas une patte d'oie.** Premier dessin —
+deux brins symétriques qui s'écartent — enterré par le banc : sous des
+images de deux secondes, l'asservissement au volant finissait en ronds dans
+le champ. Le dessin final est celui des vraies routes : la voie principale
+**file droit** du panneau (90 m avant) jusqu'après la fourche, la branche
+s'écarte à 0,015 rad/m sur 36 m puis se détend, et meurt dans le brouillard
+au bout de 80 m. Rester sur le vivant ne demande **aucun coup de volant** ;
+prendre la sortie est un geste. Le panneau en Y annonce les deux noms sur
+deux tôles ([town.gd](scripts/town.gd) fournit la fabrique).
+
+Le choix se lit **dans la trajectoire** : entre 16 et 52 m après la fourche,
+le jeu regarde de quel ruban la voiture est la plus proche — et le verdict
+est rendu *au moment de conclure*, en comparant les deux distances, pas en
+échantillonnant une fenêtre qu'une grosse image peut avaler d'un coup. Côté
+vivant : la branche morte s'éteint, la route continue. Côté sortie :
+**les rubans s'échangent** — la fenêtre vivante redémarre depuis la branche,
+et c'est *tout l'ancien ruban* qui devient décor mort, encore visible dans
+le rétroviseur, démonté à 340 m derrière. Rien n'apparaît ni ne disparaît
+près de l'œil. Le piège payé deux fois : la fenêtre vivante ne garde que 12
+échantillons derrière la voiture — tronquer « après la fourche » ne laissait
+*rien* à greffer (d'où le redémarrage complet), et un échantillon doublé au
+raccord faisait un coude de 90° dans la glissière — le générateur du brin
+laissait sa tête *sur* le dernier point posé au lieu d'un pas plus loin.
+
+L'écran GPS du téléphone devient réel ([phone_apps.gd](scripts/phone_apps.gd)) :
+la carte entière dessinée au `_draw()` — les dix routes, l'itinéraire
+surligné d'orange, les huit noms, et le point qui avance le long de l'arête
+courante à mesure que les échantillons défilent. Le bandeau dit la ville
+visée et les mètres restants — ou, en approche du Y, ce que chaque côté
+promet (« à gauche Malassis, à droite Peyrelade ») ; en dessous, les
+commodités de la destination.
+
+### Banc d'essai
+
+```bash
+godot --path . -- maptest
+```
+
+| | relevé |
+|---|---|
+| Dijkstra compte juste | Saint-Elme > Corbeny > Vieux-Bourg > Brumaire, **3 400 m** |
+| jamais plus d'un Y | degré maxi **3** sur les 8 villes |
+| la ville tombe juste | Corbeny après **958 m** roulés, la carte dit 950 |
+| le côté vivant mène | volant rendu au Y : pris « left » vers **Malassis**, l'attendu |
+| la sortie échange les rubans | posé sur la bretelle : pris « right » vers **Peyrelade** |
+| le ruban est sans couture | pas maxi **2,00 m** pour 2,0 ; virage maxi **1,7°**/pas (seuil 4) |
+| le GPS sait où on est | « Vers Peyrelade — **1 048 m** », commodités affichées |
+
+Le banc tient le volant *hors* des transits seulement : pendant les longues
+arêtes il **pose** la voiture sur le ruban (la voie, pas la conduite — sous
+llvmpipe une image peut durer deux secondes, et un asservi à fond de butée
+creuse des ronds) ; au Y, voie et volant sont **rendus** — c'est exactement
+ce que le passage prouve : sans toucher à rien, tout droit mène au vivant.
+Il écrit `81_ville.png` (l'entrée de Corbeny dans les phares),
+`82_y.png` (le panneau du Y) et `83_gps.png` (l'écran GPS, capturé du
+SubViewport même : carte, itinéraire, point orange en route).
+
 ## La voiture de police
 
 Sur l'accotement de droite, une berline de police de 1990 (gabarit Peugeot 405,

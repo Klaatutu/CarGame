@@ -8,6 +8,7 @@ const CarScript := preload("res://scripts/car.gd")
 const RoadScript := preload("res://scripts/road.gd")
 const DayCycleScript := preload("res://scripts/daycycle.gd")
 const SleepScript := preload("res://scripts/sleep.gd")
+const MapScript := preload("res://scripts/map.gd")
 const Retro := preload("res://scripts/retro.gd")
 const DriverScript := preload("res://scripts/driver.gd")
 const GiantScript := preload("res://scripts/giant.gd")
@@ -65,6 +66,9 @@ var world_mode := "normal"
 ## Le sommeil ne compte qu'en partie normale : les bancs d'essai gardent un
 ## conducteur d'acier. _start_normal_world le leve.
 var sleep_enabled := false
+## Ou l'on est sur le graphe (map.gd) : {at, to, start_g, route}. Vide hors
+## partie. Le suivi vit ici en attendant le systeme de courses.
+var nav := {}
 var _ground: MeshInstance3D
 var _moon: Node3D
 var _env: Environment
@@ -103,6 +107,9 @@ func _ready() -> void:
 	# camera. Voir la section "l'etrangleur" en fin de fichier.
 	road.strangler.caught.connect(_on_strangler_caught)
 	road.strangler.died.connect(_on_strangler_died)
+	# Le graphe : la route annonce villes et bifurcations, la navigation suit.
+	road.town_reached.connect(_on_town_reached)
+	road.fork_committed.connect(_on_fork_committed)
 
 	# La jauge de veille. Elle previent quand tout se ferme ; la bascule vers
 	# le cauchemar se joue ici, ou vivent l'ecran, l'ambiance et la route.
@@ -176,6 +183,8 @@ func _ready() -> void:
 		_radio_test()
 	elif "phonetest" in OS.get_cmdline_user_args():
 		_phone_test()
+	elif "maptest" in OS.get_cmdline_user_args():
+		_map_test()
 
 
 func _process(delta: float) -> void:
@@ -3977,13 +3986,92 @@ const MOON_LIGHT_BLOOD := Color(0.85, 0.38, 0.36)
 const DITHER_TINT_BLOOD := Color(1.04, 0.86, 0.86)
 
 
-## Le monde d'une PARTIE : la route du soir, sans monstres, sommeil qui compte.
+## Le monde d'une PARTIE : la route du soir, sans monstres, sommeil qui
+## compte, et la nuit commence quelque part sur la carte — on quitte
+## Saint-Elme vers Corbeny, la premiere arete du graphe.
 ## Les bancs d'essai ne passent jamais ici — ils gardent le monde d'avant.
 func _start_normal_world() -> void:
 	world_mode = "normal"
 	sleep_enabled = true
 	road.monsters = false
 	_set_centipede_hunting(false)
+	_nav_begin("Saint-Elme", "Corbeny")
+
+
+# --------------------------------------------------------------------------
+# La navigation : le graphe (map.gd) traduit en programme de route
+# --------------------------------------------------------------------------
+#
+# La carte est un graphe METRIQUE : le ruban serpente comme il veut, seules
+# les longueurs d'aretes sont honorees. La navigation chaine les demandes :
+# une ville au bout de l'arete courante ; en ville, s'il y a deux sorties,
+# un Y un peu plus loin — et le cote que prend la voiture choisit l'arete.
+# Ce suivi vivra chez le taxi quand les courses existeront.
+
+## Le Y se pose tant de metres apres le panneau de la ville qui le precede.
+const FORK_AFTER_TOWN_M := 120.0
+
+func _nav_begin(from: String, to: String) -> void:
+	nav = {"at": from, "to": to, "start_g": road.head_index(), "route": []}
+	road.program_town(nav["start_g"]
+		+ int(MapScript.edge_length(from, to) / RoadScript.STEP), to)
+
+
+func _on_town_reached(id: String) -> void:
+	if nav.is_empty():
+		return
+	var from: String = nav["at"]
+	nav["at"] = id
+	# Les sorties, moins celle d'ou l'on vient : sur cette carte il en reste
+	# une ou deux — jamais plus, le degre est borne a 3.
+	var outs: Array = MapScript.neighbors(id).filter(func(t): return t != from)
+	if outs.is_empty():
+		outs = [from]                  # cul-de-sac : on repartira d'ou l'on vient
+	if outs.size() == 1:
+		nav["to"] = outs[0]
+		nav["start_g"] = road.head_index()
+		road.program_town(nav["start_g"]
+			+ int(MapScript.edge_length(id, outs[0]) / RoadScript.STEP), outs[0])
+	else:
+		# Un Y, un peu apres le bourg. Le cote VIVANT suit l'itineraire GPS
+		# s'il en reste un ; sinon la gauche, et le volant decidera.
+		var main_side := "left"
+		var route: Array = nav["route"]
+		if route.size() > 1 and route[0] == id and outs.has(route[1]):
+			main_side = "left" if outs[0] == route[1] else "right"
+		nav["to"] = outs[0] if main_side == "left" else outs[1]
+		nav["start_g"] = road.head_index()
+		road.program_fork(road.head_index()
+			+ int(FORK_AFTER_TOWN_M / RoadScript.STEP), outs[0], outs[1], main_side)
+
+
+func _on_fork_committed(_side: String, id: String) -> void:
+	if nav.is_empty():
+		return
+	nav["to"] = id
+	# L'arete a commence A LA VILLE : ce qui en reste, c'est sa longueur
+	# moins le bout deja roule jusqu'au Y.
+	var rest: float = MapScript.edge_length(nav["at"], id) - FORK_AFTER_TOWN_M
+	road.program_town(road.head_index() + int(maxf(rest, 60.0) / RoadScript.STEP), id)
+	# L'itineraire GPS avance ou se recalcule : se tromper d'embranchement ne
+	# perd personne, la carte recompte.
+	var route: Array = nav["route"]
+	if not route.is_empty():
+		if route.size() > 1 and route[1] == id:
+			route.remove_at(0)
+		else:
+			nav["route"] = MapScript.path(id, route.back())
+
+
+## La progression sur l'arete courante, 0..1 — l'ecran GPS la dessine.
+func nav_progress() -> float:
+	if nav.is_empty():
+		return 0.0
+	var len_m: float = MapScript.edge_length(nav["at"], nav["to"])
+	if len_m <= 0.0:
+		return 0.0
+	return clampf(float(road.head_index() - nav["start_g"]) * RoadScript.STEP / len_m,
+		0.0, 1.0)
 
 
 ## Le mille-pattes chasse (cauchemar) ou dort (monde normal). PAS rewind() :
@@ -4861,6 +4949,24 @@ func _radio_test() -> void:
 # Banc d'essai du telephone
 # --------------------------------------------------------------------------
 
+## Tient la voiture SUR SA VOIE, au rail : position laterale posee, nez dans
+## l'axe. Le meme esprit que la vitesse TENUE des autres bancs — sous
+## charge, une image peut durer deux secondes, et n'importe quel asservi au
+## volant part en slalom (releve : le premier essai a mesure 1230 m sur une
+## arete de 950). Les bancs de la carte roulent au rail dans les TRANSITS,
+## et rendent tout — voie et volant — la ou le jeu doit laisser choisir.
+func _rail(lane: float) -> void:
+	var i: int = road._closest_index(road._pos, car.global_position)
+	var right: Vector3 = road._right[i]
+	var p: Vector3 = road._pos[i] + right * lane
+	car.global_position.x = p.x
+	car.global_position.z = p.z
+	var j: int = mini(i + 1, road._pos.size() - 1)
+	if j > i:
+		var fwd: Vector3 = (road._pos[j] - road._pos[i]).normalized()
+		car.rotation.y = atan2(-fwd.x, -fwd.z)
+
+
 ## Amene le reticule sur un point d'ecran du telephone au berceau, par de
 ## VRAIS mouvements de souris. L'asservissement se fait en PIXELS projetes
 ## (unproject du point vise) : deplacer la souris vers ou une chose apparait
@@ -4998,4 +5104,160 @@ func _phone_test() -> void:
 	print("  LE BERCEAU REPREND : %s   (docked %s, ecran %s)" % [
 		phone.docked and phone.screen_on(), phone.docked, phone.screen_on()])
 
+	get_tree().quit()
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai de la carte et des embranchements
+# --------------------------------------------------------------------------
+
+## Trois choses a prouver : le graphe compte juste (Dijkstra sur les
+## longueurs ecrites), la route HONORE la metrique (la ville tombe ou la
+## carte le dit), et le Y se prend AU VOLANT — dans les deux sens, y compris
+## l'echange des rubans quand on passe sur le brin mort, sans couture.
+func _map_test() -> void:
+	await get_tree().create_timer(0.8).timeout
+	_start_normal_world()
+	Engine.time_scale = 5.0
+
+	print("--- le graphe ----------------------------------------------------")
+	var route := MapScript.path("Saint-Elme", "Brumaire")
+	var rlen := MapScript.path_length(route)
+	print("  DIJKSTRA COMPTE JUSTE : %s   (%s, %d m — attendu par Corbeny et Vieux-Bourg, 3400)" % [
+		route == ["Saint-Elme", "Corbeny", "Vieux-Bourg", "Brumaire"]
+		and absf(rlen - 3400.0) < 0.1, " > ".join(route), int(rlen)])
+	var deg_ok := true
+	for t in MapScript.towns():
+		if MapScript.neighbors(t).size() > 3:
+			deg_ok = false
+	print("  JAMAIS PLUS D'UN Y    : %s   (degre maxi 3 sur les %d villes)" % [
+		deg_ok, MapScript.towns().size()])
+
+	# --- l'arete se roule : Saint-Elme -> Corbeny (950 m) ------------------
+	print("--- la premiere arete --------------------------------------------")
+	var seen := [""]
+	var seen_at := [0]
+	road.town_reached.connect(func(id: String) -> void:
+		seen[0] = id
+		seen_at[0] = road.head_index())
+	var g0: int = road.head_index()
+	car.gear = 5
+	var t := 0.0
+	var shot_town := false
+	while t < 90.0 and seen[0] == "":
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+		if not shot_town and road.town.visible \
+				and car.global_position.distance_to(road.town.global_position) < 80.0:
+			shot_town = true
+			car.speed = 0.0
+			await get_tree().process_frame
+			await _shot("81_ville.png")
+	var rolled := float(seen_at[0] - g0) * RoadScript.STEP
+	print("  LA VILLE TOMBE JUSTE : %s   (%s apres %.0f m, la carte dit 950)" % [
+		seen[0] == "Corbeny" and absf(rolled - 950.0) < 30.0, seen[0], rolled])
+
+	# --- le Y, cote vivant : on suit la branche principale -----------------
+	print("--- le Y ---------------------------------------------------------")
+	var committed := [""]
+	var committed_side := [""]
+	var commits := [0]
+	road.fork_committed.connect(func(side: String, id: String) -> void:
+		committed_side[0] = side
+		committed[0] = id
+		commits[0] += 1)
+	var expect_main: String = nav["to"]
+	var shot_sign := false
+	t = 0.0
+	while t < 90.0 and committed[0] == "":
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 22.0)
+		# Au rail dans l'approche ; VOIE ET VOLANT RENDUS des le panneau —
+		# au Y la route file droit, et ce passage prouve exactement ca : sans
+		# toucher a rien, tout droit mene au cote vivant.
+		if road._fork_g < 0 or road.head_index() < road._fork_g - RoadScript.FORK_SIGN_AT:
+			_rail(1.2)
+		if not shot_sign and road._fork_sign != null and road._fork_sign.visible \
+				and car.global_position.distance_to(road._fork_sign.global_position) < 70.0:
+			shot_sign = true
+			car.speed = 0.0
+			await get_tree().process_frame
+			await _shot("82_y.png")
+	_act("steer_left", false)
+	_act("steer_right", false)
+	print("  LE COTE VIVANT MENE  : %s   (volant rendu au Y : pris \"%s\" vers %s, attendu %s)" % [
+		committed[0] == expect_main, committed_side[0], committed[0], expect_main])
+
+	# --- le Y, cote mort : on force le passage, les rubans s'echangent ------
+	var n0: int = commits[0]
+	var next_fork := [false]
+	var main_then := [""]
+	t = 0.0
+	while t < 150.0 and commits[0] == n0:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		# La voiture est POSEE sur la sortie : c'est la DETECTION et
+		# l'ECHANGE des rubans qu'on prouve ici — le coup de volant, lui,
+		# appartient au joueur (tout asservi de banc a fond de butee sous
+		# des images de deux secondes finissait en ronds dans le champ).
+		var near: bool = road.fork_state() in ["grow", "window"] \
+			and road.head_index() >= road._fork_g - 25
+		if near:
+			Engine.time_scale = 2.0
+			car.speed = minf(maxf(car.speed, 8.0), 9.0)
+			next_fork[0] = true
+			main_then[0] = road._fork_main
+			if road.head_index() >= road._fork_g + 4 and road._bpos.size() > 1:
+				var bi: int = road._closest_index(road._bpos, car.global_position)
+				var bj: int = mini(bi + 1, road._bpos.size() - 1)
+				car.global_position.x = road._bpos[bi].x
+				car.global_position.z = road._bpos[bi].z
+				if bj > bi:
+					var bf: Vector3 = (road._bpos[bj] - road._bpos[bi]).normalized()
+					car.rotation.y = atan2(-bf.x, -bf.z)
+			else:
+				_rail(1.2)
+		else:
+			Engine.time_scale = 5.0
+			car.speed = maxf(car.speed, 22.0)
+			_rail(1.2)
+	_act("steer_left", false)
+	_act("steer_right", false)
+	car.speed = 0.0
+	await get_tree().process_frame
+	# La continuite du ruban echange : aucun trou, aucune cassure.
+	var max_gap := 0.0
+	var max_turn := 0.0
+	for i in road._pos.size() - 1:
+		max_gap = maxf(max_gap, road._pos[i].distance_to(road._pos[i + 1]))
+		if i > 0:
+			var d0: Vector3 = (road._pos[i] - road._pos[i - 1]).normalized()
+			var d1: Vector3 = (road._pos[i + 1] - road._pos[i]).normalized()
+			max_turn = maxf(max_turn, rad_to_deg(acos(clampf(d0.dot(d1), -1.0, 1.0))))
+	print("  LA SORTIE ECHANGE LES RUBANS : %s   (fourche vue %s, vivant \"%s\", pris \"%s\" vers %s)" % [
+		next_fork[0] and commits[0] > n0 and committed_side[0] != main_then[0]
+		and committed[0] == nav["to"], next_fork[0], main_then[0],
+		committed_side[0], committed[0]])
+	print("  LE RUBAN EST SANS COUTURE : %s   (pas maxi %.2f m pour %.1f, virage maxi %.1f deg/pas)" % [
+		max_gap < RoadScript.STEP * 1.5 and max_turn < 4.0,
+		max_gap, RoadScript.STEP, max_turn])
+
+	# --- l'ecran GPS -------------------------------------------------------
+	var phone = car.interaction.grabbables.back()
+	phone._apps.set_page("gps")
+	phone._apps.refresh()
+	phone._view.render_target_update_mode = SubViewport.UPDATE_ONCE
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var gps_img: Image = phone._view.get_texture().get_image()
+	gps_img.save_png("user://83_gps.png")
+	print("SHOT: ", ProjectSettings.globalize_path("user://83_gps.png"))
+	print("  LE GPS SAIT OU ON EST : %s   (\"%s\", progression %.2f)" % [
+		not nav.is_empty() and nav_progress() >= 0.0,
+		phone._apps._gps_line.text, nav_progress()])
+
+	Engine.time_scale = 1.0
 	get_tree().quit()

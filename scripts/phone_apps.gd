@@ -16,6 +16,8 @@ extends Control
 ## la voiture son monde — jamais de singleton.
 ##
 
+const MapScript := preload("res://scripts/map.gd")
+
 const BG := Color(0.055, 0.065, 0.085)
 const PANEL := Color(0.085, 0.10, 0.13)
 const INK := Color(0.75, 0.80, 0.88)
@@ -34,8 +36,48 @@ var _status_batt: Label
 var _batt_line: Label
 var _money_line: Label
 var _network_line: Label
+var _gps_line: Label
+var _gps_amen: Label
+var _gps_map: Control
 var _pages := {}
 var _tabs := {}
+
+
+## La carte, dessinee a la main : les dix routes, les huit noms, et le
+## point qui roule. Les coordonnees de map.gd sont en 0..1 — l'echelle est
+## celle du Control, quel que soit l'ecran.
+class GpsMap:
+	extends Control
+	var apps
+
+	func _draw() -> void:
+		var s := size
+		var font := get_theme_default_font()
+		var main = apps._main() if apps != null else null
+		var route: Array = []
+		if main != null and "nav" in main and not main.nav.is_empty():
+			route = main.nav.get("route", [])
+		for e in MapScript.EDGES:
+			var a: Vector2 = MapScript.at(e[0]) * s
+			var b: Vector2 = MapScript.at(e[1]) * s
+			var on_route := false
+			for i in route.size() - 1:
+				if (route[i] == e[0] and route[i + 1] == e[1]) \
+						or (route[i] == e[1] and route[i + 1] == e[0]):
+					on_route = true
+			draw_line(a, b, Color(0.95, 0.62, 0.25) if on_route
+				else Color(0.30, 0.34, 0.42), 2.0 if on_route else 1.0)
+		for t in MapScript.TOWNS:
+			var p: Vector2 = MapScript.at(t) * s
+			draw_circle(p, 3.0, Color(0.75, 0.80, 0.88))
+			draw_string(font, p + Vector2(-26.0, -6.0), t,
+				HORIZONTAL_ALIGNMENT_CENTER, 60.0, 9, Color(0.42, 0.46, 0.54))
+		if main != null and "nav" in main and not main.nav.is_empty():
+			var a2: Vector2 = MapScript.at(main.nav["at"]) * s
+			var b2: Vector2 = MapScript.at(main.nav["to"]) * s
+			var p2: Vector2 = a2.lerp(b2, main.nav_progress())
+			draw_circle(p2, 4.5, Color(0.95, 0.62, 0.25))
+			draw_circle(p2, 2.0, Color(0.10, 0.08, 0.05))
 
 
 func _ready() -> void:
@@ -118,13 +160,16 @@ func _build_pages() -> void:
 	_label(fares, "AUCUNE COURSE", 16, DIM)
 	_label(fares, "Les demandes arriveront ici.", 12, DIM)
 
-	# GPS : la carte viendra avec les villes.
+	# GPS : la carte du graphe, dessinee au _draw — villes, routes, et la
+	# position qui avance le long de l'arete courante.
 	var gps := _page("gps")
-	var sp4 := Control.new()
-	sp4.custom_minimum_size = Vector2(0, 60)
-	gps.add_child(sp4)
-	_label(gps, "GPS", 16, DIM)
-	_label(gps, "Pas d'itineraire en cours.", 12, DIM)
+	_gps_line = _label(gps, "—", 12, ACCENT)
+	_gps_map = GpsMap.new()
+	_gps_map.apps = self
+	_gps_map.custom_minimum_size = Vector2(0, 210)
+	_gps_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	gps.add_child(_gps_map)
+	_gps_amen = _label(gps, "", 10, DIM)
 
 	# AVIS : la reputation, encore vierge.
 	var ratings := _page("avis")
@@ -215,6 +260,25 @@ func refresh() -> void:
 	_money_line.text = "%.2f EUR" % money
 	_network_line.text = network
 	_network_line.add_theme_color_override("font_color", network_color)
+
+	# La page GPS : le bandeau d'en-tete, la carte redessinee, les
+	# commodites de la ville visee — de quoi choisir ou finir la nuit.
+	if main != null and "nav" in main and not main.nav.is_empty():
+		var to: String = main.nav["to"]
+		var len_m: float = MapScript.edge_length(main.nav["at"], to)
+		var rest := int(maxf(len_m * (1.0 - main.nav_progress()), 0.0))
+		if "road" in main and main.road.fork_state() in ["grow", "window"]:
+			_gps_line.text = "Y : a gauche %s, a droite %s" % [
+				main.road._fork_left, main.road._fork_right]
+		else:
+			_gps_line.text = "Vers %s — %d m" % [to, rest]
+		var amen: Array = MapScript.amenities(to)
+		_gps_amen.text = "%s : %s" % [to, ", ".join(amen)]
+	else:
+		_gps_line.text = "Pas d'itineraire en cours."
+		_gps_amen.text = ""
+	if _gps_map != null:
+		_gps_map.queue_redraw()
 
 
 ## La molette pendant la consultation. Les pages de cette passe tiennent a
