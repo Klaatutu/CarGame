@@ -70,6 +70,7 @@ var _glow := 0.0
 var _pulse := 0.0
 var _want := false
 var _tumbling := false
+var _lit := false                  # le halo est-il ecrit dans le materiau ?
 
 
 func _physics_process(delta: float) -> void:
@@ -305,7 +306,18 @@ func _process(delta: float) -> void:
 	# dans le noir, un eclat fixe ne se distingue pas d'un reflet.
 	_glow = lerpf(_glow, 1.0 if _want else 0.0, clampf(delta * 9.0, 0.0, 1.0))
 	if _glow < 0.001:
+		# ET ON ETEINT POUR DE BON. Sortir sans rien appliquer laissait au
+		# materiau l'energie de l'image d'avant. D'ordinaire elle est deja
+		# quasi nulle et personne ne le voit ; mais des que `delta * 9`
+		# depasse 1 (un banc a time_scale 6, une image qui traine), la
+		# descente se fait en UN SEUL pas et l'objet reste allume a fond,
+		# pour toujours — le telephone en main brillait comme une lampe sur
+		# les captures. Une image de plus, une seule, et le halo tombe.
+		if _lit:
+			_lit = false
+			_apply_glow(0.0)
 		return
+	_lit = true
 	_pulse += delta * 2.4
 	_apply_glow(highlight_energy * _glow * (0.72 + 0.28 * sin(_pulse)))
 

@@ -20,6 +20,15 @@ extends "res://scripts/prop.gd"
 ## voiture, la geometrie de la meme image ne ment pas (README, la visee sans
 ## physique).
 ##
+## Ce qui rend l'ecran VISABLE tient a deux choses, et les deux manquaient :
+## l'appareil se FIGE la ou on l'a leve (une arme suit le regard, un telephone
+## qui ferait pareil garderait le meme point sous le reticule pour toujours),
+## et c'est l'ECRAN, pas le poing, qui vient sur l'axe du regard. Le detail est
+## dans interaction.gd, PHONE_REACH et State.PHONE.
+##
+## La molette tourne les pages sans rien viser : le telephone sonne en plein
+## virage, un cran, la page COURSES est la (phone_apps.gd, scroll).
+##
 ## LA BATTERIE EST UNE JAUGE QU'ON BRANCHE.
 ## -------------------------------------------------------------------------
 ## L'ecran allume tire -2,5 %/min, la veille -0,5 ; pose sur son support
@@ -34,6 +43,7 @@ extends "res://scripts/prop.gd"
 ##
 
 const PhoneApps := preload("res://scripts/phone_apps.gd")
+const DriverScript := preload("res://scripts/driver.gd")
 
 ## Cotes du boitier (demi-cotes pour prop.gd) et de l'ecran utile.
 const BODY := Vector3(0.070, 0.016, 0.140)
@@ -145,12 +155,15 @@ func _build_screen() -> void:
 	_mat_screen.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_mat_screen.albedo_texture = _view.get_texture()
 	_mat_screen.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	# La texture du viewport arrive la tete en bas sur le quad (releve a la
-	# capture : les onglets en haut). Le redressement se fait AU MATERIAU,
-	# comme l'inversion gauche-droite des retroviseurs (mirror.gd) — la voie
-	# stable, prouvee sur les deux rendus.
-	_mat_screen.uv1_scale = Vector3(1.0, -1.0, 1.0)
-	_mat_screen.uv1_offset = Vector3(0.0, 1.0, 0.0)
+	# AUCUNE RETOUCHE D'UV ICI, ET C'EST UN CORRECTIF. Le quad montrait les
+	# onglets en haut, on a donc retourne la texture au materiau (uv1_scale),
+	# la voie des retroviseurs. Mais un miroir d'uv ne se rattrape pas : il ne
+	# compensait qu'une base GAUCHE dans la pose de lecture (interaction.gd),
+	# et partout ailleurs il retournait l'ecran pour de bon. Au berceau, la
+	# capture le montre la tete en bas ; et le doigt tapait le miroir vertical
+	# de ce que le reticule visait — viser les onglets tapait la barre d'etat.
+	# La pose est redressee la ou elle etait fausse, et l'ecran se lit sans
+	# retouche, en main comme au support.
 	_quad.material_override = _mat_screen
 	_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_screen.add_child(_quad)
@@ -256,8 +269,19 @@ func hold() -> void:
 # L'ecran qu'on touche du regard
 # --------------------------------------------------------------------------
 
+## Le centre de l'ecran dans le repere du boitier. interaction.gd s'en sert
+## pour poser L'ECRAN sous le reticule quand on consulte : c'est l'ecran qu'on
+## vise, et il n'est pas au centre du boitier.
+func screen_center_local() -> Vector3:
+	return _screen.position
+
+
 ## Rayon du regard (MONDE) -> coordonnees d'ecran 0..1, ou null a cote.
 ## Analytique : le plan du quad, rien d'autre.
+##
+## Le uv rendu est celui de L'IMAGE AFFICHEE : (0,0) au coin haut-gauche de ce
+## que le joueur lit. hover() et tap() le poussent tel quel au viewport, et
+## screen_point() est son inverse exact — les trois disent la meme chose.
 func screen_uv(eye_w: Vector3, dir_w: Vector3) -> Variant:
 	if not _quad.visible:
 		return null
@@ -309,8 +333,14 @@ func tap(uv: Vector2) -> void:
 		_tap_snd.play()
 
 
+## La molette : elle tourne les pages (phone_apps.gd). Le meme petit clic que
+## le doigt quand une page change vraiment — sans ca, une molette en butee et
+## une molette morte se ressemblent trop.
 func scroll(dir: int) -> void:
-	_apps.scroll(dir)
+	if battery <= 0.0:
+		return
+	if _apps.scroll(dir) and _tap_snd != null and _tap_snd.stream != null:
+		_tap_snd.play()
 
 
 func ring() -> void:
@@ -329,6 +359,16 @@ func stop_ring() -> void:
 
 ## Tenu par la tranche basse, ecran vers le pouce.
 func grip_axis() -> Vector3:
+	return Vector3.FORWARD
+
+
+## Ce que le PORT met a la verticale. Un objet qui commande le poing
+## (hand_local) est pose sur une reference EXTERIEURE — interaction.gd,
+## _carried_transform — et c'est cet axe qui monte : le HAUT de l'appareil.
+## Avec front_axis (la vitre) tournee vers l'oeil, le telephone se porte
+## DEBOUT, ecran vers le conducteur. Sans lui, le defaut (Vector3.UP) couche
+## l'appareil a plat, ecran au plafond, et on ne voit plus que sa tranche.
+func aim_axis() -> Vector3:
 	return Vector3.FORWARD
 
 
@@ -351,6 +391,28 @@ func rest_height() -> float:
 
 
 func hold_point() -> Vector3:
-	# La main empoigne le tiers bas (+Z : le bas du boitier, le haut de
-	# l'ecran regardant -Z).
-	return Vector3(0.0, 0.0, 0.048)
+	# La main empoigne la TRANCHE DU BAS (+Z : le bas du boitier), derriere la
+	# vitre. Une prise dans le plan de l'ecran et a 4,8 cm mettait les doigts
+	# en travers de la moitie de l'affichage : on ne lit pas au travers d'une
+	# main, et on ne vise pas ce qu'elle cache.
+	return Vector3(0.0, -0.016, 0.068)
+
+
+## Orientation du POING autour du telephone (repere du boitier). Meme mecanique
+## que le revolver : les poses de main du modele sont construites autour d'une
+## BARRE tangente a la paume — dans le repere de la main son axe est -Z, et
+## PALM_AWAY_R s'eloigne de la paume. Il suffit d'envoyer ces deux directions
+## sur celles de la prise, par changement de base.
+##
+## Sans elle, le poing s'orientait d'apres le COUDE (driver.gd, _aligned_grip) :
+## un doigt remontait en travers de la tranche et la main mangeait le coin de
+## l'ecran — on ne visait plus l'onglet AVIS sans viser des phalanges. Ici la
+## barre est la LARGEUR de l'appareil (+X) et la paume regarde son DOS : la
+## main le tient par en dessous, comme on tient vraiment un telephone, et ne
+## couvre que la tranche basse.
+func hand_local() -> Basis:
+	var bar := Vector3(0.0, 0.0, -1.0)
+	var palm: Vector3 = DriverScript.PALM_AWAY_R
+	var local := Basis(bar, palm, bar.cross(palm))
+	var target := Basis(Vector3.RIGHT, Vector3.UP, Vector3.BACK)
+	return target * local.transposed()

@@ -70,12 +70,25 @@ const DRINK_DROP := 0.085
 const DRINK_TIME := 1.5
 const DRINK_TILT := 45.0
 
-## Consulter le telephone : distance de LECTURE, pas de visee — plus pres
-## que l'arme (0,50), sous la ligne du regard, ecran cabre vers l'oeil.
+## Consulter le telephone : distance de LECTURE, pas de visee — plus pres que
+## l'arme (0,50), ecran cabre vers l'oeil.
+##
+## ET L'ECRAN SUR L'AXE DU REGARD, pas a cote. C'est le reticule qui touche :
+## il doit tomber DANS l'ecran, sinon il n'y a rien a viser. L'appareil se
+## posait 3 cm a droite et 8,5 cm sous la ligne des yeux — le reticule passait
+## a un millimetre du bord gauche de la vitre, et screen_uv() rendait null a
+## chaque image. On visait un ecran qu'on ne pouvait pas atteindre.
 const PHONE_REACH := 0.34
-const PHONE_SIDE := 0.030
-const PHONE_DROP := 0.055
 const PHONE_TILT := 12.0
+## Verrou entre deux pages tournees a la molette, en secondes. Sous Windows un
+## seul cran produit plusieurs evenements — c'est deja pourquoi la boite a son
+## `shift_cooldown` (car.gd). La manivelle et la cle s'en moquent, elles
+## tournent d'autant plus ; une page, elle, se saute.
+const PHONE_WHEEL_LOCK := 0.25
+## Ou la ligne d'aide se pose sous le reticule, en pixels du HUD. Le telephone
+## consulte descend la sienne sous l'appareil (voir _update_hud).
+const HINT_DROP := 26.0
+const HINT_DROP_PHONE := 200.0
 ## Ce que fait le recul a l'ARME, pas a la visee : elle se cabre et recule dans
 ## la main. Rendre la ligne de mire au joueur est son affaire, pas celle du code.
 const RECOIL_RISE := 11.0
@@ -123,6 +136,11 @@ var _state := State.IDLE
 var _blend := 0.0
 var _drink_t := 0.0                # progression du geste de boire, en secondes
 var _tap_uv := Vector2.ZERO        # ou le doigt va taper (TAPPING), en uv ecran
+## L'oeil et le regard FIGES a la levee du telephone (espace voiture) : c'est
+## d'eux que la pose de lecture est calculee, et d'eux seuls. Voir State.PHONE.
+var _phone_eye := Vector3.ZERO
+var _phone_dir := Vector3.FORWARD
+var _phone_wheel := 0.0            # verrou de molette du telephone, en secondes
 var _drop_is_dock := false         # la depose en cours vise le berceau
 var _goal := Vector3.ZERO          # ou la main doit aller, espace voiture
 var _drop := Transform3D()         # pose finale de l'objet, espace voiture
@@ -138,6 +156,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_phone_wheel = maxf(_phone_wheel - delta, 0.0)
 	if cam == null or driver == null or cabin == null:
 		_update_hud()
 		return
@@ -212,12 +231,20 @@ func _process(delta: float) -> void:
 			# DOIGT. Le survol est pousse au viewport chaque image, le clic
 			# gauche tape (_unhandled_input). Meme filet de relachement
 			# qu'en RAISED.
+			#
+			# LA POSE EST FIGEE (_phone_eye, _phone_dir, pris a la levee), et
+			# c'est ce qui rend l'ecran visable. Une arme levee SUIT le regard,
+			# c'est elle qu'on pointe ; un telephone qui suivrait le regard
+			# emporterait l'ecran avec le reticule, et le meme point resterait
+			# sous le doigt pour toujours — on ne pouvait viser aucune icone.
+			# Ici il tient dans l'espace de la voiture, comme une main qui ne
+			# suit pas les yeux : le regard PROMENE le reticule sur la vitre.
 			if not Input.is_action_pressed("aim_weapon"):
 				if held != null and held.has_method("set_viewing"):
 					held.call("set_viewing", false)
 				_state = State.HELD
 			_blend = 1.0
-			_goal = _goal.lerp(_phone_point(origin, dir), k)
+			_goal = _goal.lerp(_phone_point(), k)
 			_surface_hit = false
 			if held != null:
 				var uv = held.call("screen_uv", cam.global_position,
@@ -283,7 +310,7 @@ func _process(delta: float) -> void:
 		if _state == State.RAISED:
 			tf = _aimed_transform(dir)
 		elif _state == State.PHONE:
-			tf = _phone_transform(origin)
+			tf = _phone_transform()
 		else:
 			tf = _held_transform(origin)
 		if _state == State.DRINKING:
@@ -430,33 +457,51 @@ func _drink_point(origin: Vector3, dir: Vector3) -> Vector3:
 	return origin + flat * DRINK_FWD + Vector3.DOWN * DRINK_DROP
 
 
-## Ou le telephone monte quand on le consulte : les memes maths que
-## _aim_point, aux distances de lecture.
-func _phone_point(origin: Vector3, dir: Vector3) -> Vector3:
-	var right := dir.cross(Vector3.UP)
-	if right.length_squared() < 0.000001:
-		right = Vector3.RIGHT
-	right = right.normalized()
-	var up := right.cross(dir).normalized()
-	return origin + dir * PHONE_REACH + right * PHONE_SIDE - up * PHONE_DROP
-
-
-## La pose du telephone consulte : l'ecran FACE a l'oeil, cabre de quelques
-## degres (le haut recule — on lit un ecran, on ne le vise pas), le haut de
-## l'appareil en haut du monde.
-func _phone_transform(origin: Vector3) -> Transform3D:
-	var pos := _goal
-	var n := (origin - pos).normalized()          # normale d'ecran, vers l'oeil
+## Le repere du telephone consulte : l'ecran FACE a l'oeil (fige), cabre de
+## quelques degres — le haut recule, on lit un ecran, on ne le vise pas.
+##
+## LA CONVENTION DU BOITIER, celle du berceau (cabin.phone_dock_pose) : +Y sort
+## de la vitre, +Z va vers le BAS de l'appareil, +X a la droite du lecteur. Une
+## base GAUCHE (determinant -1) la trahissait ici : elle retournait l'image, on
+## la redressait au materiau de l'ecran, et cette retouche cassait tout le
+## reste — la vitre du berceau se lisait la tete en bas, et le doigt tapait le
+## miroir vertical de ce que le reticule visait. Une base propre, et il n'y a
+## plus rien a rattraper nulle part.
+func _phone_basis() -> Basis:
+	var n := -_phone_dir                           # normale d'ecran, vers l'oeil
 	var right := n.cross(Vector3.UP)
 	if right.length_squared() < 0.000001:
 		right = Vector3.RIGHT
-	right = -right.normalized()                    # +X ecran = droite du lecteur
-	var upv := right.cross(n).normalized()
+	right = -right.normalized()                    # +X boitier = droite du lecteur
+	var up := n.cross(right).normalized()
 	var tilt := deg_to_rad(PHONE_TILT)
-	var n2 := (n * cos(tilt) + upv * sin(tilt)).normalized()
-	upv = right.cross(n2).normalized()
-	# Repere du boitier : +Y la vitre, -Z le haut. La main tient le tiers bas.
-	return Transform3D(Basis(right, n2, -upv), pos + upv * 0.030)
+	var n2 := (n * cos(tilt) + up * sin(tilt)).normalized()
+	return Basis(right, n2, right.cross(n2).normalized())
+
+
+## Ou le BOITIER se pose quand on le consulte. Ce qu'on centre sur l'axe du
+## regard, c'est l'ECRAN — c'est lui qu'on touche, et il n'est pas au centre du
+## boitier : le boitier s'en deduit.
+func _phone_body() -> Vector3:
+	var b := _phone_basis()
+	var off := Vector3.ZERO
+	if held != null and held.has_method("screen_center_local"):
+		off = held.call("screen_center_local")
+	return _phone_eye + _phone_dir * PHONE_REACH - b * off
+
+
+## Ou la MAIN va le tenir : la prise du boitier (son tiers bas, derriere la
+## vitre), deduite de la pose de lecture.
+func _phone_point() -> Vector3:
+	return _phone_body() + _phone_basis() * _grip_offset()
+
+
+## La pose du telephone consulte. La main mene — elle est encore en chemin
+## pendant que l'appareil monte — et la prise du boitier tombe dans le poing,
+## exactement comme pour un objet simplement tenu.
+func _phone_transform() -> Transform3D:
+	var b := _phone_basis()
+	return Transform3D(b, _goal - b * _grip_offset())
 
 
 ## Point de l'objet tenu qui doit tomber dans le poing, dans SON repere. Son
@@ -504,8 +549,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			_state = State.DRINKING
 			_drink_t = 0.0
 			get_viewport().set_input_as_handled()
-		elif _state == State.HELD and held != null and held.has_method("screen_uv"):
-			# Le telephone se CONSULTE : il monte a distance de lecture.
+		elif _state == State.HELD and held != null and cam != null \
+				and held.has_method("screen_uv"):
+			# Le telephone se CONSULTE : il monte a distance de lecture, et il
+			# S'Y FIGE. L'oeil et le regard sont pris ICI, une fois pour toute
+			# la consultation : c'est ce qui laisse le reticule se promener sur
+			# l'ecran au lieu de l'emporter avec lui.
+			var eye_now := global_transform.affine_inverse() * cam.global_transform
+			_phone_eye = eye_now.origin
+			_phone_dir = -eye_now.basis.z
 			_state = State.PHONE
 			if held.has_method("set_viewing"):
 				held.call("set_viewing", true)
@@ -558,10 +610,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif event.pressed and _state == State.PHONE and held != null \
 				and held.has_method("scroll"):
-			# Telephone consulte, la molette DEFILE — on ne passe pas les
-			# rapports en lisant ses avis, et c'est dit par le hint.
-			held.call("scroll",
-				1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1)
+			# Telephone consulte, la molette TOURNE LES PAGES (phone_apps.gd)
+			# — on ne passe pas les rapports en lisant ses avis, et c'est dit
+			# par le hint. Vers le bas on va vers la droite de la barre
+			# d'onglets : le meme sens que le cran de la manivelle. Le cran
+			# est verrouille (PHONE_WHEEL_LOCK), mais l'evenement est mange
+			# dans tous les cas : on ne passe pas un rapport avec le rebond
+			# d'une molette qui tournait les pages.
+			if _phone_wheel <= 0.0:
+				_phone_wheel = PHONE_WHEEL_LOCK
+				held.call("scroll",
+					1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1)
 			get_viewport().set_input_as_handled()
 		return
 
@@ -950,9 +1009,9 @@ func _build_hud() -> void:
 	# Large : la ligne de l'objet en main enumere trois gestes (poser, lever,
 	# lancer) et se ferait couper a 520 px.
 	_hint.offset_left = -340.0
-	_hint.offset_top = 26.0
+	_hint.offset_top = HINT_DROP
 	_hint.offset_right = 340.0
-	_hint.offset_bottom = 52.0
+	_hint.offset_bottom = HINT_DROP + 26.0
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint.add_theme_font_size_override("font_size", 15)
 	_hint.add_theme_color_override("font_color", Color(0.92, 0.88, 0.82, 0.75))
@@ -961,6 +1020,14 @@ func _build_hud() -> void:
 
 
 func _update_hud() -> void:
+	# La ligne d'aide se tient sous le reticule — sauf telephone consulte :
+	# l'appareil occupe le milieu de l'image depuis qu'on peut le viser, et la
+	# ligne se lisait par-dessus l'ecran qu'elle explique. Elle passe dessous.
+	var drop := HINT_DROP_PHONE if _state == State.PHONE else HINT_DROP
+	if not is_equal_approx(_hint.offset_top, drop):
+		_hint.offset_top = drop
+		_hint.offset_bottom = drop + 26.0
+
 	match _state:
 		State.IDLE:
 			_dot.visible = target != null
@@ -992,7 +1059,7 @@ func _update_hud() -> void:
 		State.PHONE:
 			# Le point du HUD est le doigt : il reste allume sur l'ecran.
 			_dot.visible = true
-			_hint.text = "Clic : toucher    molette : defiler"
+			_hint.text = "Clic : toucher    molette : changer de page"
 		State.TAPPING:
 			_dot.visible = true
 			_hint.text = ""

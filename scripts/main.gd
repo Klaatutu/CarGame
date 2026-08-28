@@ -5044,6 +5044,16 @@ func _phone_test() -> void:
 	# A cote de l'ecran : null, pas un uv fantaisiste.
 	var off = phone.screen_uv(eye, (p_w - eye).normalized().rotated(Vector3.UP, 0.5))
 	print("  A COTE : RIEN      : %s" % [off == null])
+	# L'IMAGE EST-ELLE A L'ENDROIT ? Un aller-retour reste juste meme si
+	# l'ecran est retourne — il ment des deux cotes a la fois. Ce qui le prend
+	# en defaut, c'est le MONDE : le bas de l'image (la barre d'onglets) doit
+	# tomber physiquement sous le haut (la barre d'etat), l'appareil etant
+	# debout dans son berceau. Un miroir d'uv au materiau les echangeait, et le
+	# doigt tapait alors l'exact oppose de ce que le reticule visait.
+	var p_low: Vector3 = phone.screen_point(Vector2(0.5, 0.95))    # les onglets
+	var p_high: Vector3 = phone.screen_point(Vector2(0.5, 0.05))   # l'heure
+	print("  L'IMAGE EST DEBOUT : %s   (les onglets %.1f cm sous la barre d'etat)" % [
+		p_low.y < p_high.y - 0.05, (p_high.y - p_low.y) * 100.0])
 
 	# --- le tap au berceau (etat TAPPING, vrais clics) ---------------------
 	var found := await _look_at_screen(phone, Vector2(0.377, 0.93))   # onglet COURSES
@@ -5080,6 +5090,17 @@ func _phone_test() -> void:
 	var drained: float = phone.battery
 	print("  CONSULTER TIRE     : %s   (50%% -> %.2f%%, attendu ~47,5)" % [
 		absf(drained - 47.5) < 0.8, drained])
+	# EN MAIN, BAISSE (etat HELD) : depuis qu'il commande le poing, il est porte
+	# par _carried_transform, sur une reference exterieure. Il doit s'y tenir
+	# DEBOUT, ecran vers le conducteur — le defaut de cette voie le coucherait a
+	# plat, ecran au plafond, et on ne verrait plus que sa tranche.
+	var top_w: Vector3 = -phone.global_transform.basis.z
+	var face_w: Vector3 = phone.global_transform.basis.y
+	var to_eye: Vector3 = (car.cam.global_position - phone.global_position).normalized()
+	var sky: float = top_w.dot(car.global_transform.basis.y)
+	var seen: float = face_w.dot(to_eye)
+	print("  IL SE PORTE DEBOUT : %s   (haut vers le ciel %.2f, vitre vers l'oeil %.2f)" % [
+		sky > 0.9 and seen > 0.5, sky, seen])
 	# A zero : ecran mort, plus rien a toucher.
 	phone.battery = 0.05
 	await get_tree().create_timer(6.0).timeout
@@ -5105,6 +5126,63 @@ func _phone_test() -> void:
 	print("  IL MONTE A LA LECTURE : %s   (a %.2f m de l'oeil, ecran vers l'oeil %.2f)" % [
 		consulted and d_read < 0.5 and facing > 0.90, d_read, facing])
 	await _shot("79_telephone_main.png")
+
+	# LA MAIN NE DOIT RIEN CACHER. Le poing s'orientait d'apres le coude et
+	# tenait le boitier par le milieu : les doigts passaient en travers de la
+	# vitre, et on ne visait plus un onglet sans viser des phalanges. La prise
+	# se mesure dans le repere du boitier — DERRIERE la vitre (y negatif) et
+	# SOUS le bord bas de l'ecran (z au-dela de 6,1 cm).
+	var hand_l: Vector3 = phone.to_local(inter.to_global(car.driver.item_point))
+	print("  LA MAIN NE CACHE RIEN : %s   (prise a %.0f mm derriere la vitre, %.0f mm sous le bord bas)" % [
+		hand_l.y <= 0.0 and hand_l.z >= 0.061,
+		-hand_l.y * 1000.0, (hand_l.z - 0.061) * 1000.0])
+
+	# LE RETICULE TOMBE-T-IL DANS L'ECRAN ? C'est toute la question : le doigt,
+	# c'est le point du HUD, et l'appareil se posait a cote de l'axe du regard
+	# — screen_uv() rendait null a chaque image, aucune icone n'etait visable.
+	var aim := func():
+		return phone.screen_uv(car.cam.global_position,
+			-car.cam.global_transform.basis.z)
+	var uv_mid = aim.call()
+	var on_screen: bool = uv_mid != null \
+		and (uv_mid as Vector2).distance_to(Vector2(0.5, 0.5)) < 0.12
+	print("  LE DOIGT EST SUR L'ECRAN : %s   (uv %s)" % [
+		on_screen, "null" if uv_mid == null else "%.2f, %.2f" % [uv_mid.x, uv_mid.y]])
+
+	# ET S'Y PROMENE-T-IL ? Une arme levee SUIT le regard ; un telephone qui en
+	# ferait autant garderait le meme point sous le doigt pour toujours. On
+	# tourne la tete d'un vingtieme de radian : le point vise doit glisser.
+	var yaw0: float = car.head.rotation.y
+	await _look_toward_yaw(yaw0 - 0.05)
+	var uv_off = aim.call()
+	var swept: bool = uv_mid != null and uv_off != null \
+		and (uv_off as Vector2).distance_to(uv_mid) > 0.10
+	print("  LE REGARD LE PROMENE     : %s   (%.2f d'ecart d'uv pour 0,05 rad)" % [
+		swept, 0.0 if (uv_mid == null or uv_off == null) else (uv_off as Vector2).distance_to(uv_mid)])
+	await _look_toward_yaw(yaw0)
+
+	# --- la molette tourne les pages ---------------------------------------
+	# Un cran vers le bas = l'onglet suivant, et UN SEUL : sous Windows la
+	# molette rebondit, et sans verrou une page se sautait par deux.
+	phone._apps.set_page("accueil")
+	var w := InputEventMouseButton.new()
+	w.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	w.pressed = true
+	Input.parse_input_event(w)
+	Input.parse_input_event(w.duplicate())         # le rebond de Windows, simule
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var one_notch: String = phone._apps.page
+	await get_tree().create_timer(0.4).timeout     # le verrou retombe
+	var w2 := InputEventMouseButton.new()
+	w2.button_index = MOUSE_BUTTON_WHEEL_UP
+	w2.pressed = true
+	Input.parse_input_event(w2)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	print("  LA MOLETTE TOURNE LES PAGES : %s   (accueil -> %s au cran bas, puis %s au cran haut)" % [
+		one_notch == "courses" and phone._apps.page == "accueil",
+		one_notch, phone._apps.page])
 	var ev_r2 := InputEventMouseButton.new()
 	ev_r2.button_index = MOUSE_BUTTON_RIGHT
 	ev_r2.pressed = false

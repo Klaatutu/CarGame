@@ -28,6 +28,8 @@ Ouvrir le projet dans Godot 4.8 et appuyer sur F5.
 | **Clic gauche maintenu** sur le rétroviseur ou un pare-soleil | **le placer** (regard bloqué) |
 | **Clic gauche maintenu** sur une manivelle de vitre | **tenir la poignée** (caméra libre) |
 | **Molette ↓ / ↑**, poignée en main | **descendre** / **remonter** la vitre (la boîte ne bouge pas) |
+| **Clic gauche**, téléphone consulté | **toucher l'écran** là où tombe le réticule |
+| **Molette ↓ / ↑**, téléphone consulté | **changer de page** (accueil, courses, GPS, avis) |
 | **Clic gauche** sur le plafonnier | **l'allumer / l'éteindre** — et le pare-brise se remplit de son reflet |
 | F12 | capture d'écran |
 | Échap | libérer la souris |
@@ -687,6 +689,15 @@ traverse.
 La surbrillance passe par l'uniforme `emission` de `retro.gdshader`, noir par
 défaut donc sans effet sur le reste. Elle pulse lentement : dans le noir, un
 éclat fixe ne se distingue pas d'un reflet.
+
+Elle **s'éteint pour de bon**, et ça n'allait pas de soi. La descente sortait
+sans rien écrire dès qu'elle passait sous le seuil, laissant au matériau
+l'énergie de l'image d'avant. D'ordinaire elle y est déjà quasi nulle et
+personne ne le voit ; mais si la descente se fait en **un seul pas**
+(`delta × 9` dépasse 1 : un banc à `time_scale` 6, une image qui traîne),
+l'objet reste allumé à fond pour toujours — le téléphone consulté brillait
+comme une lampe sur les captures. Une image de plus, une seule, et le halo
+tombe.
 
 Banc d'essai : `godot --path . -- packtest` vise, prend, déplace et repose le
 paquet en injectant de vrais clics, et vérifie qu'il redevient attrapable.
@@ -1864,6 +1875,44 @@ du plafonnier, paramétré par le point d'écran), le regard sur le bord
 **prend**. La dépose près du support est **aimantée** : à moins de dix
 centimètres, le téléphone finit *dans* le berceau, pas à côté.
 
+**L'écran vient sous le réticule, et il y reste.** Deux choses le rendaient
+inatteignable au doigt. L'appareil se posait 3 cm à droite et 8,5 cm sous la
+ligne des yeux : le réticule passait à un millimètre du bord gauche de la
+vitre, et `screen_uv()` rendait `null` à chaque image — on visait un écran
+qu'on ne pouvait pas toucher. Et il **suivait le regard**, comme une arme
+levée : sauf qu'une arme, c'est elle qu'on pointe, tandis qu'un téléphone qui
+suit le regard emporte l'écran avec le réticule, et le même point resterait
+sous le doigt pour toujours. Il se **fige** donc à la levée (l'œil et la
+direction sont pris une fois pour toutes), tenu dans l'espace de la voiture
+comme une main qui ne suit pas les yeux ; et c'est l'**écran**, pas le poing,
+qui vient sur l'axe du regard. Le regard le promène alors sur la vitre :
+**±5°** en largeur, **±9°** en hauteur, de quoi atteindre un onglet de 13 mm.
+**Et la main ne cache plus rien.** Elle tenait le boîtier par le milieu, dans
+le plan de l'écran, et le poing s'orientait d'après le **coude**
+(`_aligned_grip`) : un doigt remontait en travers de la tranche, la paume
+mangeait le coin de l'affichage, et on ne visait plus l'onglet AVIS sans viser
+des phalanges. Le téléphone **commande son poing** maintenant, comme le
+revolver (`hand_local`) : la barre que les doigts enserrent est la *largeur* de
+l'appareil, la paume regarde son *dos*, et la prise est 16 mm derrière la vitre
+et 7 mm sous le bord bas de l'écran. La main le tient par en dessous, comme on
+tient vraiment un téléphone, et ne couvre que la tranche.
+
+Commander le poing fait passer le port par `_carried_transform` — la voie des
+objets qui posent la main plutôt que l'inverse, sur une référence *extérieure*
+pour que la boucle ne se referme pas. Son défaut couche l'objet à plat : sans
+`aim_axis()`, le téléphone se serait porté écran au plafond. Il monte donc le
+**haut de l'appareil** à la verticale, et se porte debout, écran vers le
+conducteur.
+
+**La molette tourne les pages.** Accueil, courses, GPS, avis : un cran par
+onglet, borné aux deux bouts — quatre pages se comptent au poignet, et une
+boucle fait toujours dépasser celle qu'on cherchait. Viser un onglet demande
+de poser les yeux sur l'appareil ; la molette, elle, ne vise rien : le
+téléphone sonne, on roule un cran, la page COURSES est là. Un verrou de
+0,25 s entre deux pages, pour la même raison que la boîte a son
+`shift_cooldown` — sous Windows un seul cran produit plusieurs événements, et
+sans lui une page se saute par deux.
+
 **La batterie est une jauge qu'on branche.** Écran allumé −2,5 %/min,
 veille −0,5, au berceau **+12 %/min moteur tournant** — l'allume-cigare (qui
 existe, avec son câble) ne donne rien moteur calé, une raison de plus de ne
@@ -1872,11 +1921,24 @@ un game over, c'est une nuit sans revenu. L'économie de rendu suit les
 rétroviseurs : plein régime consulté, une image toutes les 0,5 s au berceau
 (l'horloge qui luit dans l'habitacle), rien du tout éteint.
 
-Deux pièges relevés aux captures, pas aux chiffres : un `Y 180` de trop sur
-le nœud d'écran rendait le texte **en miroir**, et la texture du viewport
-arrive **la tête en bas** sur le quad — redressée au matériau (`uv1_scale`),
-la voie des rétroviseurs, stable sur les deux rendus. Et le piège documenté
-tient toujours : le téléphone n'expose jamais `use()`.
+Le piège des captures, et il était plus profond qu'il n'en avait l'air : la
+texture du viewport n'arrive **pas** la tête en bas sur le quad. Elle en avait
+l'air, et on l'avait redressée au matériau (`uv1_scale`) comme on inverse un
+rétroviseur. Mais un miroir d'uv ne se rattrape pas : il ne compensait qu'une
+base **gauche** (déterminant −1) dans la pose de lecture, et partout ailleurs
+il retournait l'écran pour de bon. Au berceau la vitre se lisait **la tête en
+bas**, et le doigt tapait le **miroir vertical** de ce que le réticule visait
+— viser les onglets tapait la barre d'état. La base est redressée là où elle
+était fausse (convention du boîtier, celle du berceau : +Y sort de la vitre,
++Z va vers le bas de l'appareil), et l'écran se lit sans retouche, en main
+comme au support.
+
+Le banc ne pouvait pas le voir : un aller-retour uv → monde → uv reste juste
+quand l'écran ment **des deux côtés à la fois**. Ce qui le prend en défaut,
+c'est le monde — les onglets doivent tomber physiquement **sous** la barre
+d'état, l'appareil étant debout dans son berceau. Un `Y 180` de trop sur le
+nœud d'écran rendait par ailleurs le texte en miroir, et ce piège-là tient
+toujours, comme celui-ci : le téléphone n'expose jamais `use()`.
 
 ### Banc d'essai
 
@@ -1888,10 +1950,16 @@ godot --path . -- phonetest
 |---|---|
 | l'écran rend vraiment (sonde des miroirs) | **200/200** pixels au-dessus du noir |
 | rayon → uv, contre un calcul indépendant | aller-retour **0,0000** (seuil 0,005) ; à côté : null |
+| l'image est debout — le monde, pas l'aller-retour | les onglets **9,0 cm** sous la barre d'état |
 | le doigt tape au berceau (vrais mouvements de souris) | réticule amené sur l'onglet, page → **courses** |
-| le berceau charge, consulter tire | 50 % → **62,0 %** en 60 s ; 50 % → **47,47 %** consulté |
+| le berceau charge, consulter tire | 50 % → **62,0 %** en 60 s ; 50 % → **47,5 %** consulté |
 | à plat, écran mort | vitre éteinte, uv null, plus d'offres |
-| il monte à la lecture (état PHONE) | à **0,35 m** de l'œil, écran vers l'œil 0,96 |
+| il se porte debout en main (état HELD) | haut vers le ciel **1,00**, vitre vers l'œil 0,89 |
+| il monte à la lecture (état PHONE) | à **0,35 m** de l'œil, écran vers l'œil 0,98 |
+| la main ne cache rien | prise **16 mm** derrière la vitre, **7 mm** sous le bord bas |
+| le réticule tombe DANS l'écran | uv **0,49 ; 0,50** — le centre de la vitre |
+| et le regard l'y promène | **0,15** d'écart d'uv pour 0,05 rad de tête |
+| la molette tourne les pages | accueil → **courses** au cran bas, un seul malgré le rebond |
 
 Il écrit `79_telephone_main.png` (consulté en main, onglets lisibles) et
 `80_telephone_dock.png` (au berceau, écran allumé dans l'habitacle).

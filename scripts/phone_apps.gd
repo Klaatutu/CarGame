@@ -18,6 +18,10 @@ extends Control
 
 const MapScript := preload("res://scripts/map.gd")
 
+## Les quatre pages, dans l'ordre de la barre d'onglets. La molette les
+## parcourt (scroll), les onglets s'en construisent.
+const PAGES := ["accueil", "courses", "gps", "avis"]
+
 const BG := Color(0.055, 0.065, 0.085)
 const PANEL := Color(0.085, 0.10, 0.13)
 const INK := Color(0.75, 0.80, 0.88)
@@ -249,7 +253,7 @@ func _build_tabs() -> void:
 	bar.offset_right = -4.0
 	bar.add_theme_constant_override("separation", 4)
 	add_child(bar)
-	for name in ["accueil", "courses", "gps", "avis"]:
+	for name in PAGES:
 		var b := Button.new()
 		b.text = name.to_upper()
 		b.custom_minimum_size = Vector2(48, 46)
@@ -420,10 +424,24 @@ static func _stars_text(stars: float) -> String:
 	return ("%.1f/5" % stars).replace(".", ",")
 
 
-## La molette pendant la consultation. Les pages de cette passe tiennent a
-## l'ecran ; le defilement servira aux listes (avis, offres).
-func scroll(_dir: int) -> void:
-	pass
+## LA MOLETTE TOURNE LES PAGES, et c'est le geste qui compte en roulant.
+##
+## Le reticule sait viser les onglets depuis qu'il tombe dans l'ecran, mais
+## viser demande de poser les yeux sur l'appareil. La molette, elle, ne vise
+## rien : le telephone sonne, on roule un cran, la page COURSES est la. C'est
+## le meme cran que la manivelle de vitre et le levier — on ne s'en sert
+## jamais des deux facons a la fois, l'etat PHONE se l'approprie.
+##
+## Bornee, pas circulaire : quatre pages se comptent au poignet, et une boucle
+## fait toujours depasser celle qu'on cherchait. Rend vrai si la page a
+## change — le telephone en tire son petit clic.
+func scroll(dir: int) -> bool:
+	var i := PAGES.find(page)
+	var j := clampi((0 if i < 0 else i) + dir, 0, PAGES.size() - 1)
+	if i == j:
+		return false
+	set_page(PAGES[j])
+	return true
 
 
 ## Le porteur du porteur : la voiture, puis main. Jamais de singleton — la
