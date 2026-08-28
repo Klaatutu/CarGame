@@ -1749,6 +1749,73 @@ godot --path . -- sleeptest
 Il écrit `73_paupieres.png` (mi-fermeture), `74_cauchemar.png` (le rouge
 depuis le siège) et `75_portail.png` (le voile froid dans les phares).
 
+## Boire, et la radio
+
+Les deux premières contre-mesures **actives** du sommeil, chacune avec sa
+contrepartie à venir chez les clients.
+
+**Boire.** Les canettes traînaient dans l'habitacle depuis le premier jour —
+NoSleep, Cariboon, Kombo, intactes ou écrasées — sans autre rôle que de
+glisser dans les virages. Les intactes se **boivent** : canette en main, clic
+droit maintenu (le même « porter à usage » qui lève le revolver — une arme se
+lève, une canette se boit, un objet n'est jamais les deux), la main la porte
+à la bouche, le poignet bascule (relevé : 115 mm de l'œil au plus près), le
+glouglou dure 1,5 s — relâcher avant la fin ne compte pas — puis la canette
+**s'écrase dans la main** : crunch, échange du maillage vers la variante
+écrasée préchargée depuis toujours ([can.gd](scripts/can.gd)), cotes relues
+par la simulation. Les écrasées qui jonchaient le plancher racontent
+rétroactivement le quotidien du chauffeur. L'effet part à la jauge par la
+voiture (`car.on_drink` → `sleep.drink_boost`) : +0,28 / +0,22 / +0,18 selon
+la marque, ×0,6 dans les 90 s — la dette de caféine, mesurée au banc au
+millième (+0,108 pour une Kombo enchaînée). Piège respecté : une canette
+n'expose jamais `use()` — testé avant la prise, il la rendrait imprenable.
+
+**La radio.** ([radio.gd](scripts/radio.gd)) Une façade au pied de la pile
+centrale — position **relevée** sur la bouche de dégivrage centrale, la seule
+cote sûre du milieu de planche — un afficheur qui luit en marche, et un
+bouton de volume qui se tient **comme la clé de contact** : clic gauche
+maintenu, molette cran par cran (0-6), caméra libre, les yeux sur la route.
+Le bus `Radio` est le sien, créé avant le lecteur (une lecture choisit son
+bus à la construction) et routé vers Master **sans** le passe-bas Cabine :
+les haut-parleurs sont dans l'habitacle avec l'oreille, la musique ne
+s'étouffe pas derrière sa propre vitre. Dès le cran 4 elle est **forte** : la
+veille en profite (×0,55) — et les clients s'en plaindront. Dans le
+cauchemar, la porteuse **dérive** (pitch 0,94) : la station est toujours là,
+mais elle n'est plus tout à fait à sa place.
+
+La musique vient de [tools/make_radio_music.py](tools/make_radio_music.py) :
+une boucle de **40 s exactes** — 16 mesures à 96 BPM, 64 temps, nombre
+entier de tout, la couture n'existe pas — nappe de sinus désaccordés (Am F C
+G, Am F Dm E : la boucle harmonique la plus usée de la FM, et c'est exprès),
+basse pincée à la noire, boîte à rythmes modeste, le tout coupé à 3,8 kHz et
+passé par le « haut-parleur de planche de bord » (pointe à 2 kHz, souffle à
+−44 dB, tremblement de porteuse à 0,225 Hz — 9 cycles sur 40 s, ça boucle).
+Les gestes du quotidien ont leur banque à eux
+([tools/make_taxi_sounds.py](tools/make_taxi_sounds.py)) : glouglou, crunch,
+sonnerie, tap, TPE, billets, portière — le versant doux de la banque de
+sons, prêt pour le téléphone et les courses.
+
+### Bancs d'essai
+
+```bash
+godot --path . -- drinktest
+godot --path . -- radiotest
+```
+
+| | relevé |
+|---|---|
+| le clic droit boit (vrais clics injectés) | état DRINKING, canette à **115 mm** de l'œil, bascule 126° |
+| elle réveille, puis s'écrase | 0,50 → **0,78** ; maillage écrasé, demi-hauteur 0,035 m |
+| lâchée en cours, rien de bu | pleine, jauge inchangée |
+| la dette écrase la deuxième | Kombo enchaînée : **+0,108** = 0,18 × 0,6 |
+| le bus Radio est le sien | routé vers Master, hors passe-bas Cabine |
+| les crans portent | 6/6 aux dB de la table (−30 → −6), lecture en boucle |
+| la veille l'entend | facteur **0,55** dès le cran 4, 1,0 au cran 3 |
+| le cauchemar dérive | pitch **0,94** endormi, 1,00 réveillé |
+
+Ils écrivent `76_canette.png` (au goulot, basculée) et `78_radio.png`
+(l'afficheur allumé au pied de la pile centrale).
+
 ## La voiture de police
 
 Sur l'accotement de droite, une berline de police de 1990 (gabarit Peugeot 405,

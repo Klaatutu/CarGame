@@ -170,6 +170,10 @@ func _ready() -> void:
 		_day_test()
 	elif "sleeptest" in OS.get_cmdline_user_args():
 		_sleep_test()
+	elif "drinktest" in OS.get_cmdline_user_args():
+		_drink_test()
+	elif "radiotest" in OS.get_cmdline_user_args():
+		_radio_test()
 
 
 func _process(delta: float) -> void:
@@ -4032,6 +4036,9 @@ func _enter_nightmare() -> void:
 	road.set_portal(road.head_index()
 		+ int((PORTAL_BASE_M + PORTAL_MORE_M * float(sleep.times_slept - 1)) / RoadScript.STEP))
 	_set_centipede_hunting(true)
+	# La station derive : la porteuse n'est plus tout a fait a sa place.
+	if car.radio != null:
+		car.radio.set_detuned(true)
 
 	# Les yeux se rouvrent sur le rouge.
 	sleep.open_lids(0.9)
@@ -4061,6 +4068,8 @@ func _exit_nightmare() -> void:
 	var mlight := _moon.get_node("Light") as DirectionalLight3D
 	mlight.light_color = MOON_LIGHT_NIGHT
 	_dither_material().set_shader_parameter("tint", Color(1.0, 1.0, 1.0))
+	if car.radio != null:
+		car.radio.set_detuned(false)
 	daycycle.override = false
 
 	# Le sursaut : la caisse encaisse, les canettes tremblent, la jauge
@@ -4671,4 +4680,176 @@ func _sleep_test() -> void:
 		absf(sleep.vigilance - 0.55) < 0.10, sleep.vigilance])
 
 	Engine.time_scale = 1.0
+	get_tree().quit()
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai : boire
+# --------------------------------------------------------------------------
+
+## La PRISE d'une canette est l'affaire de packtest (vrais clics, vraie
+## visee) ; ce banc-ci teste le GESTE de boire : le clic droit maintenu, la
+## canette qui vient a la bouche et bascule, l'effet sur la jauge, la
+## canette qui s'ecrase, et la dette de cafeine. L'entree en main passe par
+## le chemin court du banc (_pick_up), le geste par de VRAIS clics injectes.
+func _drink_test() -> void:
+	var IS := preload("res://scripts/interaction.gd")
+	await get_tree().create_timer(0.8).timeout
+	_start_normal_world()
+	# La jauge FUIT pendant qu'on la remplit — c'est le jeu, mais pas la
+	# mesure : la fuite est l'affaire de sleeptest, on la gele ici pour lire
+	# les gains au centieme.
+	sleep.full_span = 1.0e9
+	var inter = car.interaction
+
+	print("--- boire --------------------------------------------------------")
+	var can = inter.grabbables[1]
+	print("  L'INVARIANT TIENT  : %s   ([0] %s, [1] %s, pleine %s)" % [
+		inter.grabbables[0].name == "CigPack" and can.get("drink") != null
+		and can.get("full") == true,
+		inter.grabbables[0].name, can.name, can.get("full")])
+
+	# En main par le chemin court, puis le geste par un vrai clic droit.
+	inter.target = can
+	inter._pick_up()
+	inter._state = IS.State.HELD
+	await get_tree().create_timer(0.6).timeout
+	sleep.vigilance = 0.5
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_RIGHT
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	var entered: bool = await _until(func(): return inter._state == IS.State.DRINKING, 2.0)
+	print("  LE CLIC DROIT BOIT : %s   (etat %d)" % [entered, inter._state])
+
+	# A mi-geste : la canette est a la bouche, basculee — et on la photographie.
+	var shot_done := false
+	var near_d := 1.0e9
+	var tilt_max := 0.0
+	while inter._state == IS.State.DRINKING:
+		await get_tree().process_frame
+		var eye: Vector3 = car.cam.global_position
+		near_d = minf(near_d, eye.distance_to(can.global_position))
+		var up_axis: Vector3 = can.global_transform.basis.y.normalized()
+		tilt_max = maxf(tilt_max, rad_to_deg(acos(clampf(up_axis.dot(Vector3.UP), -1.0, 1.0))))
+		if not shot_done and inter._drink_t > 0.85:
+			shot_done = true
+			await _shot("76_canette.png")
+	print("  ELLE VIENT A LA BOUCHE : %s   (au plus pres de l'oeil : %.0f mm, bascule maxi %.0f deg)" % [
+		near_d < 0.24 and tilt_max > 40.0, near_d * 1000.0, tilt_max])
+	var ev2 := InputEventMouseButton.new()
+	ev2.button_index = MOUSE_BUTTON_RIGHT
+	ev2.pressed = false
+	Input.parse_input_event(ev2)
+	await get_tree().process_frame
+	print("  ELLE REVEILLE      : %s   (vigilance 0,50 -> %.2f, attendu 0,78)" % [
+		absf(sleep.vigilance - 0.78) < 0.01, sleep.vigilance])
+	print("  ELLE S'ECRASE      : %s   (pleine %s, ecrasee %s, demi-hauteur %.3f m)" % [
+		can.get("full") == false and can.get("crushed") == true,
+		can.get("full"), can.get("crushed"), can.get("half").y])
+
+	# L'interruption : une gorgee commencee puis lachee ne compte pas.
+	inter.let_go()
+	var can2: Node3D = null
+	for g in inter.grabbables:
+		if g.get("full") == true:
+			can2 = g
+			break
+	inter.target = can2
+	inter._pick_up()
+	inter._state = IS.State.HELD
+	await get_tree().create_timer(0.3).timeout
+	var v0: float = sleep.vigilance
+	Input.parse_input_event(ev)
+	await get_tree().create_timer(0.5).timeout
+	Input.parse_input_event(ev2)
+	await get_tree().process_frame
+	print("  LACHEE, RIEN DE BU : %s   (pleine %s, vigilance %.2f inchangee)" % [
+		can2.get("full") == true and absf(sleep.vigilance - v0) < 0.02,
+		can2.get("full"), sleep.vigilance])
+
+	# La dette : la vider maintenant, dans la fenetre des 90 s. La deuxieme
+	# pleine du tri n'est pas forcement une NoSleep — on lit sa marque.
+	var base := 0.18
+	match can2.get("drink"):
+		"nosleep":
+			base = 0.28
+		"cariboon":
+			base = 0.22
+	Input.parse_input_event(ev)
+	await _until(func(): return inter._state == IS.State.DRINKING, 2.0)
+	await _until(func(): return inter._state != IS.State.DRINKING, 4.0)
+	Input.parse_input_event(ev2)
+	await get_tree().process_frame
+	var gained: float = sleep.vigilance - v0
+	print("  LA DETTE ECRASE LA DEUXIEME : %s   (%s : +%.3f, attendu +%.3f = %.2f x 0,6)" % [
+		absf(gained - base * 0.6) < 0.012, can2.get("drink"), gained,
+		base * 0.6, base])
+
+	get_tree().quit()
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai : la radio
+# --------------------------------------------------------------------------
+
+## Le bouton se tient comme la cle (meme contrat d'interface — la prise en
+## GRIPPING est deja prouvee par les bancs de vitres et de cle) : ce banc
+## verifie la chaine du son — le bus, les crans, ce que la veille en recoit,
+## et la derive du cauchemar.
+func _radio_test() -> void:
+	await get_tree().create_timer(0.8).timeout
+	_start_normal_world()
+	var radio = car.radio
+
+	print("--- la radio -----------------------------------------------------")
+	var bi := AudioServer.get_bus_index("Radio")
+	print("  LE BUS EST LE SIEN : %s   (bus %d, envoye vers %s — pas de passe-bas Cabine)" % [
+		bi >= 0 and AudioServer.get_bus_send(bi) == &"Master", bi,
+		AudioServer.get_bus_send(bi) if bi >= 0 else "-"])
+	print("  LE BOUTON SE TIENT : %s   (dans adjustables, rayon %.2f, a %s)" % [
+		car.interaction.adjustables.has(radio), radio.grab_radius(),
+		radio.global_position])
+
+	# Les crans, un a un — molette haut = crank(-1), comme la cle.
+	var db_ok := true
+	for k in 6:
+		radio.crank(-1.0)
+		db_ok = db_ok and absf(radio._player.volume_db
+			- radio.CRAN_DB[radio.volume]) < 0.01
+		print("    cran %d : %5.1f dB   joue %s   bouton %.0f deg" % [
+			radio.volume, radio._player.volume_db, radio._player.playing,
+			radio._knob.rotation_degrees.z])
+	print("  LES CRANS PORTENT  : %s   (6/6 aux dB de la table, lecture en cours %s)" % [
+		db_ok and radio.volume == 6 and radio._player.playing, radio._player.playing])
+
+	# Ce que la veille en recoit : fort des le cran 4.
+	print("  LA VEILLE L'ENTEND : %s   (facteur radio %.2f a fond, attendu 0,55)" % [
+		absf(sleep.radio_factor - 0.55) < 0.001, sleep.radio_factor])
+	for k in 3:
+		radio.crank(1.0)
+	print("  MOINS FORT, PLUS RIEN : %s   (cran %d, facteur %.2f)" % [
+		radio.volume == 3 and absf(sleep.radio_factor - 1.0) < 0.001,
+		radio.volume, sleep.radio_factor])
+
+	# Le cauchemar detune la porteuse, le reveil la remet.
+	sleep.times_slept = 0
+	_enter_nightmare()
+	var det: float = radio._player.pitch_scale
+	_exit_nightmare()
+	print("  LE CAUCHEMAR DERIVE : %s   (pitch %.2f endormi, %.2f reveille)" % [
+		absf(det - 0.94) < 0.001 and absf(radio._player.pitch_scale - 1.0) < 0.001,
+		det, radio._player.pitch_scale])
+
+	# L'image : le regard descend vers la planche, le bouton en surbrillance.
+	radio.set_highlight(true)
+	for i in 42:
+		var mv := InputEventMouseMotion.new()
+		mv.relative = Vector2(-6.0, 26.0)
+		Input.parse_input_event(mv)
+		await get_tree().process_frame
+	await get_tree().create_timer(0.4).timeout
+	await _shot("78_radio.png")
+	radio.set_highlight(false)
+
 	get_tree().quit()

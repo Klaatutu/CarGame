@@ -21,6 +21,7 @@ const CanScript := preload("res://scripts/can.gd")
 const RevolverScript := preload("res://scripts/revolver.gd")
 const EngineAudioScript := preload("res://scripts/engine_audio.gd")
 const CabinAudioScript := preload("res://scripts/cabin_audio.gd")
+const RadioScript := preload("res://scripts/radio.gd")
 
 # Position du conducteur (volant a gauche). L'oeil est a 1,15 m du sol.
 const SEAT_X := -0.33
@@ -409,6 +410,8 @@ var cam: Camera3D
 var cabin
 var driver
 var interaction
+## L'autoradio (radio.gd), monte au centre de la planche.
+var radio
 var engine_audio
 var cabin_audio
 ## Le passe-bas de la vitre, porte par le bus CABIN_BUS. Sa coupure suit
@@ -496,6 +499,23 @@ func _ready() -> void:
 	if cabin.ignition != null:
 		cabin.ignition.car = self
 		interaction.adjustables.append(cabin.ignition)
+	# L'autoradio, au centre de la planche : RELEVE sur la bouche de degivrage
+	# centrale — la seule cote sure du milieu de planche — puis descendu sous
+	# la casquette, face a l'habitacle. Son bouton rejoint la liste de la cle.
+	radio = RadioScript.new()
+	radio.name = "Radio"
+	radio.car = self
+	var radio_anchor := Vector3(0.0, 0.86, -0.62)
+	for v in cabin.vents:
+		if v["label"] == "degivrage central":
+			radio_anchor = v["pos"]
+	radio.position = Vector3(radio_anchor.x, radio_anchor.y - 0.115,
+		radio_anchor.z + 0.115)
+	# La facade regarde legerement vers le haut : vue du siege, on la voit de
+	# face et pas par la tranche.
+	radio.rotation_degrees.x = -14.0
+	cabin.add_child(radio)
+	interaction.adjustables.append(radio)
 	_spawn_props()
 
 	_build_lights()
@@ -1125,6 +1145,23 @@ func _make_muffled_bus(bus_name: String, cutoff: float, volume: float) -> AudioE
 ## nuit tient eveille — et le confort des clients la lira aussi.
 func window_openness() -> float:
 	return _window_openness()
+
+
+## Une canette bue (interaction.gd, geste DRINKING). La jauge de veille vit
+## chez main : la voiture fait le facteur, comme pour la radio.
+func on_drink(kind: String) -> void:
+	var m := get_parent()
+	if m != null and "sleep" in m and m.sleep != null:
+		m.sleep.drink_boost(kind)
+	_show_flash("Ca reveille")
+
+
+## La radio a change de cran. Forte, elle tient eveille (x0,55 dans sleep.gd)
+## — et elle agacera les clients, mais ca, c'est pour plus tard.
+func on_radio(volume: int) -> void:
+	var m := get_parent()
+	if m != null and "sleep" in m and m.sleep != null:
+		m.sleep.radio_factor = 0.55 if volume >= RadioScript.LOUD_AT else 1.0
 
 
 func _window_openness() -> float:

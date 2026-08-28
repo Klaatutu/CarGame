@@ -36,7 +36,8 @@ extends Node3D
 ## qui tranche — voir _unhandled_input.
 ##
 
-enum State { IDLE, REACHING, HELD, AIMING, PLACING, ADJUSTING, GRIPPING, RAISED }
+enum State { IDLE, REACHING, HELD, AIMING, PLACING, ADJUSTING, GRIPPING, RAISED,
+	DRINKING }
 
 ## Ou l'objet est tenu, FIXE dans l'espace de la voiture : devant la poitrine,
 ## un peu a droite, sous la ligne des yeux.
@@ -60,6 +61,14 @@ const HOLD_POINT := Vector3(-0.21, 0.93, 0.0)
 const AIM_REACH := 0.50
 const AIM_SIDE := 0.070
 const AIM_DROP := 0.100
+
+## Boire : ou la canette vient (sous l'oeil, un peu en avant — on boit, on ne
+## vise pas), combien de temps dure le geste (la longueur du glouglou), et de
+## combien le poignet bascule au sommet.
+const DRINK_FWD := 0.10
+const DRINK_DROP := 0.085
+const DRINK_TIME := 1.5
+const DRINK_TILT := 45.0
 ## Ce que fait le recul a l'ARME, pas a la visee : elle se cabre et recule dans
 ## la main. Rendre la ligne de mire au joueur est son affaire, pas celle du code.
 const RECOIL_RISE := 11.0
@@ -105,6 +114,7 @@ var target: Node3D
 
 var _state := State.IDLE
 var _blend := 0.0
+var _drink_t := 0.0                # progression du geste de boire, en secondes
 var _goal := Vector3.ZERO          # ou la main doit aller, espace voiture
 var _drop := Transform3D()         # pose finale de l'objet, espace voiture
 var _surface_hit := false
@@ -159,6 +169,26 @@ func _process(delta: float) -> void:
 			_blend = 1.0
 			_goal = _goal.lerp(_aim_point(origin, dir), k)
 			_surface_hit = false
+		State.DRINKING:
+			# La canette vient A LA BOUCHE — sous l'oeil, pas dans l'axe du
+			# regard : on boit, on ne vise pas, et la camera reste libre (les
+			# yeux sur la route, c'est tout l'interet). Meme filet qu'en
+			# RAISED : le relachement est relu ici.
+			if not Input.is_action_pressed("aim_weapon"):
+				if held != null and held.has_method("stop_sip"):
+					held.call("stop_sip")
+				_state = State.HELD
+			_blend = 1.0
+			_drink_t += delta
+			_goal = _goal.lerp(_drink_point(origin, dir), k)
+			_surface_hit = false
+			if _drink_t >= DRINK_TIME and held != null and held.has_method("drain"):
+				# Bue jusqu'au bout : l'effet part a la jauge par la voiture
+				# (elle seule sait ou vit le sommeil), la canette s'ecrase.
+				held.call("drain")
+				if carrier != null and carrier.has_method("on_drink"):
+					carrier.call("on_drink", held.get("drink"))
+				_state = State.HELD
 		State.AIMING:
 			# On garde l'objet en main et on montre ou il ira.
 			_blend = 1.0
@@ -204,6 +234,14 @@ func _process(delta: float) -> void:
 	# qui impose son orientation au poing.
 	if held != null:
 		var tf := _aimed_transform(dir) if _state == State.RAISED else _held_transform(origin)
+		if _state == State.DRINKING:
+			# La bascule du poignet : le fond se leve, le bord vient aux
+			# levres. L'angle suit le geste — il ne claque pas, il se verse.
+			var flat := Vector3(dir.x, 0.0, dir.z)
+			flat = flat.normalized() if flat.length() > 0.05 else Vector3.FORWARD
+			var tip := deg_to_rad(DRINK_TILT) \
+				* smoothstep(0.15, 1.0, _drink_t / DRINK_TIME)
+			tf.basis = Basis(flat.cross(Vector3.UP).normalized(), tip) * tf.basis
 		held.transform = tf
 		# Un objet qui sait comment on l'empoigne (hand_local) oriente la main
 		# lui-meme. Sans ca elle s'oriente d'apres le coude, ce qui suffit a une
@@ -331,6 +369,15 @@ func _aim_point(origin: Vector3, dir: Vector3) -> Vector3:
 	return origin + dir * AIM_REACH + right * AIM_SIDE - up * AIM_DROP
 
 
+## Ou la canette vient quand on boit : la bouche. En avant de l'oeil A PLAT —
+## la composante verticale du regard est ecartee, sans quoi boire en
+## regardant le retroviseur enfoncerait la canette dans le front.
+func _drink_point(origin: Vector3, dir: Vector3) -> Vector3:
+	var flat := Vector3(dir.x, 0.0, dir.z)
+	flat = flat.normalized() if flat.length() > 0.05 else Vector3.FORWARD
+	return origin + flat * DRINK_FWD + Vector3.DOWN * DRINK_DROP
+
+
 ## Point de l'objet tenu qui doit tomber dans le poing, dans SON repere. Son
 ## origine par defaut ; un revolver, lui, se tient par la crosse.
 func _grip_offset() -> Vector3:
@@ -359,15 +406,32 @@ func _unhandled_input(event: InputEvent) -> void:
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
 
-	# --- l'arme -----------------------------------------------------------
+	# --- l'arme, et la canette --------------------------------------------
+	# Le meme clic droit maintenu PORTE A USAGE ce qu'on a en main : une arme
+	# se leve (fire), une canette pleine se boit (sip). Les deux s'excluent
+	# par nature — un objet n'est jamais les deux.
 	if event.is_action_pressed("aim_weapon"):
 		# On ne leve que ce qui se tire, et seulement une fois en main.
 		if _state == State.HELD and held != null and held.has_method("fire"):
 			_state = State.RAISED
 			get_viewport().set_input_as_handled()
+		elif _state == State.HELD and held != null and held.has_method("sip") \
+				and held.call("sip"):
+			# sip() dit s'il reste quelque chose a boire — et lance le
+			# glouglou avec le geste. Une ecrasee ne repond pas : le clic
+			# droit redevient alors le "se pencher" de car.gd.
+			_state = State.DRINKING
+			_drink_t = 0.0
+			get_viewport().set_input_as_handled()
 		return
 	if event.is_action_released("aim_weapon"):
 		if _state == State.RAISED:
+			_state = State.HELD
+			get_viewport().set_input_as_handled()
+		elif _state == State.DRINKING:
+			# Interrompue avant la fin : rien de bu, rien de gagne.
+			if held != null and held.has_method("stop_sip"):
+				held.call("stop_sip")
 			_state = State.HELD
 			get_viewport().set_input_as_handled()
 		return
@@ -683,7 +747,7 @@ func _ghost_material() -> StandardMaterial3D:
 ## l'avant-bras pour la garder.
 func lean_blocked() -> bool:
 	return _state == State.RAISED or _state == State.ADJUSTING \
-		or _state == State.GRIPPING
+		or _state == State.GRIPPING or _state == State.DRINKING
 
 
 ## Lache ce qui est en main SANS le reposer : l'objet reste ou il est, la main
@@ -780,8 +844,13 @@ func _update_hud() -> void:
 			_dot.visible = true
 			if held != null and held.has_method("fire"):
 				_hint.text = "Maintiens clic gauche : poser    clic droit : lever    molette : lancer"
+			elif held != null and held.has_method("sip") and held.get("full"):
+				_hint.text = "Maintiens clic gauche : poser    clic droit : boire    molette : lancer"
 			else:
 				_hint.text = "Maintiens clic gauche : poser    molette : lancer"
+		State.DRINKING:
+			_dot.visible = false
+			_hint.text = ""
 		State.RAISED:
 			_dot.visible = true
 			if held != null and held.has_method("ammo_hint"):

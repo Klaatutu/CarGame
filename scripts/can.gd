@@ -25,12 +25,25 @@ const SCENES := {
 var drink := "nosleep"
 ## Version ecrasee (detritus) plutot qu'intacte.
 var crushed := false
+## Pleine : une intacte se BOIT (voir sip/drain — le geste est dans
+## interaction.gd, l'effet dans sleep.gd). Une ecrasee est un souvenir.
+var full := false
 
 var _materials: Array[StandardMaterial3D] = []
+var _gulp_snd: AudioStreamPlayer3D
+var _crush_snd: AudioStreamPlayer3D
 
 
 func _ready() -> void:
-	var key := drink + ("_crushed" if crushed else "")
+	full = not crushed
+	_build_mesh(drink + ("_crushed" if crushed else ""))
+	_build_audio()
+
+
+## Monte (ou remonte) le maillage d'un des six etats. Sert au demarrage, et
+## au passage intacte -> ecrasee quand on la vide : meme canette, meme noeud,
+## la simulation continue — seules les cotes changent, et prop.gd les relit.
+func _build_mesh(key: String) -> void:
 	if not SCENES.has(key):
 		push_error("canette inconnue : %s" % key)
 		return
@@ -40,6 +53,12 @@ func _ready() -> void:
 		push_error("%s : aucun maillage dans le .glb" % key)
 		model.free()
 		return
+
+	var old := get_node_or_null("Mesh")
+	if old != null:
+		old.name = "MeshOld"
+		old.queue_free()
+	_materials.clear()
 
 	# Le maillage est adopte DIRECTEMENT sous ce noeud, pas la scene importee :
 	# interaction.gd fabrique le fantome de depose a partir des MeshInstance3D
@@ -59,6 +78,61 @@ func _ready() -> void:
 	mi.position.y = -(aabb.position.y + half.y)       # centre du volume a l'origine
 
 	_prepare_materials(mi)
+
+
+# --------------------------------------------------------------------------
+# Boire
+# --------------------------------------------------------------------------
+
+## interaction.gd demande : y a-t-il quelque chose a boire ? Oui -> le
+## glouglou part avec le geste (il s'interrompt avec lui, voir stop_sip).
+func sip() -> bool:
+	if not full:
+		return false
+	if _gulp_snd != null and _gulp_snd.stream != null:
+		_gulp_snd.play()
+	return true
+
+
+## Le geste s'est interrompu avant la fin : la canette reste pleine.
+func stop_sip() -> void:
+	if _gulp_snd != null:
+		_gulp_snd.stop()
+
+
+## Bue jusqu'au bout. La canette S'ECRASE dans la main — le crunch, l'echange
+## de maillage vers la variante ecrasee (prechargee depuis toujours), et les
+## cotes relues : celles qui trainaient au plancher depuis le premier jour
+## racontent retroactivement le quotidien du chauffeur.
+func drain() -> void:
+	if not full:
+		return
+	full = false
+	crushed = true
+	_build_mesh(drink + "_crushed")
+	if _crush_snd != null and _crush_snd.stream != null:
+		_crush_snd.play()
+
+
+func _build_audio() -> void:
+	var bus := "Cabine" if AudioServer.get_bus_index("Cabine") >= 0 else "Master"
+	_gulp_snd = _sound("res://assets/audio/taxi/gulp.wav", bus, -4.0)
+	_crush_snd = _sound("res://assets/audio/taxi/crush.wav", bus, -6.0)
+
+
+func _sound(path: String, bus: String, db: float) -> AudioStreamPlayer3D:
+	var p := AudioStreamPlayer3D.new()
+	p.bus = bus
+	p.volume_db = db
+	p.unit_size = 2.0
+	p.max_distance = 0.0
+	p.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_DISTANCE
+	if ResourceLoader.exists(path):
+		p.stream = load(path)
+	else:
+		push_warning("son de canette : %s manque, lancer tools/make_taxi_sounds.py" % path)
+	add_child(p)
+	return p
 
 
 ## Albedo rabattu sur la palette de nuit (cabin.gd INTERIOR_DIM, comme tout le
