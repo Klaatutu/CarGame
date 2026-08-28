@@ -850,9 +850,18 @@ func _process(delta: float) -> void:
 	# en semi-implicite (la vitesse d'abord, la position ensuite avec la vitesse
 	# NEUVE) : c'est le seul schema simple qui ne diverge pas quand le pas de
 	# temps saute, et il saute au premier ecran de chargement venu.
+	# ... mais semi-implicite ne suffit plus quand w * delta depasse 2 : une
+	# image de deux secondes (time_scale des bancs sur machine chargee, ecran
+	# de chargement) et le ressort EXPLOSE en NaN — releve au banc du sommeil,
+	# la camera partait et les retroviseurs visaient l'infini. On integre donc
+	# par sous-pas bornes : le meme schema, jamais au-dela de sa stabilite.
 	var w := TAU * jolt_hz
-	_jolt_vel += (-w * w * _jolt - 2.0 * jolt_damping * w * _jolt_vel) * delta
-	_jolt += _jolt_vel * delta
+	var left := delta
+	while left > 0.0:
+		var h := minf(left, 1.0 / 60.0)
+		left -= h
+		_jolt_vel += (-w * w * _jolt - 2.0 * jolt_damping * w * _jolt_vel) * h
+		_jolt += _jolt_vel * h
 	cam.position = _cam_offset + _jolt \
 		+ Vector3(sin(_bob * 1.15) * shake * 1.2, sin(_bob * 1.9) * shake, 0.0)
 	# La tete pique du nez avec la caisse. Sans ce tangage, un coup ne fait que
@@ -864,8 +873,12 @@ func _process(delta: float) -> void:
 	# penche a la vitre ou qu'on se retourne.
 	var roll := -steer * 0.022 * clampf(v / 8.0, 0.0, 1.0) \
 		+ look_out * 0.10 - look_back * 0.05
-	cam.rotation.z = lerpf(cam.rotation.z, roll, 4.0 * delta)
-	cam.fov = lerpf(cam.fov, lerpf(fov_base, fov_fast, clampf(v / 40.0, 0.0, 1.0)), 3.0 * delta)
+	# Bornes : un lerp a k * delta > 1 EXTRAPOLE — au premier gros pas de
+	# temps, le fov sortait de [1, 179] (releve au banc de boite en
+	# time_scale 6 sur machine chargee).
+	cam.rotation.z = lerpf(cam.rotation.z, roll, clampf(4.0 * delta, 0.0, 1.0))
+	cam.fov = lerpf(cam.fov, lerpf(fov_base, fov_fast, clampf(v / 40.0, 0.0, 1.0)),
+		clampf(3.0 * delta, 0.0, 1.0))
 
 	# Tant que le frein est simplement tenu, la main reste sur le levier ;
 	# une fois verrouille, elle repart au volant.
@@ -1108,6 +1121,12 @@ func _make_muffled_bus(bus_name: String, cutoff: float, volume: float) -> AudioE
 ## lue par le son. Celle du conducteur compte plein, celle du passager 70 % :
 ## elle est plus loin de l'oreille. Deux vitres ouvertes ne font pas deux fois
 ## plus de bruit, d'ou le produit des fermetures.
+## La meme ouverture, en public : le sommeil (sleep.gd) la lit — l'air de la
+## nuit tient eveille — et le confort des clients la lira aussi.
+func window_openness() -> float:
+	return _window_openness()
+
+
 func _window_openness() -> float:
 	var closed := 1.0
 	for w in cabin.windows:

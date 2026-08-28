@@ -7,6 +7,7 @@ extends Node3D
 const CarScript := preload("res://scripts/car.gd")
 const RoadScript := preload("res://scripts/road.gd")
 const DayCycleScript := preload("res://scripts/daycycle.gd")
+const SleepScript := preload("res://scripts/sleep.gd")
 const Retro := preload("res://scripts/retro.gd")
 const DriverScript := preload("res://scripts/driver.gd")
 const GiantScript := preload("res://scripts/giant.gd")
@@ -55,6 +56,15 @@ var car
 var road
 ## Le cycle jour/nuit : le proprietaire de l'ambiance du monde normal.
 var daycycle
+## La jauge de veille et ses paupieres (sleep.gd).
+var sleep
+## "normal" ou "nightmare". Le cauchemar, c'est le monde d'avant : les
+## monstres armes, la nuit rouge — on y entre en s'endormant, on en sort par
+## le portail. Voir la section "le sommeil et le cauchemar" plus bas.
+var world_mode := "normal"
+## Le sommeil ne compte qu'en partie normale : les bancs d'essai gardent un
+## conducteur d'acier. _start_normal_world le leve.
+var sleep_enabled := false
 var _ground: MeshInstance3D
 var _moon: Node3D
 var _env: Environment
@@ -94,12 +104,25 @@ func _ready() -> void:
 	road.strangler.caught.connect(_on_strangler_caught)
 	road.strangler.died.connect(_on_strangler_died)
 
+	# La jauge de veille. Elle previent quand tout se ferme ; la bascule vers
+	# le cauchemar se joue ici, ou vivent l'ecran, l'ambiance et la route.
+	sleep = SleepScript.new()
+	sleep.name = "Sleep"
+	sleep.car = car
+	sleep.daycycle = daycycle
+	add_child(sleep)
+	sleep.fell_asleep.connect(_enter_nightmare)
+
 	# Les bancs et les captures supposent la nuit de reference : le cycle est
 	# gele a 23 h — l'image d'avant le cycle, au bit pres, puisque la nuit est
 	# photographiee sur l'Environment. daytest le manoeuvre lui-meme.
 	if not OS.get_cmdline_user_args().is_empty():
 		daycycle.frozen = true
 		daycycle.set_hour(23.0)
+	else:
+		# Une PARTIE : le monde normal — pas de monstres sur la route du
+		# soir, le mille-pattes dort, et le sommeil compte.
+		_start_normal_world()
 
 	# Lance le jeu avec  -- shot  pour capturer des images puis quitter,
 	# ou  -- geartest  pour relever la vitesse maxi de chaque rapport.
@@ -145,6 +168,8 @@ func _ready() -> void:
 		_strangler_test()
 	elif "daytest" in OS.get_cmdline_user_args():
 		_day_test()
+	elif "sleeptest" in OS.get_cmdline_user_args():
+		_sleep_test()
 
 
 func _process(delta: float) -> void:
@@ -157,6 +182,14 @@ func _process(delta: float) -> void:
 		# passe devant, puis sur le cote, puis dans le retroviseur.
 		_moon.global_position = Vector3(car.global_position.x, 0.0, car.global_position.z)
 	_process_doom(delta)
+	# Le sommeil ne compte qu'en partie normale, jamais pendant que
+	# l'etranglement ou l'ecran de fin tiennent la camera.
+	sleep.suspended = (not sleep_enabled) or doom_mode != "" \
+		or game_over_shown or world_mode == "nightmare"
+	# Le portail : franchi (et pas deja pris a la gorge), on se reveille.
+	if world_mode == "nightmare" and doom_mode == "" and not game_over_shown \
+			and road.portal.crossed_by(car.global_position):
+		_exit_nightmare()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -3910,6 +3943,140 @@ func _ensure_over_ui() -> void:
 
 
 # --------------------------------------------------------------------------
+# Le sommeil et le cauchemar : la bascule entre les deux mondes
+# --------------------------------------------------------------------------
+#
+# Le monde NORMAL est la route du soir : pas de monstres, le cycle jour/nuit
+# fait son oeuvre, et la jauge de veille descend. S'endormir (sleep.gd :
+# fell_asleep, emis derriere un noir complet) echange le monde : les monstres
+# s'arment, l'ambiance vire au rouge sourd, le mille-pattes se met en chasse,
+# et un PORTAIL se pose loin devant — la seule sortie est de ROULER jusqu'a
+# lui. Le franchir reveille en sursaut ; se faire prendre par l'etrangleur
+# pendant qu'on y est, c'est la fin de partie ordinaire, cauchemar ou pas.
+#
+# La bascule ne restaure pas des valeurs figees : elle REND l'Environment a
+# daycycle (override), qui re-applique l'heure courante — l'horloge a tourne
+# pendant le cauchemar, on peut s'endormir a minuit et se reveiller a l'aube.
+
+## Ou en est le portail du cauchemar courant, en metres au-dela du point
+## d'endormissement. Il s'eloigne a chaque rechute.
+const PORTAL_BASE_M := 900.0
+const PORTAL_MORE_M := 250.0
+
+## Les tares du cauchemar sur la lune et le tramage — restaurees au reveil.
+const MOON_TINT_NIGHT := Color(0.58, 0.70, 1.0)
+const MOON_LIGHT_NIGHT := Color(0.55, 0.64, 0.90)
+const MOON_TINT_BLOOD := Color(1.0, 0.42, 0.38)
+const MOON_LIGHT_BLOOD := Color(0.85, 0.38, 0.36)
+const DITHER_TINT_BLOOD := Color(1.04, 0.86, 0.86)
+
+
+## Le monde d'une PARTIE : la route du soir, sans monstres, sommeil qui compte.
+## Les bancs d'essai ne passent jamais ici — ils gardent le monde d'avant.
+func _start_normal_world() -> void:
+	world_mode = "normal"
+	sleep_enabled = true
+	road.monsters = false
+	_set_centipede_hunting(false)
+
+
+## Le mille-pattes chasse (cauchemar) ou dort (monde normal). PAS rewind() :
+## il remet son attente a zero et la bete ressortirait a l'image suivante —
+## c'est un outil de banc. On endort le PROCESSUS, et on rearme l'attente.
+func _set_centipede_hunting(on: bool) -> void:
+	var c = car.cabin.centipede
+	if c == null:
+		return
+	if on:
+		c.process_mode = Node.PROCESS_MODE_INHERIT
+		c._wait = randf_range(6.0, 14.0)
+	else:
+		c.process_mode = Node.PROCESS_MODE_DISABLED
+
+
+## S'endormir. Appele par sleep.fell_asleep, DERRIERE un noir complet : tout
+## l'echange se fait les yeux fermes, et ils se rouvrent sur le cauchemar.
+func _enter_nightmare() -> void:
+	if world_mode == "nightmare":
+		return
+	world_mode = "nightmare"
+
+	# L'ambiance : daycycle rend la main, le rouge s'installe.
+	daycycle.override = true
+	_env.background_color = Color(0.030, 0.016, 0.018)
+	_env.ambient_light_color = Color(0.45, 0.26, 0.28)
+	_env.ambient_light_energy = 0.062
+	_env.fog_light_color = Color(0.052, 0.026, 0.028)
+	_env.fog_light_energy = 0.7
+	_env.fog_density = 0.045
+	_env.volumetric_fog_density = 0.020
+	_env.adjustment_saturation = 0.55
+	_env.adjustment_contrast = 1.12
+	var disc := _moon.get_node("Disc") as MeshInstance3D
+	disc.visible = true
+	var dmat := disc.material_override as ShaderMaterial
+	dmat.set_shader_parameter("tint", MOON_TINT_BLOOD)
+	dmat.set_shader_parameter("disc_energy", 2.4)
+	dmat.set_shader_parameter("halo_energy", 0.7)
+	var mlight := _moon.get_node("Light") as DirectionalLight3D
+	mlight.light_color = MOON_LIGHT_BLOOD
+	mlight.light_energy = moon_energy
+	_dither_material().set_shader_parameter("tint", DITHER_TINT_BLOOD)
+
+	# Les monstres. Le premier contact vient vite (le geant a ~500 m), le
+	# portail est plus loin que lui, et l'etrangleur plus loin encore : les
+	# premieres nuits, on le fuit sans le savoir — il attend les rechutes.
+	road.monsters = true
+	road._giant_next = road.head_index() + 250
+	road._strangler_next = road.head_index() + 650
+	road.set_portal(road.head_index()
+		+ int((PORTAL_BASE_M + PORTAL_MORE_M * float(sleep.times_slept - 1)) / RoadScript.STEP))
+	_set_centipede_hunting(true)
+
+	# Les yeux se rouvrent sur le rouge.
+	sleep.open_lids(0.9)
+	car._show_flash("Tu t'es endormi")
+
+
+## Le portail est franchi : reveil en sursaut sur la route du soir. La ou
+## _on_strangler_died annule une etreinte, ceci annule un monde.
+func _exit_nightmare() -> void:
+	if world_mode != "nightmare":
+		return
+	world_mode = "normal"
+
+	road.monsters = false
+	road.clear_monsters()
+	road.portal.sleep()
+	road.portal_index = -1
+	# Le mille-pattes retourne dormir — lache d'abord, s'il etait en main.
+	if car.interaction.held == car.cabin.centipede:
+		car.interaction.let_go()
+	_set_centipede_hunting(false)
+
+	# L'ambiance revient a l'heure qu'il est — pas a celle du coucher.
+	var disc := _moon.get_node("Disc") as MeshInstance3D
+	var dmat := disc.material_override as ShaderMaterial
+	dmat.set_shader_parameter("tint", MOON_TINT_NIGHT)
+	var mlight := _moon.get_node("Light") as DirectionalLight3D
+	mlight.light_color = MOON_LIGHT_NIGHT
+	_dither_material().set_shader_parameter("tint", Color(1.0, 1.0, 1.0))
+	daycycle.override = false
+
+	# Le sursaut : la caisse encaisse, les canettes tremblent, la jauge
+	# repart entamee — la pression ne se rembourse pas d'un somme.
+	sleep.vigilance = 0.55
+	sleep.close_lids()
+	sleep.open_lids(0.6)
+	car.impact(Vector3(0.0, 6.5, 1.5))
+	car._show_flash("Tu te reveilles en sursaut")
+
+
+func _dither_material() -> ShaderMaterial:
+	return ($DitherPost/Dither as ColorRect).material as ShaderMaterial
+
+
+# --------------------------------------------------------------------------
 # Banc d'essai de l'etrangleur
 # --------------------------------------------------------------------------
 
@@ -4348,4 +4515,160 @@ func _day_test() -> void:
 		await _shot(shot_def[1])
 	daycycle.set_hour(23.0)
 
+	get_tree().quit()
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai du sommeil et du cauchemar
+# --------------------------------------------------------------------------
+
+## Trois choses a prouver : la jauge suit SA formule (pas une deuxieme ecrite
+## dans le banc), chaque facteur pese ce qu'il annonce, et la bascule est un
+## aller-retour COMPLET — le monde du cauchemar s'installe entierement, et le
+## reveil rend exactement la nuit du cycle, monstres eteints.
+func _sleep_test() -> void:
+	await get_tree().create_timer(0.8).timeout
+	# Le monde d'une partie, pas celui des bancs : monstres coupes, mille-
+	# pattes endormi, sommeil actif.
+	_start_normal_world()
+	Engine.time_scale = 4.0
+
+	print("--- la jauge suit sa formule -------------------------------------")
+	sleep.vigilance = 1.0
+	var integ := 0.0
+	var t := 0.0
+	while t < 60.0:
+		await get_tree().process_frame
+		var dt := get_process_delta_time()
+		t += dt
+		integ += sleep.drain_rate() * dt
+	var drop: float = 1.0 - sleep.vigilance
+	print("  ELLE SUIT SA FORMULE : %s   (perdu %.3f en 60 s de jeu a l'arret, integrale annoncee %.3f)" % [
+		absf(drop - integ) < 0.02, drop, integ])
+
+	print("--- les facteurs -------------------------------------------------")
+	# A l'arret a 23 h : nuit profonde, torpeur de la lenteur, et la monotonie
+	# a eu ses dix secondes depuis longtemps.
+	var sl: float = sleep._sleepers()
+	print("  LA NUIT ENDORT       : %s   (x%.2f = 1,5 circadien x 1,3 lenteur x 1,6 monotonie)" % [
+		absf(sl - 1.5 * 1.3 * 1.6) < 0.03, sl])
+	daycycle.set_hour(13.0)
+	var sl_day: float = sleep._sleepers()
+	daycycle.set_hour(23.0)
+	print("  LE JOUR TIENT MIEUX  : %s   (a 13 h : x%.2f, le circadien tombe a 0,8)" % [
+		absf(sl_day - 0.8 * 1.3 * 1.6) < 0.03, sl_day])
+	for w in car.cabin.windows:
+		w.open = 1.0
+	var rem: float = sleep._remedies()
+	print("  LES VITRES REVEILLENT : %s   (remedes x%.2f, attendu 0,70)" % [
+		absf(rem - 0.7) < 0.005, rem])
+	sleep.radio_factor = 0.55
+	car.speed = 26.0
+	var rem2: float = sleep._remedies()
+	car.speed = 0.0
+	sleep.radio_factor = 1.0
+	print("  LE PLANCHER TIENT    : %s   (radio 0,55 x vitres 0,7 x vitesse 0,75 = 0,29 -> x%.2f)" % [
+		absf(rem2 - maxf(0.55 * 0.7 * 0.75, 0.25)) < 0.005, rem2])
+	for w in car.cabin.windows:
+		w.open = 0.0
+	sleep.vigilance = 0.5
+	sleep.drink_boost("nosleep")
+	var v1: float = sleep.vigilance
+	sleep.drink_boost("nosleep")
+	var v2: float = sleep.vigilance
+	print("  LA DEUXIEME REND MOINS : %s   (+%.2f puis +%.2f — la dette de cafeine)" % [
+		absf(v1 - 0.78) < 0.005 and absf((v2 - v1) - 0.28 * 0.6) < 0.005,
+		v1 - 0.5, v2 - v1])
+
+	print("--- les paupieres ------------------------------------------------")
+	var peak := 0.0
+	var vmin := 0.0
+	var lid_shot := false
+	var tt := 0.0
+	while tt < 14.0:
+		await get_tree().process_frame
+		tt += get_process_delta_time()
+		sleep.vigilance = 0.18            # tenue la : on mesure, on ne meurt pas
+		peak = maxf(peak, sleep.lid_alpha())
+		vmin = minf(vmin, car.cam.v_offset)
+		if not lid_shot and sleep.lid_alpha() > 0.5:
+			lid_shot = true
+			await _shot("73_paupieres.png")
+	print("  ELLES TOMBENT        : %s   (noir maxi %.2f par vague, la tete pique de %.0f mm)" % [
+		peak > 0.5 and vmin < -0.01, peak, -vmin * 1000.0])
+
+	print("--- l'endormissement ---------------------------------------------")
+	var h0: int = road.head_index()
+	sleep.vigilance = 0.01
+	await sleep.fell_asleep
+	await get_tree().process_frame
+	var dtint: Color = _dither_material().get_shader_parameter("tint")
+	var dmat := (_moon.get_node("Disc") as MeshInstance3D).material_override as ShaderMaterial
+	var mtint: Color = dmat.get_shader_parameter("tint")
+	print("  LE MONDE BASCULE     : %s   (mode %s, monstres %s, brouillard %.3f)" % [
+		world_mode == "nightmare" and road.monsters
+		and absf(_env.fog_density - 0.045) < 0.0001,
+		world_mode, road.monsters, _env.fog_density])
+	print("  LE ROUGE S'INSTALLE  : %s   (tramage r %.2f / b %.2f, lune r %.2f / b %.2f)" % [
+		dtint.r > dtint.b and mtint.r > mtint.b, dtint.r, dtint.b, mtint.r, mtint.b])
+	print("  LE MILLE-PATTES CHASSE : %s   (attente %.1f s)" % [
+		car.cabin.centipede.process_mode == Node.PROCESS_MODE_INHERIT,
+		car.cabin.centipede._wait])
+	var expect_portal: int = h0 + int(PORTAL_BASE_M / RoadScript.STEP)
+	print("  LE PORTAIL EST PRIS  : %s   (demande a l'echantillon %d, attendu %d +-3, rechute n. %d)" % [
+		absi(road._portal_at - expect_portal) <= 3, road._portal_at,
+		expect_portal, sleep.times_slept])
+	await get_tree().create_timer(1.2).timeout
+	await _shot("74_cauchemar.png")
+
+	print("--- le portail ---------------------------------------------------")
+	# La traversee mesure LE PORTAIL, pas les monstres : on les desarme — leur
+	# banc a eux, c'est gianttest et stranglertest. Le vrai cauchemar garde
+	# tout le monde, et un geant en travers de la voie s'y contourne au volant,
+	# ce qu'un banc qui tient une ligne droite ne sait pas faire.
+	road._giant_next = 1000000000
+	road._strangler_next = 1000000000
+	if not road.giant.asleep():
+		road.giant.sleep()
+	road.giant_index = -1
+	car.gear = 5
+	var shot_portal := false
+	var t2 := 0.0
+	while t2 < 90.0 and world_mode == "nightmare":
+		await get_tree().process_frame
+		t2 += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		if not shot_portal and road.portal.active \
+				and car.global_position.distance_to(road.portal.global_position) < 160.0:
+			# L'image du voile dans les phares : on s'arrete pour la prendre —
+			# les grandes enjambees d'images du banc sous charge sautaient la
+			# fenetre de distance quand on la prenait en roulant.
+			shot_portal = true
+			car.speed = 0.0
+			await get_tree().process_frame
+			await _shot("75_portail.png")
+	print("  ON EN SORT EN ROULANT : %s   (reveille apres %.0f s de jeu, portail rendormi %s)" % [
+		world_mode == "normal", t2, not road.portal.active])
+	car.speed = 0.0
+	car.gear = CarScript.GEAR_N
+	await get_tree().create_timer(0.8).timeout
+	var dback := 0.0
+	dback = maxf(dback, absf(_env.fog_density - fog_density))
+	dback = maxf(dback, _color_diff(_env.ambient_light_color, Color(0.30, 0.34, 0.45)))
+	dback = maxf(dback, absf(_env.adjustment_saturation - 0.70))
+	dback = maxf(dback, _color_diff(_env.fog_light_color, Color(0.055, 0.060, 0.075)))
+	var dtint2: Color = _dither_material().get_shader_parameter("tint")
+	var mtint2: Color = dmat.get_shader_parameter("tint")
+	print("  LA NUIT REVIENT      : %s   (ecart ambiance %.6f, tramage blanc %s, lune bleue %s)" % [
+		dback < 0.000001 and dtint2.r == 1.0 and mtint2.b > mtint2.r,
+		dback, dtint2.r == 1.0 and dtint2.b == 1.0, mtint2.b > mtint2.r])
+	print("  LES MONSTRES SE TAISENT : %s   (geant %s, etrangleur %s, mille-pattes coupe %s)" % [
+		road.giant.asleep() and road.strangler.asleep()
+		and car.cabin.centipede.process_mode == Node.PROCESS_MODE_DISABLED,
+		road.giant.asleep(), road.strangler.asleep(),
+		car.cabin.centipede.process_mode == Node.PROCESS_MODE_DISABLED])
+	print("  LA JAUGE REPART ENTAMEE : %s   (vigilance %.2f, attendu ~0,55)" % [
+		absf(sleep.vigilance - 0.55) < 0.10, sleep.vigilance])
+
+	Engine.time_scale = 1.0
 	get_tree().quit()

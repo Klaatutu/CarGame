@@ -19,6 +19,10 @@ uniform float color_steps : hint_range(4.0, 128.0) = 32.0;
 // Taille d'une case du motif, en pixels ecran.
 uniform float pixel_size : hint_range(1.0, 8.0) = 2.0;
 uniform float strength : hint_range(0.0, 2.0) = 1.0;
+// Teinte globale, appliquee a l'image FINALE avant quantification. Blanc par
+// defaut : aucun effet. C'est le levier le moins cher pour virer le monde
+// entier d'un coup — le cauchemar s'en sert (rouge sourd, main.gd).
+uniform vec3 tint : source_color = vec3(1.0);
 
 const float bayer[16] = float[16] (
 	 0.0 / 16.0,  8.0 / 16.0,  2.0 / 16.0, 10.0 / 16.0,
@@ -28,7 +32,7 @@ const float bayer[16] = float[16] (
 );
 
 void fragment() {
-	vec3 c = texture(screen_tex, SCREEN_UV).rgb;
+	vec3 c = texture(screen_tex, SCREEN_UV).rgb * tint;
 
 	ivec2 cell = ivec2(FRAGCOORD.xy / pixel_size);
 	float threshold = bayer[(cell.x % 4) * 4 + (cell.y % 4)] - 0.5;

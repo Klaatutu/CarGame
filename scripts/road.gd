@@ -15,6 +15,7 @@ const Retro := preload("res://scripts/retro.gd")
 const PoliceCar := preload("res://scripts/police_car.gd")
 const GiantScript := preload("res://scripts/giant.gd")
 const StranglerScript := preload("res://scripts/strangler.gd")
+const PortalScript := preload("res://scripts/portal.gd")
 
 const STEP := 2.0               # distance entre deux points de la ligne mediane
 const SAMPLES := 150            # ~300 m de route vivante
@@ -74,6 +75,11 @@ const STRANGLER_JITTER := 0.8
 
 var target: Node3D
 
+## Les monstres ont-ils le droit d'apparaitre ? Vrai par defaut — les bancs
+## d'essai gardent le monde d'avant. Le jeu normal le baisse : geant et
+## etrangleur vivent dans le CAUCHEMAR (main.gd, la bascule du sommeil).
+var monsters := true
+
 var _pos := PackedVector3Array()      # points de la ligne mediane
 var _right := PackedVector3Array()    # vecteur "droite" unitaire a chaque point
 var _index0 := 0                      # index global du premier echantillon
@@ -121,6 +127,11 @@ var strangler: Node3D
 ## Echantillon global ou l'etrangleur est poste (-1 : nulle part).
 var strangler_index := -1
 var _strangler_next := STRANGLER_FIRST
+
+## Le portail du cauchemar (portal.gd) : arme par set_portal, un seul.
+var portal: Node3D
+var portal_index := -1
+var _portal_at := -1
 
 
 func _ready() -> void:
@@ -330,7 +341,7 @@ func _place_props(i: int) -> void:
 	# route. Il est pose ICI, a 275 m devant la voiture, et il ne bougera pas
 	# avant qu'elle soit a 72 m : le temps qu'elle arrive, il fait partie du
 	# paysage.
-	if g >= _giant_next and giant_index < 0 and target != null:
+	if monsters and g >= _giant_next and giant_index < 0 and target != null:
 		var side := 1.0 if _rng.randf() < 0.5 else -1.0
 		var r := _right[i]
 		var basis := Basis(r, Vector3.UP, -Vector3.UP.cross(r)).rotated(
@@ -342,7 +353,7 @@ func _place_props(i: int) -> void:
 	# L'etrangleur, debout au milieu de la voie, tourne vers la voiture qui
 	# vient. Pose a ~275 m devant : le temps que les phares le trouvent, il est
 	# la depuis toujours.
-	if g >= _strangler_next and strangler_index < 0 and target != null:
+	if monsters and g >= _strangler_next and strangler_index < 0 and target != null:
 		var r := _right[i]
 		var basis := Basis(r, Vector3.UP, -Vector3.UP.cross(r)) \
 			.rotated(Vector3.UP, PI)
@@ -350,6 +361,43 @@ func _place_props(i: int) -> void:
 			_pos[i] + r * _rng.randf_range(-STRANGLER_JITTER, STRANGLER_JITTER))
 		strangler.arm(target)
 		strangler_index = g
+
+	# Le portail du cauchemar : pose en travers de la voie a l'echantillon
+	# demande — ou au premier qui nait apres lui, si la fenetre vivante l'a
+	# deja depasse quand la demande arrive (la distance est un "au moins").
+	if _portal_at >= 0 and g >= _portal_at:
+		var r := _right[i]
+		portal.arm(Transform3D(Basis(r, Vector3.UP, -Vector3.UP.cross(r)), _pos[i]))
+		portal_index = g
+		_portal_at = -1
+
+
+## L'echantillon global a hauteur de voiture : la distance parcourue, en pas
+## de STEP. C'est l'unite des rendez-vous — monstres, portail.
+func head_index() -> int:
+	return _index0 + BEHIND
+
+
+## Demande un portail a l'echantillon global g (a venir). Le precedent, s'il
+## en restait un, s'eteint.
+func set_portal(g: int) -> void:
+	portal.sleep()
+	portal_index = -1
+	_portal_at = g
+
+
+## Eteint tout ce qui vit et repousse les rendez-vous loin devant : le reveil
+## du cauchemar. Les monstres ne reviendront que si `monsters` remonte.
+func clear_monsters() -> void:
+	if not giant.asleep():
+		giant.sleep()
+	giant_index = -1
+	_giant_next = _index0 + SAMPLES + _rng.randi_range(GIANT_EVERY_MIN, GIANT_EVERY_MAX)
+	if not strangler.asleep():
+		strangler.sleep()
+	strangler_index = -1
+	_strangler_next = _index0 + SAMPLES \
+		+ _rng.randi_range(STRANGLER_EVERY_MIN, STRANGLER_EVERY_MAX)
 
 
 ## Pose (centre de la chaussee, face a la route) a l'echantillon global g, ou
@@ -368,6 +416,11 @@ func _build_prop_pools() -> void:
 	police.visible = false
 	police.set_process(false)
 	add_child(police)
+
+	# Un seul portail : arme au fond du cauchemar, rendormi au reveil.
+	portal = PortalScript.new()
+	portal.name = "Portal"
+	add_child(portal)
 
 	# Un seul geant, reutilise : il n'y en a jamais deux a la fois.
 	giant = GiantScript.new()

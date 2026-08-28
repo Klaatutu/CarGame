@@ -1667,6 +1667,88 @@ Il écrit `70_aube.png` (l'aube mauve dans le pare-brise), `71_jour_bleme.png`
 (le plein jour laiteux) et `72_crepuscule.png`. Les deux premières sont la
 preuve qui compte : la palette nocturne **tient** le jour couvert.
 
+## Le sommeil et le cauchemar
+
+Le jeu ne montre pas de jauge : **l'effet est la jauge**
+([sleep.gd](scripts/sleep.gd)). La vigilance descend en silence, puis la route
+se dédouble (messages aux seuils 0,5 / 0,35 / 0,2), puis les **paupières**
+tombent par vagues — le patron exact de l'assombrissement pulsé de
+l'étranglement, période qui se resserre de 9 à 3 s, noir qui s'épaissit, la
+tête qui pique (relevé : 32 mm de `v_offset`) — puis tout se ferme, et
+derrière ce noir-là [main.gd](scripts/main.gd) échange le monde.
+
+**La formule est un produit de circonstances.** Une base (jauge pleine : 4 min),
+multipliée par ce qui endort — le circadien lu sur le cycle (nuit profonde
+×1,5, plein jour ×0,8), la lenteur (<40 km/h ×1,3), la **monotonie** (vitesse
+étale ET volant immobile 10 s : ×1,6 — l'autoroute à 2 h du matin) — et
+divisée par ce qui réveille : vitres ouvertes ×0,7, plus de 90 km/h ×0,75, la
+radio (à venir) ×0,55, produit **plafonné à 0,25** — les courants d'air ne
+remplacent pas une nuit de sommeil. Boire rend d'un coup (+0,28 pour une
+NoSleep) avec des rendements qui s'écroulent : la deuxième canette dans les
+90 s rend ×0,6 — la **dette de caféine**. Le banc ne recopie pas la formule :
+il intègre `drain_rate()` image par image et vérifie que la jauge suit sa
+propre annonce (relevé : 0,727 perdu pour 0,734 annoncé sur 60 s).
+
+Chaque remède a sa contrepartie ailleurs : les vitres ouvertes sont déjà une
+porte pour le mille-pattes (poids ×14, [centipede.gd](scripts/centipede.gd)),
+la vitesse et la radio déplairont aux clients (à venir).
+
+### La bascule
+
+Le monde **normal** — celui d'une partie — n'a pas de monstres :
+`road.monsters` est faux, le mille-pattes dort (`process_mode`, jamais son
+`rewind()` de banc qui remettrait l'attente à zéro). Les bancs d'essai, eux,
+gardent le monde d'avant, monstres armés — le drapeau est vrai par défaut et
+aucun banc ne change.
+
+S'endormir arme le **cauchemar** : les monstres reviennent (le géant à
+~500 m, l'étrangleur à ~1300 m — les premières nuits on le fuit sans le
+savoir, il attend les rechutes), le mille-pattes se met en chasse (6-14 s),
+et l'ambiance vire — brouillard 0,030 → **0,045**, teintes rouge sourd,
+saturation 0,55, **lune de sang** (tint 1,0/0,42/0,38, disque poussé à 2,4) et
+un uniform `tint` ajouté au tramage plein écran
+([dither_post.gdshader](shaders/dither_post.gdshader)) : le levier le moins
+cher pour virer l'image entière. Le cycle jour/nuit **rend la main**
+(`override`) et la reprend au réveil : l'horloge a tourné pendant le
+cauchemar, on s'endort à minuit et on se réveille dans l'aube.
+
+### Le portail
+
+On ne sort pas du cauchemar en s'arrêtant : on en sort en **roulant**. À
+900 m du point d'endormissement (+250 m par rechute), la route pose un
+portail en travers de la voie ([portal.gd](scripts/portal.gd)) : deux
+montants, un linteau, et un **voile** additif animé
+([portal_veil.gdshader](shaders/portal_veil.gdshader)) — `fog_disabled` comme
+la lune, sinon le brouillard du cauchemar l'éteindrait à 130 m, et il doit se
+voir DE loin : dans un monde teinté rouge, c'est la seule chose froide de
+l'image, et c'est pour ça qu'on roule vers elle. Le franchissement est
+**analytique** (produit scalaire le long de l'axe de la route, aucune
+physique) : réveil en sursaut — `car.impact()`, les canettes tremblent, la
+jauge repart à 0,55, la pression ne se rembourse pas d'un somme. Se faire
+prendre par l'étrangleur pendant le cauchemar reste la fin de partie
+ordinaire : le portail ne sauve que ceux qui l'atteignent.
+
+### Banc d'essai
+
+```bash
+godot --path . -- sleeptest
+```
+
+| | relevé |
+|---|---|
+| la jauge suit sa formule | 0,727 perdu en 60 s à l'arrêt, intégrale annoncée **0,734** |
+| la nuit endort | ×**3,12** = 1,5 circadien × 1,3 lenteur × 1,6 monotonie ; à 13 h : ×1,66 |
+| les vitres réveillent, le plancher tient | remèdes ×0,70 ; radio×vitres×vitesse → ×0,29 |
+| la dette de caféine | +0,28 puis **+0,17** à moins de 90 s |
+| les paupières tombent | noir à **0,80** par vague, la tête pique de 32 mm |
+| le monde bascule | brouillard 0,045, tramage r 1,04/b 0,86, lune r 1,00/b 0,38, mille-pattes en chasse |
+| le portail est pris | échantillon demandé **463**, attendu 463 ±3 (rechute n° 1) |
+| on en sort en roulant | réveillé après 37 s de jeu à 90 km/h |
+| la nuit revient | écart d'ambiance au retour : **0,000000** ; monstres tus ; vigilance 0,54 |
+
+Il écrit `73_paupieres.png` (mi-fermeture), `74_cauchemar.png` (le rouge
+depuis le siège) et `75_portail.png` (le voile froid dans les phares).
+
 ## La voiture de police
 
 Sur l'accotement de droite, une berline de police de 1990 (gabarit Peugeot 405,
