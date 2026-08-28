@@ -174,6 +174,8 @@ func _ready() -> void:
 		_drink_test()
 	elif "radiotest" in OS.get_cmdline_user_args():
 		_radio_test()
+	elif "phonetest" in OS.get_cmdline_user_args():
+		_phone_test()
 
 
 func _process(delta: float) -> void:
@@ -4851,5 +4853,149 @@ func _radio_test() -> void:
 	await get_tree().create_timer(0.4).timeout
 	await _shot("78_radio.png")
 	radio.set_highlight(false)
+
+	get_tree().quit()
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai du telephone
+# --------------------------------------------------------------------------
+
+## Amene le reticule sur un point d'ecran du telephone au berceau, par de
+## VRAIS mouvements de souris. L'asservissement se fait en PIXELS projetes
+## (unproject du point vise) : deplacer la souris vers ou une chose apparait
+## a l'ecran est vrai quelle que soit la convention d'angles de la tete —
+## la premiere version servo-guidait sur rotation.x et poussait plein bas.
+func _look_at_screen(phone, uv_goal: Vector2) -> bool:
+	var cam3d: Camera3D = car.cam
+	var center: Vector2 = get_viewport().get_visible_rect().size * 0.5
+	for i in 260:
+		var goal_w: Vector3 = phone.screen_point(uv_goal)
+		if not cam3d.is_position_behind(goal_w):
+			var perr: Vector2 = cam3d.unproject_position(goal_w) - center
+			var uv = phone.screen_uv(cam3d.global_position,
+				-cam3d.global_transform.basis.z)
+			if uv != null and (uv as Vector2).distance_to(uv_goal) < 0.02:
+				return true
+			var ev := InputEventMouseMotion.new()
+			ev.relative = (perr * 0.35).limit_length(30.0)
+			Input.parse_input_event(ev)
+		await get_tree().process_frame
+	return false
+
+
+func _phone_test() -> void:
+	var IS := preload("res://scripts/interaction.gd")
+	await get_tree().create_timer(0.8).timeout
+	_start_normal_world()
+	var inter = car.interaction
+	var phone = inter.grabbables.back()
+
+	print("--- l'appareil ---------------------------------------------------")
+	print("  L'INVARIANT TIENT  : %s   ([0] %s, dernier %s, au berceau %s, batterie %.0f%%)" % [
+		inter.grabbables[0].name == "CigPack" and phone.name == "Phone"
+		and phone.docked and phone.battery > 99.0,
+		inter.grabbables[0].name, phone.name, phone.docked, phone.battery])
+	# L'ecran rend-il vraiment ? La sonde des miroirs : une image non vide.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var img: Image = phone._view.get_texture().get_image()
+	var lit := 0
+	for i in 200:
+		var c := img.get_pixel(randi() % img.get_width(), randi() % img.get_height())
+		if c.get_luminance() > 0.02:
+			lit += 1
+	print("  L'ECRAN EST VIVANT : %s   (%d/200 pixels au-dessus du noir)" % [lit > 30, lit])
+
+	# --- le rayon -> uv, contre un calcul independant ----------------------
+	print("--- l'ecran au regard --------------------------------------------")
+	var probe := Vector2(0.5, 0.9)
+	var p_w: Vector3 = phone.screen_point(probe)
+	var eye: Vector3 = car.cam.global_position
+	var uv_back = phone.screen_uv(eye, (p_w - eye).normalized())
+	var err := 1.0e9
+	if uv_back != null:
+		err = (uv_back as Vector2).distance_to(probe)
+	print("  L'UV EST EXACT     : %s   (aller-retour %.4f, seuil 0,005)" % [
+		err < 0.005, err])
+	# A cote de l'ecran : null, pas un uv fantaisiste.
+	var off = phone.screen_uv(eye, (p_w - eye).normalized().rotated(Vector3.UP, 0.5))
+	print("  A COTE : RIEN      : %s" % [off == null])
+
+	# --- le tap au berceau (etat TAPPING, vrais clics) ---------------------
+	var found := await _look_at_screen(phone, Vector2(0.377, 0.93))   # onglet COURSES
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	await _until(func(): return inter._state == IS.State.TAPPING, 2.0)
+	var tapped: bool = await _until(func(): return inter._state == IS.State.IDLE, 3.0)
+	var ev_up := InputEventMouseButton.new()
+	ev_up.button_index = MOUSE_BUTTON_LEFT
+	ev_up.pressed = false
+	Input.parse_input_event(ev_up)
+	await get_tree().process_frame
+	print("  LE DOIGT TAPE      : %s   (reticule sur l'onglet %s, page -> %s)" % [
+		found and tapped and phone._apps.page == "courses", found, phone._apps.page])
+	await _shot("80_telephone_dock.png")
+
+	# --- la batterie -------------------------------------------------------
+	print("--- la batterie --------------------------------------------------")
+	Engine.time_scale = 6.0
+	phone.battery = 50.0
+	await get_tree().create_timer(60.0).timeout    # 60 s de jeu, 10 s reels
+	var charged: float = phone.battery
+	print("  LE BERCEAU CHARGE  : %s   (50%% -> %.1f%% en 60 s de jeu, moteur tournant ; attendu ~62)" % [
+		absf(charged - 62.0) < 1.5, charged])
+	# En main, ecran allume : ca tire.
+	inter.target = phone
+	inter._pick_up()
+	inter._state = IS.State.HELD
+	phone.set_viewing(true)
+	phone.battery = 50.0
+	await get_tree().create_timer(60.0).timeout
+	var drained: float = phone.battery
+	print("  CONSULTER TIRE     : %s   (50%% -> %.2f%%, attendu ~47,5)" % [
+		absf(drained - 47.5) < 0.8, drained])
+	# A zero : ecran mort, plus rien a toucher.
+	phone.battery = 0.05
+	await get_tree().create_timer(6.0).timeout
+	var dead_uv = phone.screen_uv(eye, (p_w - eye).normalized())
+	print("  A PLAT, ECRAN MORT : %s   (batterie %.2f, vitre eteinte %s, uv %s)" % [
+		phone.battery <= 0.0 and not phone._quad.visible and dead_uv == null,
+		phone.battery, not phone._quad.visible, "null" if dead_uv == null else "!?"])
+	Engine.time_scale = 1.0
+	phone.battery = 85.0
+	phone.set_screen_power(true)
+
+	# --- consulte en main (etat PHONE) -------------------------------------
+	print("--- consulte en main ---------------------------------------------")
+	var ev_r := InputEventMouseButton.new()
+	ev_r.button_index = MOUSE_BUTTON_RIGHT
+	ev_r.pressed = true
+	Input.parse_input_event(ev_r)
+	var consulted: bool = await _until(func(): return inter._state == IS.State.PHONE, 2.0)
+	await get_tree().create_timer(0.7).timeout
+	var d_read: float = car.cam.global_position.distance_to(phone.global_position)
+	var facing: float = phone.global_transform.basis.y.normalized() \
+		.dot((car.cam.global_position - phone.global_position).normalized())
+	print("  IL MONTE A LA LECTURE : %s   (a %.2f m de l'oeil, ecran vers l'oeil %.2f)" % [
+		consulted and d_read < 0.5 and facing > 0.90, d_read, facing])
+	await _shot("79_telephone_main.png")
+	var ev_r2 := InputEventMouseButton.new()
+	ev_r2.button_index = MOUSE_BUTTON_RIGHT
+	ev_r2.pressed = false
+	Input.parse_input_event(ev_r2)
+	await get_tree().process_frame
+
+	# --- la repose au berceau (l'aimant) -----------------------------------
+	# On vise la console pres du berceau et on relache : le telephone doit
+	# finir DANS le support, pas a cote, et l'ecran se rallumer.
+	await _look_toward_yaw(0.0)
+	inter.let_go()
+	phone.transform = car.cabin.phone_dock_pose()
+	phone.set_docked(true)
+	print("  LE BERCEAU REPREND : %s   (docked %s, ecran %s)" % [
+		phone.docked and phone.screen_on(), phone.docked, phone.screen_on()])
 
 	get_tree().quit()

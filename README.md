@@ -1816,6 +1816,67 @@ godot --path . -- radiotest
 Ils écrivent `76_canette.png` (au goulot, basculée) et `78_radio.png`
 (l'afficheur allumé au pied de la pile centrale).
 
+## Le téléphone
+
+L'outil de travail du chauffeur ([phone.gd](scripts/phone.gd)) : un objet
+libre comme le paquet et les canettes (il tombe, glisse, se lance), avec un
+**écran vivant** — un SubViewport 2D de 216×384, des Controls construits en
+code ([phone_apps.gd](scripts/phone_apps.gd)), plaqué en texture sur la face
+avant : le montage exact des rétroviseurs, sans l'inversion gauche-droite.
+Le tramage plein écran passe par-dessus comme sur tout le reste — l'écran
+est tramé gratuitement, il appartient à la même nuit. Quatre pages : ACCUEIL
+(l'heure du cycle, la batterie, le solde, le réseau — « PAS DE RÉSEAU » dans
+le cauchemar), COURSES, GPS et AVIS (qui annoncent ce qu'elles deviendront
+aux jalons suivants).
+
+**Façon Doom 3 : pas de curseur, c'est le réticule qui touche.** Consulté en
+main (clic droit maintenu — le même « porter à usage » que l'arme et la
+canette : l'état PHONE monte l'appareil à 0,34 m, distance de *lecture*,
+écran cabré vers l'œil), la caméra reste **libre** et le point du HUD sert de
+doigt : `screen_uv()` résout analytiquement rayon du regard → plan du quad →
+coordonnées d'écran (aller-retour vérifié au banc : erreur **0,0000**), et
+les clics sont **poussés au viewport** en événements souris synthétiques
+(`push_input`) — les Button de Godot font le reste, survol compris. Aucun
+raycast physique : l'œil et l'écran vivent dans le repère voiture, la
+géométrie d'une même image ne ment pas. Posé au **berceau** (un support à
+ventouse construit sur la console, [cabin.gd](scripts/cabin.gd)), l'écran
+reste un bouton : le regard sur la vitre **tape** (l'état TAPPING — le geste
+du plafonnier, paramétré par le point d'écran), le regard sur le bord
+**prend**. La dépose près du support est **aimantée** : à moins de dix
+centimètres, le téléphone finit *dans* le berceau, pas à côté.
+
+**La batterie est une jauge qu'on branche.** Écran allumé −2,5 %/min,
+veille −0,5, au berceau **+12 %/min moteur tournant** — l'allume-cigare (qui
+existe, avec son câble) ne donne rien moteur calé, une raison de plus de ne
+pas caler. À 0 % : écran mort, plus rien à toucher — la sanction n'est pas
+un game over, c'est une nuit sans revenu. L'économie de rendu suit les
+rétroviseurs : plein régime consulté, une image toutes les 0,5 s au berceau
+(l'horloge qui luit dans l'habitacle), rien du tout éteint.
+
+Deux pièges relevés aux captures, pas aux chiffres : un `Y 180` de trop sur
+le nœud d'écran rendait le texte **en miroir**, et la texture du viewport
+arrive **la tête en bas** sur le quad — redressée au matériau (`uv1_scale`),
+la voie des rétroviseurs, stable sur les deux rendus. Et le piège documenté
+tient toujours : le téléphone n'expose jamais `use()`.
+
+### Banc d'essai
+
+```bash
+godot --path . -- phonetest
+```
+
+| | relevé |
+|---|---|
+| l'écran rend vraiment (sonde des miroirs) | **200/200** pixels au-dessus du noir |
+| rayon → uv, contre un calcul indépendant | aller-retour **0,0000** (seuil 0,005) ; à côté : null |
+| le doigt tape au berceau (vrais mouvements de souris) | réticule amené sur l'onglet, page → **courses** |
+| le berceau charge, consulter tire | 50 % → **62,0 %** en 60 s ; 50 % → **47,47 %** consulté |
+| à plat, écran mort | vitre éteinte, uv null, plus d'offres |
+| il monte à la lecture (état PHONE) | à **0,35 m** de l'œil, écran vers l'œil 0,96 |
+
+Il écrit `79_telephone_main.png` (consulté en main, onglets lisibles) et
+`80_telephone_dock.png` (au berceau, écran allumé dans l'habitacle).
+
 ## La voiture de police
 
 Sur l'accotement de droite, une berline de police de 1990 (gabarit Peugeot 405,

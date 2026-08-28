@@ -22,6 +22,7 @@ const RevolverScript := preload("res://scripts/revolver.gd")
 const EngineAudioScript := preload("res://scripts/engine_audio.gd")
 const CabinAudioScript := preload("res://scripts/cabin_audio.gd")
 const RadioScript := preload("res://scripts/radio.gd")
+const PhoneScript := preload("res://scripts/phone.gd")
 
 # Position du conducteur (volant a gauche). L'oeil est a 1,15 m du sol.
 const SEAT_X := -0.33
@@ -1363,6 +1364,19 @@ func _spawn_props() -> void:
 	# le sorte de la voiture, si une vitre est assez baissee pour le jeter
 	# (centipede.gd, section "La main").
 	interaction.grabbables.append(cabin.centipede)
+
+	# Le telephone, TOUJOURS EN DERNIER (l'invariant des bancs : [0] le
+	# paquet, [1] la premiere canette). Il nait au berceau, ecran allume —
+	# la premiere chose qu'on voit du metier.
+	var phone := PhoneScript.new()
+	phone.name = "Phone"
+	phone.carrier = self
+	phone.cabin = cabin
+	cabin.add_child(phone)
+	phone.transform = cabin.phone_dock_pose()
+	phone.reset_point = phone.transform.origin
+	phone.set_docked(true)
+	interaction.grabbables.append(phone)
 
 
 func _build_collision() -> void:

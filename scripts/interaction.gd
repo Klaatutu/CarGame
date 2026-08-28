@@ -37,7 +37,7 @@ extends Node3D
 ##
 
 enum State { IDLE, REACHING, HELD, AIMING, PLACING, ADJUSTING, GRIPPING, RAISED,
-	DRINKING }
+	DRINKING, PHONE, TAPPING }
 
 ## Ou l'objet est tenu, FIXE dans l'espace de la voiture : devant la poitrine,
 ## un peu a droite, sous la ligne des yeux.
@@ -69,6 +69,13 @@ const DRINK_FWD := 0.10
 const DRINK_DROP := 0.085
 const DRINK_TIME := 1.5
 const DRINK_TILT := 45.0
+
+## Consulter le telephone : distance de LECTURE, pas de visee — plus pres
+## que l'arme (0,50), sous la ligne du regard, ecran cabre vers l'oeil.
+const PHONE_REACH := 0.34
+const PHONE_SIDE := 0.030
+const PHONE_DROP := 0.055
+const PHONE_TILT := 12.0
 ## Ce que fait le recul a l'ARME, pas a la visee : elle se cabre et recule dans
 ## la main. Rendre la ligne de mire au joueur est son affaire, pas celle du code.
 const RECOIL_RISE := 11.0
@@ -115,6 +122,8 @@ var target: Node3D
 var _state := State.IDLE
 var _blend := 0.0
 var _drink_t := 0.0                # progression du geste de boire, en secondes
+var _tap_uv := Vector2.ZERO        # ou le doigt va taper (TAPPING), en uv ecran
+var _drop_is_dock := false         # la depose en cours vise le berceau
 var _goal := Vector3.ZERO          # ou la main doit aller, espace voiture
 var _drop := Transform3D()         # pose finale de l'objet, espace voiture
 var _surface_hit := false
@@ -144,6 +153,14 @@ func _process(delta: float) -> void:
 			_surface_hit = false
 			_set_target(_aimed_object(origin, dir))
 			_blend = move_toward(_blend, 0.0, delta / reach_time)
+			# L'ecran au berceau se survole du regard : les boutons
+			# s'allument sous le reticule avant meme qu'on tape.
+			if target != null and target.has_method("screen_uv") \
+					and target.get("docked") == true:
+				var uvh = target.call("screen_uv", cam.global_position,
+					-cam.global_transform.basis.z)
+				if uvh != null:
+					target.call("hover", uvh)
 		State.REACHING:
 			# La main va au-devant de l'objet, qui n'a pas encore bouge.
 			_goal = to_local(target.global_position) if target != null else _goal
@@ -189,6 +206,35 @@ func _process(delta: float) -> void:
 				if carrier != null and carrier.has_method("on_drink"):
 					carrier.call("on_drink", held.get("drink"))
 				_state = State.HELD
+		State.PHONE:
+			# Le telephone consulte : il monte a distance de LECTURE, ecran
+			# face a l'oeil, et la camera reste libre — LE RETICULE EST LE
+			# DOIGT. Le survol est pousse au viewport chaque image, le clic
+			# gauche tape (_unhandled_input). Meme filet de relachement
+			# qu'en RAISED.
+			if not Input.is_action_pressed("aim_weapon"):
+				if held != null and held.has_method("set_viewing"):
+					held.call("set_viewing", false)
+				_state = State.HELD
+			_blend = 1.0
+			_goal = _goal.lerp(_phone_point(origin, dir), k)
+			_surface_hit = false
+			if held != null:
+				var uv = held.call("screen_uv", cam.global_position,
+					-cam.global_transform.basis.z)
+				if uv != null:
+					held.call("hover", uv)
+		State.TAPPING:
+			# Le doigt part toucher l'ecran du telephone AU BERCEAU : le
+			# geste du plafonnier, parametre par le point d'ecran vise.
+			if target == null:
+				_state = State.IDLE
+			else:
+				_goal = to_local(target.call("screen_point", _tap_uv))
+				_blend = move_toward(_blend, 1.0, delta / (reach_time * 0.6))
+				if _blend >= 1.0:
+					target.call("tap", _tap_uv)
+					_state = State.IDLE
 		State.AIMING:
 			# On garde l'objet en main et on montre ou il ira.
 			_blend = 1.0
@@ -233,7 +279,13 @@ func _process(delta: float) -> void:
 	# Une arme LEVEE inverse le rapport : c'est le regard qui la pose, et elle
 	# qui impose son orientation au poing.
 	if held != null:
-		var tf := _aimed_transform(dir) if _state == State.RAISED else _held_transform(origin)
+		var tf: Transform3D
+		if _state == State.RAISED:
+			tf = _aimed_transform(dir)
+		elif _state == State.PHONE:
+			tf = _phone_transform(origin)
+		else:
+			tf = _held_transform(origin)
 		if _state == State.DRINKING:
 			# La bascule du poignet : le fond se leve, le bord vient aux
 			# levres. L'angle suit le geste — il ne claque pas, il se verse.
@@ -378,6 +430,35 @@ func _drink_point(origin: Vector3, dir: Vector3) -> Vector3:
 	return origin + flat * DRINK_FWD + Vector3.DOWN * DRINK_DROP
 
 
+## Ou le telephone monte quand on le consulte : les memes maths que
+## _aim_point, aux distances de lecture.
+func _phone_point(origin: Vector3, dir: Vector3) -> Vector3:
+	var right := dir.cross(Vector3.UP)
+	if right.length_squared() < 0.000001:
+		right = Vector3.RIGHT
+	right = right.normalized()
+	var up := right.cross(dir).normalized()
+	return origin + dir * PHONE_REACH + right * PHONE_SIDE - up * PHONE_DROP
+
+
+## La pose du telephone consulte : l'ecran FACE a l'oeil, cabre de quelques
+## degres (le haut recule — on lit un ecran, on ne le vise pas), le haut de
+## l'appareil en haut du monde.
+func _phone_transform(origin: Vector3) -> Transform3D:
+	var pos := _goal
+	var n := (origin - pos).normalized()          # normale d'ecran, vers l'oeil
+	var right := n.cross(Vector3.UP)
+	if right.length_squared() < 0.000001:
+		right = Vector3.RIGHT
+	right = -right.normalized()                    # +X ecran = droite du lecteur
+	var upv := right.cross(n).normalized()
+	var tilt := deg_to_rad(PHONE_TILT)
+	var n2 := (n * cos(tilt) + upv * sin(tilt)).normalized()
+	upv = right.cross(n2).normalized()
+	# Repere du boitier : +Y la vitre, -Z le haut. La main tient le tiers bas.
+	return Transform3D(Basis(right, n2, -upv), pos + upv * 0.030)
+
+
 ## Point de l'objet tenu qui doit tomber dans le poing, dans SON repere. Son
 ## origine par defaut ; un revolver, lui, se tient par la crosse.
 func _grip_offset() -> Vector3:
@@ -423,6 +504,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_state = State.DRINKING
 			_drink_t = 0.0
 			get_viewport().set_input_as_handled()
+		elif _state == State.HELD and held != null and held.has_method("screen_uv"):
+			# Le telephone se CONSULTE : il monte a distance de lecture.
+			_state = State.PHONE
+			if held.has_method("set_viewing"):
+				held.call("set_viewing", true)
+			get_viewport().set_input_as_handled()
 		return
 	if event.is_action_released("aim_weapon"):
 		if _state == State.RAISED:
@@ -432,6 +519,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			# Interrompue avant la fin : rien de bu, rien de gagne.
 			if held != null and held.has_method("stop_sip"):
 				held.call("stop_sip")
+			_state = State.HELD
+			get_viewport().set_input_as_handled()
+		elif _state == State.PHONE:
+			if held != null and held.has_method("set_viewing"):
+				held.call("set_viewing", false)
 			_state = State.HELD
 			get_viewport().set_input_as_handled()
 		return
@@ -464,6 +556,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			target.call("crank",
 				1.0 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1.0)
 			get_viewport().set_input_as_handled()
+		elif event.pressed and _state == State.PHONE and held != null \
+				and held.has_method("scroll"):
+			# Telephone consulte, la molette DEFILE — on ne passe pas les
+			# rapports en lisant ses avis, et c'est dit par le hint.
+			held.call("scroll",
+				1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1)
+			get_viewport().set_input_as_handled()
 		return
 
 	# --- le lancer ---------------------------------------------------------
@@ -489,9 +588,29 @@ func _unhandled_input(event: InputEvent) -> void:
 				# Arme levee, le clic gauche ne pose plus : il tire.
 				if held != null and held.has_method("fire"):
 					held.call("fire")
+			State.PHONE:
+				# Telephone consulte, le clic gauche TAPE ou tombe le regard.
+				if held != null:
+					var uvp = held.call("screen_uv", cam.global_position,
+						-cam.global_transform.basis.z)
+					if uvp != null:
+						held.call("tap", uvp)
 			State.IDLE:
 				if target == null:
 					return
+				# L'ecran au berceau est un bouton, son corps une poignee :
+				# le regard sur la vitre TAPE, le regard sur le bord PREND.
+				if target.has_method("screen_uv") and target.get("docked") == true:
+					var uvt = target.call("screen_uv", cam.global_position,
+						-cam.global_transform.basis.z)
+					if uvt != null:
+						_tap_uv = uvt
+						driver.item_left = false
+						driver.item_radius = 0.0
+						_blend = 0.0
+						_state = State.TAPPING
+						get_viewport().set_input_as_handled()
+						return
 				_goal = to_local(target.global_position)
 				# Ce qu'on manoeuvre SUR PLACE se prend de la main la plus proche :
 				# pare-soleil conducteur, retro gauche, manivelle gauche a la main
@@ -532,6 +651,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			return                       # c'est le relachement du clic de prise
 		if _surface_hit:
 			_drop = _rest_on(_surface_point)
+			# Le berceau AIMANTE le telephone : vise a moins de dix
+			# centimetres, il s'y pose DANS le support, pas a cote.
+			_drop_is_dock = false
+			if held != null and held.has_method("set_docked") \
+					and cabin.has_method("phone_dock_pose"):
+				var dp: Transform3D = cabin.phone_dock_pose()
+				if _surface_point.distance_to(dp.origin) < 0.10:
+					_drop = dp
+					_drop_is_dock = true
 			_state = State.PLACING
 		else:
 			_state = State.HELD          # rien sous le viseur : on garde en main
@@ -645,6 +773,11 @@ func _put_down() -> void:
 	driver.item_radius = 0.0
 	if held.has_method("release"):
 		held.call("release")
+	# Pose au berceau : le support reprend le verrou que la main vient de
+	# rendre, et l'ecran s'y rallume.
+	if _drop_is_dock and held.has_method("set_docked"):
+		held.call("set_docked", true)
+	_drop_is_dock = false
 	held = null
 	_state = State.IDLE
 
@@ -747,7 +880,8 @@ func _ghost_material() -> StandardMaterial3D:
 ## l'avant-bras pour la garder.
 func lean_blocked() -> bool:
 	return _state == State.RAISED or _state == State.ADJUSTING \
-		or _state == State.GRIPPING or _state == State.DRINKING
+		or _state == State.GRIPPING or _state == State.DRINKING \
+		or _state == State.PHONE
 
 
 ## Lache ce qui est en main SANS le reposer : l'objet reste ou il est, la main
@@ -838,6 +972,8 @@ func _update_hud() -> void:
 				_hint.text = target.call("grip_hint")
 			elif target.has_method("adjust_hint"):
 				_hint.text = target.call("adjust_hint")
+			elif target.has_method("screen_uv") and target.get("docked") == true:
+				_hint.text = "Clic : toucher l'ecran    viser le bord : prendre"
 			else:
 				_hint.text = "Clic gauche : prendre"
 		State.HELD:
@@ -846,10 +982,19 @@ func _update_hud() -> void:
 				_hint.text = "Maintiens clic gauche : poser    clic droit : lever    molette : lancer"
 			elif held != null and held.has_method("sip") and held.get("full"):
 				_hint.text = "Maintiens clic gauche : poser    clic droit : boire    molette : lancer"
+			elif held != null and held.has_method("screen_uv"):
+				_hint.text = "Maintiens clic gauche : poser    clic droit : consulter"
 			else:
 				_hint.text = "Maintiens clic gauche : poser    molette : lancer"
 		State.DRINKING:
 			_dot.visible = false
+			_hint.text = ""
+		State.PHONE:
+			# Le point du HUD est le doigt : il reste allume sur l'ecran.
+			_dot.visible = true
+			_hint.text = "Clic : toucher    molette : defiler"
+		State.TAPPING:
+			_dot.visible = true
 			_hint.text = ""
 		State.RAISED:
 			_dot.visible = true

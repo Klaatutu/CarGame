@@ -292,6 +292,8 @@ var speedo_needle: Node3D
 var tacho_needle: Node3D
 ## Plafonnier (dome_light.gd), expose a interaction.gd comme objet utilisable.
 var dome_light: Node3D
+## Le berceau du telephone (voir _build_phone_dock et phone_dock_pose).
+var phone_dock: Node3D
 ## Son reflet dans le pare-brise (windshield_glare.gd) : la contrepartie de
 ## l'avoir allume. Null si le .glb n'a pas de plafonnier.
 var glare: Node3D
@@ -331,6 +333,7 @@ func _ready() -> void:
 	_build_shell()        # apres les vitres : les glaces en donnent les cotes
 	_build_mirrors()
 	_build_ignition()
+	_build_phone_dock()   # le berceau du telephone, sur la console
 	_build_vents()        # apres l'interieur : les grilles y sont relevees
 	_spawn_centipede()    # en dernier : il lui faut la forme ET les bouches
 
@@ -1157,3 +1160,107 @@ func _build_materials() -> void:
 	_rubber = Retro.mat(Color(0.028, 0.028, 0.030), 0.96)
 	_lamp = Retro.mat(Color(0.30, 0.30, 0.32), 0.25, 0.20)
 	_lamp_red = Retro.mat(Color(0.24, 0.030, 0.022), 0.25, 0.20)
+
+
+# --------------------------------------------------------------------------
+# Le berceau du telephone, et l'allume-cigare qui l'alimente
+# --------------------------------------------------------------------------
+
+## Ou le telephone se pose : a l'avant de la console, sous la radio, tourne
+## vers le conducteur. La ou un vrai chauffeur le colle.
+const PHONE_DOCK_AT := Vector3(0.0, 0.705, -0.560)
+## L'oeil du conducteur, a peu pres (car.HEAD_POS) : l'ecran au berceau le
+## regarde. Une approximation suffit — c'est une inclinaison, pas une visee.
+const PHONE_DOCK_EYE := Vector3(-0.33, 1.10, 0.25)
+
+
+## La pose EXACTE du telephone au berceau, en espace habitacle : origine au
+## centre du boitier, +Y (la vitre) vers l'oeil, le haut en haut. C'est elle
+## que l'aimant de depose d'interaction.gd applique.
+func phone_dock_pose() -> Transform3D:
+	var n := (PHONE_DOCK_EYE - PHONE_DOCK_AT).normalized()
+	var zax := -(Vector3.UP - n * Vector3.UP.dot(n)).normalized()
+	var xax := n.cross(zax).normalized()
+	return Transform3D(Basis(xax, n, zax).orthonormalized(), PHONE_DOCK_AT)
+
+
+func _build_phone_dock() -> void:
+	phone_dock = Node3D.new()
+	phone_dock.name = "PhoneDock"
+	add_child(phone_dock)
+	var pose := phone_dock_pose()
+
+	# Le pied : une rotule sur la console, un bras court, deux machoires.
+	var base := MeshInstance3D.new()
+	var bcyl := CylinderMesh.new()
+	bcyl.top_radius = 0.016
+	bcyl.bottom_radius = 0.022
+	bcyl.height = 0.020
+	base.mesh = bcyl
+	base.material_override = _plastic
+	base.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	base.position = Vector3(PHONE_DOCK_AT.x, 0.622, PHONE_DOCK_AT.z + 0.020)
+	phone_dock.add_child(base)
+
+	var arm := MeshInstance3D.new()
+	var acyl := CylinderMesh.new()
+	acyl.top_radius = 0.006
+	acyl.bottom_radius = 0.006
+	acyl.height = 0.075
+	arm.mesh = acyl
+	arm.material_override = _plastic
+	arm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	arm.position = base.position.lerp(PHONE_DOCK_AT, 0.55) + Vector3(0.0, 0.0, 0.006)
+	arm.rotation_degrees.x = 18.0
+	phone_dock.add_child(arm)
+
+	# Les machoires : deux petites levres sous le bas du boitier, dans le
+	# plan du telephone (la pose du berceau les oriente).
+	for side in [-1.0, 1.0]:
+		var jaw := MeshInstance3D.new()
+		var jbox := BoxMesh.new()
+		jbox.size = Vector3(0.012, 0.018, 0.014)
+		jaw.mesh = jbox
+		jaw.material_override = _plastic
+		jaw.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		jaw.transform = pose * Transform3D(Basis(),
+			Vector3(side * 0.030, -0.011, 0.062))
+		phone_dock.add_child(jaw)
+
+	# L'allume-cigare, sous la radio : un oeillet chrome. Decoratif, mais il
+	# EXPLIQUE la charge — le cable y court depuis le berceau.
+	var lighter := MeshInstance3D.new()
+	var lcyl := CylinderMesh.new()
+	lcyl.top_radius = 0.011
+	lcyl.bottom_radius = 0.011
+	lcyl.height = 0.008
+	lighter.mesh = lcyl
+	lighter.material_override = _chrome
+	lighter.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	lighter.position = Vector3(0.055, 0.660, -0.575)
+	lighter.rotation_degrees.x = 72.0
+	phone_dock.add_child(lighter)
+
+	# Le cable : une chainette figee de l'oeillet au bas du berceau.
+	var from := lighter.position + Vector3(0.0, 0.004, 0.012)
+	var to := pose * Vector3(0.0, -0.012, 0.068)
+	for i in 5:
+		var t0 := float(i) / 5.0
+		var t1 := float(i + 1) / 5.0
+		var sag := Vector3(0.0, -0.014, 0.0)
+		var a := from.lerp(to, t0) + sag * sin(PI * t0)
+		var b := from.lerp(to, t1) + sag * sin(PI * t1)
+		var seg := MeshInstance3D.new()
+		var scyl := CylinderMesh.new()
+		scyl.top_radius = 0.0016
+		scyl.bottom_radius = 0.0016
+		scyl.height = a.distance_to(b)
+		seg.mesh = scyl
+		seg.material_override = _rubber
+		seg.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		seg.position = (a + b) * 0.5
+		var d := (b - a).normalized()
+		var axis := Vector3.UP.cross(d)
+		if axis.length() > 0.001:
+			seg.rotate(axis.normalized(), asin(clampf(axis.length(), -1.0, 1.0)))
+		phone_dock.add_child(seg)
