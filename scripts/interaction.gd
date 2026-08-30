@@ -36,6 +36,9 @@ extends Node3D
 ## qui tranche — voir _unhandled_input.
 ##
 
+const Bench := preload("res://scripts/bench.gd")
+
+
 enum State { IDLE, REACHING, HELD, AIMING, PLACING, ADJUSTING, GRIPPING, RAISED,
 	DRINKING, PHONE, TAPPING }
 
@@ -529,7 +532,10 @@ func adjust(rel: Vector2) -> void:
 ## Prendre : un clic. Poser : on MAINTIENT pour viser, on relache pour lacher.
 ## Lever une arme : clic droit maintenu. Tirer : clic gauche, arme levee.
 func _unhandled_input(event: InputEvent) -> void:
-	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+	# La souris doit etre a nous. Un banc y a droit SANS la capturer : ses
+	# clics sont synthetiques, ils n'ont pas de curseur a prendre — et deux
+	# cents lancements par chantier le prenaient a quelqu'un (bench.gd).
+	if not Bench.mouse_ours():
 		return
 
 	# --- l'arme, et la canette --------------------------------------------

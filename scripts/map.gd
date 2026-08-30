@@ -16,23 +16,30 @@ extends RefCounted
 ## echantillon), les coordonnees d'affichage en unites de carte arbitraires.
 ##
 
-## Les villes : nom -> {at: Vector2 (affichage), amen: [commodites]}.
+## Les villes : nom -> {at: Vector2 (affichage), amen: [commodites], seed: int}.
+##
+## La GRAINE est le bourg entier. town_plan.gd en tire tout ce qui n'est pas
+## ecrit a la main : le nombre de rues, leurs abscisses, leur etendue, les
+## batiments, les fenetres allumees. Elle est ECRITE ici et pas hachee sur le
+## nom, pour deux raisons : deux parties ont la meme Corbeny, jusqu'au numero
+## de la porte ; et un bourg laid se re-tire en changeant un entier sur cette
+## ligne, sans qu'une ligne de geometrie bouge.
 const TOWNS := {
-	"Saint-Elme": {"at": Vector2(0.18, 0.78),
+	"Saint-Elme": {"at": Vector2(0.18, 0.78), "seed": 10847,
 		"amen": ["station-service", "cafe de nuit"]},
-	"Corbeny": {"at": Vector2(0.42, 0.86),
+	"Corbeny": {"at": Vector2(0.42, 0.86), "seed": 40213,
 		"amen": ["hotel", "distributeur"]},
-	"La Fresnaie": {"at": Vector2(0.15, 0.45),
+	"La Fresnaie": {"at": Vector2(0.15, 0.45), "seed": 23561,
 		"amen": ["garage"]},
-	"Malassis": {"at": Vector2(0.45, 0.55),
+	"Malassis": {"at": Vector2(0.45, 0.55), "seed": 58402,
 		"amen": ["cafe de nuit", "distributeur", "station-service"]},
-	"Vieux-Bourg": {"at": Vector2(0.72, 0.68),
+	"Vieux-Bourg": {"at": Vector2(0.72, 0.68), "seed": 31976,
 		"amen": ["hotel", "garage"]},
-	"Les Essarts": {"at": Vector2(0.30, 0.16),
+	"Les Essarts": {"at": Vector2(0.30, 0.16), "seed": 47130,
 		"amen": ["distributeur"]},
-	"Peyrelade": {"at": Vector2(0.66, 0.30),
+	"Peyrelade": {"at": Vector2(0.66, 0.30), "seed": 62845,
 		"amen": ["station-service", "hotel"]},
-	"Brumaire": {"at": Vector2(0.88, 0.42),
+	"Brumaire": {"at": Vector2(0.88, 0.42), "seed": 19388,
 		"amen": ["cafe de nuit"]},
 }
 
@@ -51,25 +58,72 @@ const EDGES := [
 ]
 
 
+## L'index d'adjacence, bati une fois et jamais refait. Il n'existe que pour un
+## chiffre : taxi.gd:205 appelle path() HUIT FOIS par offre — une par ville
+## candidate — et path() rebalayait les dix aretes a chaque neighbors() ET a
+## chaque edge_length(), soit une vingtaine de milliers de comparaisons de
+## chaines a chaque coup de telephone. Avec l'index, deux cents.
+##
+## Il est construit dans l'ORDRE DE `EDGES`, dans les deux sens : la liste de
+## voisins rendue est exactement celle d'avant, element pour element. C'est ce
+## qui compte, parce que main.gd:4046-4061 prend outs[0] et outs[1] pour
+## choisir les deux villes d'un Y, et que maptest juge la carte sur ce choix-la.
+##
+## Le tableau rendu par neighbors() est PARTAGE : c'est la ligne de l'index
+## elle-meme, pas une copie — deux appels rendent LE MEME OBJET. Il est donc
+## FERME A L'ECRITURE, et ce n'est pas une politesse. Le premier
+## "var outs = neighbors(id) ; outs.erase(from)" — la facon evidente d'ecrire
+## main.gd:4046, et celle qu'on ecrira le jour ou l'on oubliera ce paragraphe —
+## arracherait une arete de la carte POUR TOUTE LA PARTIE, en silence : plus
+## de Y a ce bourg, un chemin de Dijkstra qui rallonge, et rien dans la console.
+## Ferme, la meme ligne crie. On ne modifie donc pas ce tableau, on le FILTRE
+## (main.gd:4046 fait deja .filter(), qui rend un tableau neuf et libre).
+static var _adj := {}
+static var _len := {}
+
+
+static func _index() -> void:
+	if not _adj.is_empty():
+		return
+	for t in TOWNS:
+		_adj[t] = []
+		_len[t] = {}
+	for e in EDGES:
+		_adj[e[0]].append(e[1])
+		_adj[e[1]].append(e[0])
+		_len[e[0]][e[1]] = e[2]
+		_len[e[1]][e[0]] = e[2]
+	# Le verrou : huit appels, une fois par partie, et le piege est ferme pour
+	# de bon. Apres cette ligne l'index ne se remplit plus — c'est justement ce
+	# qu'on veut, il est bati une fois et jamais refait.
+	for t in _adj:
+		var out: Array = _adj[t]
+		out.make_read_only()
+
+
 static func towns() -> Array:
 	return TOWNS.keys()
 
 
 static func neighbors(town: String) -> Array:
-	var out := []
-	for e in EDGES:
-		if e[0] == town:
-			out.append(e[1])
-		elif e[1] == town:
-			out.append(e[0])
-	return out
+	_index()
+	return _adj[town] if _adj.has(town) else []
 
 
 static func edge_length(a: String, b: String) -> float:
-	for e in EDGES:
-		if (e[0] == a and e[1] == b) or (e[0] == b and e[1] == a):
-			return e[2]
-	return -1.0
+	_index()
+	if not _len.has(a):
+		return -1.0
+	var d: Dictionary = _len[a]
+	return d[b] if d.has(b) else -1.0
+
+
+## La graine d'un bourg. Les bancs arment des villes qui ne sont pas sur la
+## carte : elles ont droit a un plan, mais pas a un numero ecrit a la main.
+static func seed_of(town: String) -> int:
+	if TOWNS.has(town):
+		return int(TOWNS[town]["seed"])
+	return hash(town)
 
 
 static func at(town: String) -> Vector2:

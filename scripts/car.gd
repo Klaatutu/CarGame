@@ -14,6 +14,7 @@ extends CharacterBody3D
 ##
 
 const CabinScript := preload("res://scripts/cabin.gd")
+const Bench := preload("res://scripts/bench.gd")
 const DriverScript := preload("res://scripts/driver.gd")
 const InteractionScript := preload("res://scripts/interaction.gd")
 const CigPackScript := preload("res://scripts/cig_pack.gd")
@@ -794,7 +795,7 @@ func _process(delta: float) -> void:
 	# pivote et vient entre les appuis-tete (HEAD_BACK), le buste se vrille sur
 	# place, le dos reste cale contre le dossier. Aller chercher quelque chose
 	# derriere, ca reste un geste qu'on DEMANDE, en tenant le clic droit.
-	var free_hands: bool = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED \
+	var free_hands: bool = Bench.mouse_ours() \
 		and not interaction.lean_blocked()
 	var hold := Input.is_action_pressed("lean") and free_hands
 
@@ -1056,7 +1057,7 @@ func wrapping() -> bool:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	if event is InputEventMouseMotion and Bench.mouse_ours():
 		# Reglage d'un retroviseur : la souris l'oriente, LUI, et le regard est
 		# bloque. Viser et orienter avec le meme geste est impossible — on
 		# perdrait la glace de vue au premier mouvement.

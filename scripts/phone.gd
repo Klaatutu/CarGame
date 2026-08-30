@@ -39,7 +39,10 @@ extends "res://scripts/prop.gd"
 ##
 ## L'economie de rendu suit mirror.gd : UPDATE_ALWAYS consulte, une image
 ## toutes les 0,5 s au support (l'horloge qui luit dans l'habitacle), rien
-## du tout eteint.
+## du tout eteint. Mais RE-RENDRE N'EST PAS VIVRE : consulte, l'appareil
+## rendait soixante images par seconde d'un ecran fige, parce que personne
+## n'appelait phone_apps par la. C'est tick() qui l'anime maintenant, et le
+## banc compte les pixels qui bougent.
 ##
 
 const PhoneApps := preload("res://scripts/phone_apps.gd")
@@ -212,7 +215,19 @@ func _process(delta: float) -> void:
 	# temps suffit a une horloge.
 	if battery > 0.0:
 		if viewing:
+			# UPDATE_ALWAYS ne fait que RE-RENDRE : il ne met rien de neuf
+			# dessus. Il manquait la moitie du contrat — l'ecran consulte
+			# rendait soixante fois par seconde une image MORTE, heure gelee
+			# et point du GPS colle a sa place pendant que la voiture roule
+			# (releve au banc : 0 pixel de difference en 30 images a 20 m/s,
+			# le viewport rendant tout du long).
+			#
+			# tick() est ce qui le fait vivre — la carte a 10 Hz, les textes a
+			# 4 Hz, ses deux pouls a lui (phone_apps.gd). Releve : +0,13 ms par
+			# image, et c'est un ACHAT, pas une economie. On ne rattrape rien :
+			# on cesse seulement de payer un rendu complet pour rien.
 			_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			_apps.tick(delta)
 		elif docked:
 			_dock_pulse += delta
 			if _dock_pulse >= 0.5:

@@ -5,6 +5,7 @@ extends Node3D
 ##
 
 const CarScript := preload("res://scripts/car.gd")
+const Bench := preload("res://scripts/bench.gd")
 const RoadScript := preload("res://scripts/road.gd")
 const DayCycleScript := preload("res://scripts/daycycle.gd")
 const SleepScript := preload("res://scripts/sleep.gd")
@@ -83,7 +84,7 @@ var _mesh_cache
 
 
 func _ready() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	_build_environment()
 	_build_moon()
 	_build_ground()
@@ -199,6 +200,12 @@ func _ready() -> void:
 		_phone_test()
 	elif "maptest" in OS.get_cmdline_user_args():
 		_map_test()
+	elif "plantest" in OS.get_cmdline_user_args():
+		_plan_test()
+	elif "rubantest" in OS.get_cmdline_user_args():
+		_ruban_test()
+	elif "villetest" in OS.get_cmdline_user_args():
+		_ville_test()
 	elif "faretest" in OS.get_cmdline_user_args():
 		_fare_test()
 
@@ -236,7 +243,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		# La molette sert a passer les rapports : elle ne doit pas recapturer.
 		# Et souris deja capturee, le clic gauche sert a attraper les objets.
-		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		Bench.capture()
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F12:
 		_screenshot(false)
 
@@ -426,7 +433,7 @@ func _audio_test() -> void:
 ## l'autre en l'air, bien visible de l'exterieur.
 func _window_test() -> void:
 	const State_IDLE := 0             # interaction.State.IDLE
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	await get_tree().create_timer(0.8).timeout
 	var inter = car.interaction
 	var win: Node3D = car.cabin.windows[0]           # portiere conducteur
@@ -539,7 +546,7 @@ func _window_test() -> void:
 ## et il ne peut pas partir sur le cote tant qu'il est range, sinon il balaierait
 ## le ciel de toit.
 func _visor_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	await get_tree().create_timer(0.8).timeout
 	var inter = car.interaction
 	var visor: Node3D = car.cabin.visors[0]          # celui du conducteur
@@ -613,7 +620,7 @@ func _panel_box(panel: MeshInstance3D) -> AABB:
 ## Ce qu'on veut prouver : pendant le reglage la tete du conducteur ne bouge
 ## PLUS et la glace, elle, bouge — et l'inverse une fois le clic relache.
 func _mirror_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	await get_tree().create_timer(0.8).timeout
 	var inter = car.interaction
 	var mirror: Node3D = car.cabin.adjustables[0]
@@ -872,7 +879,7 @@ func _move_mouse(rel: Vector2) -> void:
 
 ## Banc d'essai du paquet de cigarettes : viser, prendre, deplacer, reposer.
 func _pack_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	await get_tree().create_timer(0.8).timeout
 	var inter = car.interaction
 	var pack: Node3D = inter.grabbables[0]
@@ -977,7 +984,7 @@ func _pack_test() -> void:
 ## On verifie aussi que le meme bouton n'a PAS passe le point mort au passage :
 ## la molette appartient a la boite de vitesses quand les mains sont vides.
 func _throw_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	# Par defaut Godot met les evenements injectes en file et ne les distribue
 	# qu'a l'image suivante : la vitesse de depart ne serait alors plus lisible
 	# nulle part, l'objet ayant deja vole. Ici l'evenement part tout de suite.
@@ -1230,7 +1237,7 @@ func _leak_scan(pack: Node3D) -> void:
 ## Le corollaire compte aussi : les 40 s de promenade ci-dessous sont 40 s de
 ## bestiole, pas 40 s d'attente. Le banc entier tient en quelques secondes.
 func _centipede_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	await get_tree().create_timer(0.8).timeout
 	var cabin = car.cabin
 	var bug: Node3D = cabin.centipede
@@ -1755,7 +1762,7 @@ func _until(check: Callable, timeout := 3.0) -> bool:
 ## le reposer. Ce qu'on verifie surtout, c'est que la bouche pointe VRAIMENT ou
 ## on regarde — une arme levee qui vise a cote se voit tout de suite.
 func _revolver_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	await get_tree().create_timer(1.2).timeout
 	var inter = car.interaction
 	var gun: Node3D = null
@@ -2187,7 +2194,7 @@ func _wheel_test() -> void:
 ## `item_blend` pose a la main : c'est la chaine complete qui doit mettre l'autre
 ## main a plat sur la jante.
 func _take_pack() -> bool:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	var inter = car.interaction
 	if inter.grabbables.is_empty():
 		return false
@@ -2281,7 +2288,7 @@ func _wheel_watch(seconds: float, label: String, shots: bool) -> void:
 ## capturee, et le serveur d'affichage muet ne capture rien. Le clic de prise
 ## est dans le meme cas.
 func _lean_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	await get_tree().create_timer(1.0).timeout
 	var inter = car.interaction
 	var drv = car.driver
@@ -2577,7 +2584,7 @@ func _lean_test() -> void:
 ## seulement a l'arrivee : un aller-retour se verrait a l'ecran tout en laissant
 ## la pose finale intacte.
 func _wrap_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	await get_tree().create_timer(1.0).timeout
 
 	# 1. Retourne a droite, REGARD A L'HORIZONTALE : c'est la marche arriere, on
@@ -3191,7 +3198,7 @@ func _auto_capture() -> void:
 ## l'ecart entre les deux directions AVANT de regarder l'image ; puis on verifie
 ## qu'elle tombe dans le pare-brise, et pas derriere le pavillon.
 func _moon_test() -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Bench.capture()
 	car.gear = 4
 	car.speed = 14.0
 	await get_tree().create_timer(1.6).timeout
@@ -3251,7 +3258,7 @@ func _moon_test() -> void:
 ## Fenetre de PARE-BRISE ou se lit la route : au-dessus de la planche de bord,
 ## entre les deux montants. C'est la seule zone dont la lisibilite compte.
 ##
-## Elle est serree exprès. Prise plus large elle mordait sur le pare-soleil range
+## Elle est serree expres. Prise plus large elle mordait sur le pare-soleil range
 ## (en haut) et sur le retroviseur interieur (a droite), deux pieces d'habitacle
 ## que le plafonnier eclaire en plein : elles faisaient a elles seules la moitie
 ## du "voile" mesure, et on aurait regle le reflet sur la luminosite du plastique
@@ -3413,7 +3420,7 @@ func _glare_test() -> void:
 	# La ou une canette est posee sur la planche de bord : c'est l'objet sur
 	# lequel le defaut s'etait vu. Les trois captures separent ce qui vient du
 	# reflet lui-meme, du halo, et des traces d'essuie-glace — sans quoi on
-	# corrige au jugé la couche qui n'y est pour rien.
+	# corrige au juge la couche qui n'y est pour rien.
 	await _aim_at(Vector3(0.45, 1.02, -1.40))
 	await get_tree().create_timer(0.6).timeout
 	mat.set_shader_parameter("veil", 0.0)
@@ -4025,7 +4032,17 @@ func _start_normal_world() -> void:
 # Le suivi vit ici, c'est le monde ; le taxi (taxi.gd) le consulte, et pose
 # dans nav["route"] l'itineraire de ses clients — les Y le suivent.
 
-## Le Y se pose tant de metres apres le panneau de la ville qui le precede.
+## Ce qu'on DEMANDE a road.gd pour le Y, en metres depuis le panneau du bourg.
+## CE N'EST PAS OU IL TOMBE, et le commentaire d'avant le promettait : la
+## demande est MORTE, toujours. program_fork (road.gd:608-615) plafonne au
+## premier echantillon a naitre plus les 90 m du panneau du Y — releve au banc,
+## demande 551, obtenu 674 : 366 m devant la voiture au lieu de 120. La
+## position vraie se lit dans road.fork_index(), et c'est la seule qui vaille
+## si l'on doit compter a partir du Y.
+##
+## La metrique d'arete, elle, ne se compte plus d'ici du tout : voir
+## _on_fork_committed, ou cette constante coutait +300 m sur une arete de
+## 1 100 (releve au banc, deux lancements : +302 et +300).
 const FORK_AFTER_TOWN_M := 120.0
 
 func _nav_begin(from: String, to: String) -> void:
@@ -4036,6 +4053,13 @@ func _nav_begin(from: String, to: String) -> void:
 
 func _on_town_reached(id: String) -> void:
 	if nav.is_empty():
+		return
+	# DANS LE ROUGE, LA CARTE N'AVANCE PAS. En theorie cette garde ne sert
+	# jamais : suspend_town() a rendu _town_g des l'endormissement, et road.gd
+	# n'emet town_reached que sur un _town_g >= 0. Elle est la pour le jour ou
+	# une ville serait programmee autrement — un panneau franchi dans le
+	# cauchemar programmerait la SUIVANTE, et le reveil en trouverait deux.
+	if world_mode == "nightmare":
 		return
 	var from: String = nav["at"]
 	nav["at"] = id
@@ -4066,10 +4090,53 @@ func _on_fork_committed(_side: String, id: String) -> void:
 	if nav.is_empty():
 		return
 	nav["to"] = id
-	# L'arete a commence A LA VILLE : ce qui en reste, c'est sa longueur
-	# moins le bout deja roule jusqu'au Y.
-	var rest: float = MapScript.edge_length(nav["at"], id) - FORK_AFTER_TOWN_M
-	road.program_town(road.head_index() + int(maxf(rest, 60.0) / RoadScript.STEP), id)
+	# L'arete se mesure DE PANNEAU A PANNEAU — c'est le seul contrat que
+	# map.gd passe au monde, et c'est celui que le prix de course et le
+	# bandeau du telephone recitent. La ville suivante tombe donc a
+	# nav["start_g"] + la longueur annoncee, et le Y n'entre pas dans le
+	# calcul : il est dans l'arete, pas avant elle. Meme expression que la
+	# branche a une sortie, deux ecrans plus haut.
+	#
+	# CE QU'ON PAYAIT AVANT, mesure au banc, meme graine : on repartait de
+	# head_index() — deja ~210 echantillons apres le panneau, le verdict du Y
+	# tombe la — en ne retirant que les 120 m d'une constante qui ne decrivait
+	# rien. Le bout deja roule etait donc compte deux fois moins un cinquieme.
+	# Releve par le banc du bas, ancienne formule remise sur une copie :
+	#   Corbeny > Malassis  : 1 100 annonces, 1 402 roules, +302 m (+27 %)
+	#   Malassis > Peyrelade: 1 350 annonces, 1 624 roules, +274 m (+20 %)
+	# (le plan, PLAN_VILLES.md:241-242, en avait releve +314 et +272 : la
+	# granularite de l'image bouge le premier chiffre d'une douzaine de metres,
+	# l'ordre de grandeur ne bouge pas.)
+	#
+	# Ce que ces 300 m coutaient au joueur : ils n'etaient PAS payes (la course
+	# se facture sur MapScript.path_length, taxi.gd:212-213, donc ~0,27 EUR au
+	# bareme de 0,90 EUR/km) ; nav_progress() saturait a 1,0 et le bandeau du
+	# telephone affichait "Vers X — 0 m" pendant tout ce temps ; et une arete
+	# annoncee 1 100 m en demandait 1 400 de vigilance et d'essence.
+	#
+	# nav["start_g"] survit a l'echange des rubans : _swap_to_branch
+	# (road.gd:663-684) repose _index0 = _fork_g + 1 + start (road.gd:672),
+	# donc l'index global CONTINUE — a un pas pres, et le pas fait deux metres.
+	# Verifie au banc : sur Malassis > Peyrelade, prise PAR LE BRIN MORT, la
+	# derive tient entre +0 et +8 m sur onze lancements (elle valait +272).
+	var g: int = nav["start_g"] \
+		+ int(MapScript.edge_length(nav["at"], id) / RoadScript.STEP)
+	# Le filet, et il ne mord sur aucune arete de cette carte : la plus courte
+	# qui suive un Y fait 1 100 m — Corbeny > Malassis, 550 echantillons —
+	# quand le verdict du Y tombe vers +210 et que le filet demande +138.
+	# Il vise le PREMIER ECHANTILLON A NAITRE et pas un de moins, parce
+	# que road.gd:330 arme la ville sur une egalite exacte (g == _town_g) : une
+	# ville posee dans le deja-bati ne s'armerait JAMAIS, et town_reached
+	# partirait quand meme — le joueur traverserait un panneau qui n'existe pas.
+	#
+	# LE ROUGE NE PROGRAMME RIEN. Un Y se tranche aussi bien endormi qu'eveille
+	# (le volant repond, le ruban bifurque), et la comptabilite ci-dessus doit
+	# donc suivre — mais poser une ville dans le cauchemar la ferait naitre au
+	# milieu du monde rouge, ce que suspend_town vient justement d'empecher.
+	# _nav_resume la reposera au reveil, sur nav["to"] mis a jour ici.
+	if world_mode != "nightmare":
+		road.program_town(maxi(g, road.head_index()
+			+ RoadScript.SAMPLES - RoadScript.BEHIND), id)
 	# L'itineraire GPS avance ou se recalcule : se tromper d'embranchement ne
 	# perd personne, la carte recompte.
 	var route: Array = nav["route"]
@@ -4111,6 +4178,16 @@ func _enter_nightmare() -> void:
 	if world_mode == "nightmare":
 		return
 	world_mode = "nightmare"
+
+	# LA CARTE N'A PLUS COURS. road.suspend_town() rend _town_g au rouge — la
+	# ville PROMISE ne viendra pas — et noircit celle qui est deja ARMEE.
+	# CE QUE C'ETAIT AVANT, ET C'ETAIT LA QUATRIEME PROMESSE DU J3 : personne
+	# n'appelait suspend_town(), un grep n'en rendait que sa definition. La
+	# ville du cauchemar etait donc une ville ORDINAIRE — fenetres allumees,
+	# lampadaires, panneaux clairs, au milieu du monde rouge —, et s'endormir
+	# 300 m avant Corbeny faisait NAITRE ET S'ALLUMER Corbeny dedans, parce que
+	# _town_g survivait au basculement. La reprise est dans _nav_resume.
+	#road.suspend_town()
 
 	# L'ambiance : daycycle rend la main, le rouge s'installe.
 	daycycle.override = true
@@ -4186,6 +4263,47 @@ func _exit_nightmare() -> void:
 	sleep.open_lids(0.6)
 	car.impact(Vector3(0.0, 6.5, 1.5))
 	car._show_flash("Tu te reveilles en sursaut")
+	#_nav_resume()
+
+
+## LE REVEIL REND LA CARTE. _enter_nightmare a rendu _town_g au rouge : sans
+## ceci, la ville visee ne viendrait JAMAIS et la nuit continuerait sur une
+## nationale sans panneau — la course en cours n'aurait plus de destination.
+##
+## LA FORMULE EST CELLE DU PLAN, et son elegance est qu'elle ne fait RIEN dans
+## le cas ordinaire : head + reste = head + (longueur - (head - depart) x STEP)
+## / STEP = depart + longueur / STEP, c'est-a-dire l'echantillon exact que
+## _nav_begin ou _on_fork_committed avait pose. Un aller-retour dans le rouge
+## remet donc la ville a sa place au pas pres, et le banc le mesure.
+##
+## LE FILET, LUI, MORD POUR DE VRAI ICI — au contraire de celui de
+## _on_fork_committed, qui ne mord sur aucune arete de la carte. On dort a
+## 25 m/s pendant des dizaines de secondes : la ville visee est souvent DEJA
+## DERRIERE au reveil, nav_progress() sature a 1,0 et la formule rend
+## head_index(). Or road.gd arme sur une egalite exacte (g == _town_g) et rend
+## town_reached des que head_index() >= _town_g : une ville posee dans le
+## deja-bati ne s'armerait jamais et le joueur "arriverait" a un bourg dont il
+## n'aurait vu ni le panneau ni une seule fenetre. On la repousse donc au
+## premier echantillon a naitre — 138 echantillons, 276 m devant —, et ce que
+## ca coute est honnete : l'arete mesure plus long que ce que la carte annonce,
+## exactement de ce qu'on a roule endormi. Dans le rouge, la navigation n'a
+## plus cours ; au reveil, elle reprend ou l'on est, pas ou l'on aurait du etre.
+func _nav_resume() -> void:
+	# La ville qui a traverse le rouge se rallume. road.gd n'a pas de fonction
+	# pour ca — suspend_town() est un aller simple —, donc on le fait d'ici,
+	# derriere le meme has_method que road.gd s'impose. Sur une ville deja
+	# rangee (sleep() l'a eteinte pendant qu'on dormait) l'appel est sans
+	# effet : _surf_glow vaut -1 et _light_mast ne porte que des -1.
+	var t = road.town
+	if t != null and t.has_method("set_dark"):
+		t.set_dark(false)
+	if nav.is_empty():
+		return
+	var left_m: float = MapScript.edge_length(nav["at"], nav["to"]) \
+		* (1.0 - nav_progress())
+	road.program_town(maxi(
+		road.head_index() + int(left_m / RoadScript.STEP),
+		road.head_index() + RoadScript.SAMPLES - RoadScript.BEHIND), nav["to"])
 
 
 func _dither_material() -> ShaderMaterial:
@@ -4973,15 +5091,44 @@ func _radio_test() -> void:
 ## arete de 950). Les bancs de la carte roulent au rail dans les TRANSITS,
 ## et rendent tout — voie et volant — la ou le jeu doit laisser choisir.
 func _rail(lane: float) -> void:
-	var i: int = road._closest_index(road._pos, car.global_position)
-	var right: Vector3 = road._right[i]
-	var p: Vector3 = road._pos[i] + right * lane
+	_rail_on(road._pos, lane)
+
+
+## Le rail sur une ligne QUELCONQUE : le ruban vivant, ou le brin mort d'un Y
+## quand le banc doit poser la voiture sur la sortie.
+##
+## LE PIEGE, paye plein pot dans maptest : la premiere version posait la
+## voiture SUR l'echantillon le plus proche. Elle ne tient que tant que la
+## voiture avance de plus d'un demi-pas par IMAGE. En dessous, l'echantillon
+## le plus proche ne change jamais, le rail ramene la voiture d'ou elle vient,
+## et LA VOITURE NE BOUGE PLUS — releve : a 8 m/s avec time_scale 2, soit
+## 0,27 m par image contre 1,0 m de rayon de cellule, head_index() est reste
+## colle a 1269 pendant plus de soixante images d'affilee, et le banc a attendu
+## sa fourche jusqu'au delai de 150 s. Le brin mort d'un Y se roule justement
+## au ralenti. On ne corrige donc que le LATERAL et le CAP : l'avance le long
+## de la ligne, on n'y touche pas — c'est la voiture qui la fait.
+##
+## CE N'ETAIT PAS QUE maptest. faretest approche et se gare a 10-12 m/s sous
+## time_scale 1,5 : 0,25 m par image, le meme regime exactement. Le A/B a ete
+## fait, une seule ligne changee et rien d'autre — rail colle : 8 rouges a
+## partir de LA PORTIERE VIT (la voiture n'atteignait jamais le bourg, donc
+## pas d'embarquement, donc tout le reste en cascade) ; rail qui laisse
+## avancer : 14 verts sur 14. Les huit echecs "anterieurs" de faretest
+## etaient CETTE ligne.
+func _rail_on(line: PackedVector3Array, lane: float) -> void:
+	var i: int = road._closest_index(line, car.global_position)
+	var fwd := Vector3(0.0, 0.0, -1.0)
+	if i + 1 < line.size():
+		fwd = (line[i + 1] - line[i]).normalized()
+	elif i > 0:
+		fwd = (line[i] - line[i - 1]).normalized()
+	var right: Vector3 = fwd.cross(Vector3.UP).normalized()
+	var p: Vector3 = line[i] \
+		+ fwd * (car.global_position - line[i]).dot(fwd) \
+		+ right * lane
 	car.global_position.x = p.x
 	car.global_position.z = p.z
-	var j: int = mini(i + 1, road._pos.size() - 1)
-	if j > i:
-		var fwd: Vector3 = (road._pos[j] - road._pos[i]).normalized()
-		car.rotation.y = atan2(-fwd.x, -fwd.z)
+	car.rotation.y = atan2(-fwd.x, -fwd.z)
 
 
 ## Amene le reticule sur un point d'ecran du telephone au berceau, par de
@@ -5199,6 +5346,200 @@ func _phone_test() -> void:
 	print("  LE BERCEAU REPREND : %s   (docked %s, ecran %s)" % [
 		phone.docked and phone.screen_on(), phone.docked, phone.screen_on()])
 
+	# --- l'ecran qui vit ---------------------------------------------------
+	# LE PIEGE QU'ON VIENT DE PAYER : la branche `viewing` de phone.gd posait
+	# UPDATE_ALWAYS et rien d'autre. Un ecran qui se re-rend soixante fois par
+	# seconde et un ecran fige se ressemblent trop pour qu'on s'en apercoive a
+	# l'oeil — il fallait deux captures et un compte de pixels.
+	#
+	# Les deux mesures qui suivent opposent le meme telephone a lui-meme, et le
+	# viewport rend a chaque image DES DEUX COTES : le FIGE, c'est l'appareil
+	# d'avant J0 — set_process(false) arrete tick(), et on tient UPDATE_ALWAYS
+	# au viewport a la main. Ce qui les separe n'est donc pas le rendu, c'est la
+	# vie. Le banc reproduit le defaut au lieu de croire sur parole qu'il a
+	# existe.
+	print("--- l'ecran qui vit ----------------------------------------------")
+	inter.target = phone
+	inter._pick_up()
+	inter._state = IS.State.HELD
+	phone.battery = 85.0
+	phone.set_screen_power(true)
+	phone.set_viewing(true)
+	phone._apps.set_page("gps")
+	car.gear = 5
+	# Echelle 6 et plafond a 30 images : les trente images de l'ecart valent
+	# alors AU MOINS une seconde reelle, donc six secondes de jeu — cent vingt
+	# metres a 20 m/s et trois minutes d'horloge (daycycle : deux secondes
+	# reelles par minute de jeu). Trois choses bougent donc a coup sur : le
+	# point du GPS (6 px sur les 51 px de l'arete Saint-Elme - Corbeny), la
+	# distance du bandeau, et l'heure de la barre d'etat. Sans le plafond, une
+	# machine a 200 images par seconde n'aurait laisse passer qu'un tiers de
+	# minute de jeu et le banc aurait rougi pour cause de VITESSE ; une machine
+	# plus lente, elle, ne peut que faire bouger davantage de pixels.
+	Engine.time_scale = 6.0
+	Engine.max_fps = 30
+	var moved_px := [0, 0]
+	for phase in 2:
+		phone.set_process(phase == 0)
+		phone._view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		for i in 12:
+			car.speed = 20.0
+			_rail(1.2)
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img_a: Image = phone._view.get_texture().get_image()
+		for i in 30:
+			car.speed = 20.0
+			_rail(1.2)
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img_b: Image = phone._view.get_texture().get_image()
+		# 216 x 384 = 82 944 pixels : on compare les OCTETS. Deux get_pixel par
+		# pixel, ce serait 166 000 appels de methode pour la meme reponse.
+		var da := img_a.get_data()
+		var db := img_b.get_data()
+		var npx := img_a.get_width() * img_a.get_height()
+		var stride := da.size() / npx
+		for k in npx:
+			var o := k * stride
+			for c in stride:
+				if da[o + c] != db[o + c]:
+					moved_px[phase] += 1
+					break
+	phone.set_process(true)
+	Engine.max_fps = 0
+	print("  L'ECRAN BOUGE EN MAIN : %s   (%d pixels changes en 30 images a 20 m/s, seuil 200 ; le MEME ecran rendu sans tick() : %d)" % [
+		moved_px[0] > 200 and moved_px[1] == 0, moved_px[0], moved_px[1]])
+
+	# LE COUT RESTE PLAT — ce que le correctif AJOUTE, et rien d'autre : les
+	# memes deux etats, le viewport rendant a chaque image des deux cotes.
+	# L'ecart, c'est tick() : le dessin de la carte a 10 Hz et les textes a
+	# 4 Hz.
+	#
+	# TROIS PRECAUTIONS, TROIS PIEGES PAYES.
+	#
+	# A L'ARRET : en roulant, l'image de ce jeu va de 5 a 25 ms selon que le
+	# ruban se re-triangule, qu'un prop naisse ou qu'une ville s'arme. Un
+	# premier releve en roulant a rendu +1,6 ms puis +0,3 ms d'un essai a
+	# l'autre — il mesurait la route. A l'arret le monde se tait (les images
+	# tiennent entre 3,0 et 4,2 ms) et le telephone dessine exactement la meme
+	# chose : son cout n'a pas de vitesse.
+	#
+	# VSYNC COUPEE : au defaut du projet (project.godot n'ecrit aucun
+	# display/window/vsync) l'image est calee sur l'ecran, 16,7 ms quoi qu'on y
+	# mette. Un ecart de 0,2 ms n'y apparait jamais — le banc serait vert sans
+	# rien avoir mesure. On la coupe le temps du releve et on la remet.
+	#
+	# MESURE APPARIEE — et c'est le correctif de cette ligne, parce que
+	# l'ancienne ne mesurait pas le telephone : elle mesurait la machine.
+	#
+	# CE QU'ELLE FAISAIT : elaguer puis moyenner les 200 images de chaque cote
+	# en un seul tas, et comparer les deux tas. Elle rendait +0,312 ms un
+	# lancement, -0,14 le suivant, +0,31 le troisieme — 0,45 ms de bruit, creux
+	# a bosse, sous un seuil de 0,50. Un seuil qu'on ne franchit qu'en battant
+	# le bruit de 10 % ne declare rien de plus que "pas monstrueux" ; et
+	# phone_apps.gd:374 l'ecrivait deja noir sur blanc, en constatant que le
+	# defaut des quatre dessins de trop (0,02 ms par image) passait vingt-cinq
+	# fois sous ce seuil-la sans le faire bouger d'un cheveu.
+	#
+	# CE QUI CHANGE, EN TROIS POINTS.
+	#
+	# 1. ON APPARIE. Chaque bloc rend UNE difference : la mediane de ses images
+	#    vivantes moins la mediane de ses images figees, prises a 100 ms l'une
+	#    de l'autre. Une derive lente — le thermique, un autre processus qui se
+	#    reveille — deplace les deux medianes du meme bloc ENSEMBLE et sort de
+	#    la difference. L'ancienne version la laissait tomber dans un seul des
+	#    deux tas, ou elle devenait un cout du telephone.
+	# 2. L'ORDRE S'INVERSE d'un bloc a l'autre : bloc pair le vivant passe en
+	#    premier, bloc impair en second. Ce qui reste de derive A L'INTERIEUR
+	#    d'un bloc change donc de signe une fois sur deux, et s'annule au lieu
+	#    de s'accumuler.
+	# 3. LE VERDICT EST LA MEDIANE DES 96 DIFFERENCES : une bouffee de la
+	#    machine sur un bloc ne la deplace pas. 96 blocs de 32 images par cote
+	#    (8 jetees a chaque changement de regime) = 4608 images mesurees contre
+	#    400, et ~18 s de releve contre ~2.
+	#
+	# LE BANC IMPRIME SA PROPRE RESOLUTION, et c'est la seule facon honnete de
+	# defendre un seuil. Deux nombres a cote du verdict :
+	#   — L'ECART DES DEUX MOITIES : la mediane des 48 premiers blocs moins
+	#     celle des 48 derniers. Deux mesures independantes de la meme chose,
+	#     dans le meme lancement — leur ecart EST le bruit de l'estimateur, il
+	#     ne l'estime pas. Releve : 0,005 a 0,09 ms.
+	#   — L'ECART INTERQUARTILE des differences de bloc : ce qu'un bloc SEUL
+	#     vaudrait (0,08 ms machine au repos, 1,6 ms machine occupee), donc ce
+	#     que la mediane de 96 divise.
+	#
+	# LE SEUIL EST A 0,30 ms, ET C'EST UN CHIFFRE MESURE, pas un chiffre rond.
+	# Quatorze lancements de cette version : mediane appariee de -0,070 a
+	# +0,173 ms, douze fois sous 0,09. 0,30 vaut 1,7 fois le pire releve et
+	# 3,5 fois le deuxieme pire. Le poser a 0,20 ne laisserait que 0,03 ms
+	# au-dessus du pire — la ligne clignoterait des que la machine s'occupe, et
+	# un banc qui clignote ne se lit plus : c'est le faux vert d'a cote qu'on
+	# finit par croire.
+	#
+	# CE QUE CA VAUT, EN CLAIR : la mesure est 2,6 fois plus fine qu'avant
+	# (0,17 ms de bruit maxi contre 0,45) sous un budget 1,7 fois plus serre.
+	# Ce qu'on a gagne, c'est le RAPPORT : 1,11 avant, 1,7 maintenant.
+	#
+	# ET CE QU'ELLE NE VOIT TOUJOURS PAS, parce qu'il faut le dire : 0,02 ms
+	# par image — le defaut des quatre dessins de trop — reste cinq fois sous
+	# la resolution de la machine. Cette ligne attrape une REGRESSION DE REGIME,
+	# un telephone qui se remettrait a travailler A CHAQUE image ; elle
+	# n'attrapera jamais un gaspillage de quelques microsecondes. Celui-la se
+	# compte dans phone_apps.gd, en comptant les dessins, et le renvoi vaut
+	# dans les deux sens : ce banc-ci ne remplace pas cette sonde-la.
+	Engine.time_scale = 1.0
+	car.speed = 0.0
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	var samples := [[], []]
+	var deltas := []
+	for blk in 96:
+		var med_ms := [0.0, 0.0]
+		for k in 2:
+			var phase: int = k if blk % 2 == 0 else 1 - k
+			phone.set_process(phase == 0)
+			var sv := []
+			var t0 := Time.get_ticks_usec()
+			for i in 32:
+				car.speed = 0.0
+				await get_tree().process_frame
+				phone._view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+				var t1 := Time.get_ticks_usec()
+				# Les huit premieres images d'un bloc ne comptent pas : le
+				# telephone vient de changer de regime.
+				if i >= 8:
+					sv.append(float(t1 - t0) * 0.001)
+				t0 = t1
+			sv.sort()
+			med_ms[phase] = 0.5 * (sv[sv.size() / 2 - 1] + sv[sv.size() / 2])
+			samples[phase].append_array(sv)
+		deltas.append(med_ms[0] - med_ms[1])
+	phone.set_process(true)
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED)
+	# Les deux moities se prennent DANS L'ORDRE DES BLOCS : c'est de leur ecart
+	# qu'on tire la resolution, donc on les separe avant de trier quoi que ce
+	# soit.
+	var half_med := [0.0, 0.0]
+	for h in 2:
+		var hv: Array = (deltas as Array).slice(
+			h * deltas.size() / 2, (h + 1) * deltas.size() / 2)
+		hv.sort()
+		half_med[h] = 0.5 * (hv[hv.size() / 2 - 1] + hv[hv.size() / 2])
+	var split_ms: float = half_med[0] - half_med[1]
+	deltas.sort()
+	var nd: int = deltas.size()
+	var extra_ms: float = 0.5 * (deltas[nd / 2 - 1] + deltas[nd / 2])
+	var iqr_ms: float = deltas[3 * nd / 4] - deltas[nd / 4]
+	var med_side := [0.0, 0.0]
+	for phase in 2:
+		var sv2: Array = samples[phase]
+		sv2.sort()
+		med_side[phase] = 0.5 * (sv2[sv2.size() / 2 - 1] + sv2[sv2.size() / 2])
+	print("  LE COUT RESTE PLAT    : %s   (%+.3f ms d'image, seuil 0,30 ; mediane de %d differences APPARIEES — une par bloc, l'ordre des deux cotes s'inversant d'un bloc a l'autre. LA RESOLUTION, MESUREE ICI MEME : %+.3f ms entre la mediane des 48 premiers blocs et celle des 48 derniers, soit deux mesures independantes de la meme chose ; un bloc seul vaudrait %.3f ms d'ecart interquartile. Medianes brutes : %.2f ms vivant contre %.2f ms fige, sur %d images de chaque)" % [
+		absf(extra_ms) < 0.20, extra_ms, nd, split_ms, iqr_ms,
+		med_side[0], med_side[1], (samples[0] as Array).size()])
+	phone.set_viewing(false)
+	Engine.time_scale = 1.0
 	get_tree().quit()
 
 
@@ -5206,10 +5547,20 @@ func _phone_test() -> void:
 # Banc d'essai de la carte et des embranchements
 # --------------------------------------------------------------------------
 
-## Trois choses a prouver : le graphe compte juste (Dijkstra sur les
+## Quatre choses a prouver : le graphe compte juste (Dijkstra sur les
 ## longueurs ecrites), la route HONORE la metrique (la ville tombe ou la
-## carte le dit), et le Y se prend AU VOLANT — dans les deux sens, y compris
-## l'echange des rubans quand on passe sur le brin mort, sans couture.
+## carte le dit), le Y se prend AU VOLANT — dans les deux sens, y compris
+## l'echange des rubans quand on passe sur le brin mort, sans couture — et la
+## metrique NE DERIVE PAS quand on enchaine les Y.
+##
+## LA QUATRIEME EST NEUVE, ET C'EST L'ANGLE MORT QUI A LAISSE PASSER +314 m.
+## Ce banc n'a longtemps mesure qu'une arete : la PREMIERE, celle qui n'a pas
+## de Y — "Corbeny apres 952 m, la carte dit 950". Deux metres, verdict vert,
+## et pendant ce temps les deux aretes suivantes en prenaient 314 et 272 de
+## rab sans que rien ne rougisse. Le banc roule desormais les TROIS aretes
+## consecutives qu'il traversait deja (Saint-Elme > Corbeny sans Y, Corbeny >
+## Malassis par le cote vivant, Malassis > Peyrelade par le brin mort) et
+## imprime la derive de chacune, panneau a panneau.
 func _map_test() -> void:
 	await get_tree().create_timer(0.8).timeout
 	_start_normal_world()
@@ -5236,6 +5587,17 @@ func _map_test() -> void:
 		seen[0] = id
 		seen_at[0] = road.head_index())
 	var g0: int = road.head_index()
+	# Le carnet de la metrique : un panneau franchi, l'index global ou il l'a
+	# ete. Il s'ecrit tout seul pendant que le banc roule ses trois aretes, et
+	# se lit tout en bas. On note l'INDEX et pas une distance parcourue : c'est
+	# la meme unite que celle dans laquelle la navigation programme les villes,
+	# donc la derive qu'on mesure est exactement celle qu'elle fabrique — une
+	# integration de la vitesse mesurerait aussi les ecarts de trajectoire du
+	# rail, qui ne regardent personne ici.
+	var marks := [["Saint-Elme", g0]]
+	var marks_y := {}
+	road.town_reached.connect(func(id: String) -> void:
+		marks.append([id, road.head_index()]))
 	car.gear = 5
 	var t := 0.0
 	var shot_town := false
@@ -5262,7 +5624,11 @@ func _map_test() -> void:
 	road.fork_committed.connect(func(side: String, id: String) -> void:
 		committed_side[0] = side
 		committed[0] = id
-		commits[0] += 1)
+		commits[0] += 1
+		# L'arete EN COURS a eu son Y : elle part du dernier panneau franchi.
+		# C'est ce que le releve du bas appelle "(Y)", et c'est lui qui
+		# distingue les deux aretes qui comptent de celle qui ne prouve rien.
+		marks_y[marks.size() - 1] = true)
 	var expect_main: String = nav["to"]
 	var shot_sign := false
 	t = 0.0
@@ -5270,10 +5636,18 @@ func _map_test() -> void:
 		await get_tree().process_frame
 		t += get_process_delta_time()
 		car.speed = maxf(car.speed, 22.0)
-		# Au rail dans l'approche ; VOIE ET VOLANT RENDUS des le panneau —
-		# au Y la route file droit, et ce passage prouve exactement ca : sans
-		# toucher a rien, tout droit mene au cote vivant.
-		if road._fork_g < 0 or road.head_index() < road._fork_g - RoadScript.FORK_SIGN_AT:
+		# Au rail dans l'approche ; VOIE ET VOLANT RENDUS au panneau — au Y la
+		# route file droit, et ce passage prouve exactement ca : sans toucher
+		# a rien, tout droit mene au cote vivant.
+		#
+		# Le rail lache A l'echantillon du panneau (<=), pas un avant : il
+		# prend son cap sur le segment SOUS la voiture, et le dernier segment
+		# d'avant le panneau est encore dans le virage — 1,03 deg au pire
+		# (MAX_CURVE * STEP). Rendre le volant sur ce degre-la, c'est partir
+		# avec lui : 2,55 m de derive sur les 142 m de la fenetre, plus que
+		# les 2,2 m qui tranchent le Y. Le banc jugerait son propre depart.
+		if road.fork_index() < 0 \
+				or road.head_index() <= road.fork_index() - RoadScript.FORK_SIGN_AT:
 			_rail(1.2)
 		if not shot_sign and road._fork_sign != null and road._fork_sign.visible \
 				and car.global_position.distance_to(road._fork_sign.global_position) < 70.0:
@@ -5298,21 +5672,21 @@ func _map_test() -> void:
 		# l'ECHANGE des rubans qu'on prouve ici — le coup de volant, lui,
 		# appartient au joueur (tout asservi de banc a fond de butee sous
 		# des images de deux secondes finissait en ronds dans le champ).
+		#
+		# Au rail SUR LE BRIN MORT, comme on roule au rail sur le vivant : la
+		# voiture avance a sa vitesse, seul son lateral est pose. Elle etait
+		# COLLEE sur l'echantillon le plus proche avant — a 8 m/s ca ne bouge
+		# plus du tout (voir _rail_on) et le banc attendait un echange qui ne
+		# pouvait pas venir : sans avance, pas de fenetre, pas de verdict.
 		var near: bool = road.fork_state() in ["grow", "window"] \
-			and road.head_index() >= road._fork_g - 25
+			and road.head_index() >= road.fork_index() - 25
 		if near:
 			Engine.time_scale = 2.0
 			car.speed = minf(maxf(car.speed, 8.0), 9.0)
 			next_fork[0] = true
 			main_then[0] = road._fork_main
-			if road.head_index() >= road._fork_g + 4 and road._bpos.size() > 1:
-				var bi: int = road._closest_index(road._bpos, car.global_position)
-				var bj: int = mini(bi + 1, road._bpos.size() - 1)
-				car.global_position.x = road._bpos[bi].x
-				car.global_position.z = road._bpos[bi].z
-				if bj > bi:
-					var bf: Vector3 = (road._bpos[bj] - road._bpos[bi]).normalized()
-					car.rotation.y = atan2(-bf.x, -bf.z)
+			if road.head_index() >= road.fork_index() + 4 and road._bpos.size() > 1:
+				_rail_on(road._bpos, 0.0)
 			else:
 				_rail(1.2)
 		else:
@@ -5324,10 +5698,31 @@ func _map_test() -> void:
 	car.speed = 0.0
 	await get_tree().process_frame
 	# La continuite du ruban echange : aucun trou, aucune cassure.
+	#
+	# ON MESURE L'ECART AU PAS, PAS LA LONGUEUR DU PAS, et c'est le correctif
+	# de cette ligne. Elle comparait `pas maxi < STEP * 1,5` : un test SANS
+	# PLANCHER, qui laissait passer sans un mot le defaut que _grow_branch
+	# raconte avoir paye — la tete de reprise rangee SUR le dernier point au
+	# lieu d'un pas au-dela, « un segment de longueur nulle, une normale en 0/0
+	# et un faux virage de 90 degres au releve ». Un pas de 0,00 m passait
+	# « < 3,0 » les doigts dans le nez. |pas - STEP| l'attrape des deux cotes.
+	#
+	# ET LE SEUIL S'ECRIT MAINTENANT DANS LA LIGNE. Elle imprimait « pas maxi
+	# 2.00 m pour 2.0 » : le 2.0 etait STEP, pas le seuil, qui valait 3,0. Elle
+	# avait donc l'air d'etre a la limite quand elle avait 50 % de marge — un
+	# releve qui ment sur son propre confort.
+	#
+	# LE PLAFOND DU VIRAGE VIENT DE road.gd, ET C'EST CELUI DU BRIN MORT :
+	# _grow_branch part a 2 x FORK_BEND (0,015 rad/m, au-dessus de MAX_CURVE —
+	# la sortie s'ecarte plus vite que la nationale ne tourne), soit
+	# 1,72 deg/pas. Le 4,0 d'avant etait un chiffre rond a 2,3 fois le plafond.
+	var ceil_deg: float = rad_to_deg(maxf(2.0 * RoadScript.FORK_BEND,
+		RoadScript.MAX_CURVE) * RoadScript.STEP)
 	var max_gap := 0.0
 	var max_turn := 0.0
 	for i in road._pos.size() - 1:
-		max_gap = maxf(max_gap, road._pos[i].distance_to(road._pos[i + 1]))
+		max_gap = maxf(max_gap,
+			absf(road._pos[i].distance_to(road._pos[i + 1]) - RoadScript.STEP))
 		if i > 0:
 			var d0: Vector3 = (road._pos[i] - road._pos[i - 1]).normalized()
 			var d1: Vector3 = (road._pos[i + 1] - road._pos[i]).normalized()
@@ -5336,9 +5731,10 @@ func _map_test() -> void:
 		next_fork[0] and commits[0] > n0 and committed_side[0] != main_then[0]
 		and committed[0] == nav["to"], next_fork[0], main_then[0],
 		committed_side[0], committed[0]])
-	print("  LE RUBAN EST SANS COUTURE : %s   (pas maxi %.2f m pour %.1f, virage maxi %.1f deg/pas)" % [
-		max_gap < RoadScript.STEP * 1.5 and max_turn < 4.0,
-		max_gap, RoadScript.STEP, max_turn])
+	print("  LE RUBAN EST SANS COUTURE : %s   (sur les %d points du ruban qui vient d'etre echange : ecart au pas de %.4f m pour un seuil de 0,01 — le pas nominal vaut %.1f m et un point DOUBLE en ferait 2,000 d'ecart —, virage maxi %.2f deg/pas pour un SEUIL de %.2f, soit le plafond du brin mort — 2 x FORK_BEND x STEP, %.2f deg/pas — et 15 %% pour le float ; le brin y roule PAR CONSTRUCTION, c'est bien pour ca qu'il faut le mesurer la et pas plus haut)" % [
+		road._pos.size() > 100 and max_gap < 0.01 and max_turn < ceil_deg * 1.15,
+		road._pos.size(), max_gap, RoadScript.STEP, max_turn,
+		ceil_deg * 1.15, ceil_deg])
 
 	# --- l'ecran GPS -------------------------------------------------------
 	var phone = car.interaction.grabbables.back()
@@ -5353,6 +5749,1442 @@ func _map_test() -> void:
 	print("  LE GPS SAIT OU ON EST : %s   (\"%s\", progression %.2f)" % [
 		not nav.is_empty() and nav_progress() >= 0.0,
 		phone._apps._gps_line.text, nav_progress()])
+
+	# --- la troisieme arete : on la finit ----------------------------------
+	# On est sur Malassis > Peyrelade depuis le brin mort, quelque part apres
+	# le Y. Il reste ~900 m a rouler jusqu'au panneau : c'est cette arete-la,
+	# celle qui suit un ECHANGE DE RUBAN, qui derivait de +272 m.
+	print("--- la metrique, de panneau a panneau ----------------------------")
+	Engine.time_scale = 5.0
+	t = 0.0
+	while t < 150.0 and marks.size() < 4:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+	car.speed = 0.0
+
+	# Le releve. Une arete se mesure DE PANNEAU A PANNEAU — c'est ce que
+	# map.gd promet, ce que le prix de course facture et ce que le bandeau du
+	# telephone recite —, donc la derive est la difference entre les metres
+	# roules entre deux panneaux et les metres annonces par la carte.
+	#
+	# LE SEUIL EST A 30 m, comme sur LA VILLE TOMBE JUSTE, et ce qu'il laisse
+	# passer n'est pas de la derive : c'est de la GRANULARITE. Le rendez-vous
+	# se pose a l'echantillon (2 m), l'echange de ruban en coute un autre
+	# (road.gd:672, "a un pas pres"), et le panneau se franchit A L'IMAGE —
+	# une image longue avale plusieurs echantillons d'un coup. Releve sur onze
+	# lancements : les deux aretes a Y tiennent entre +0 et +8 m, et c'est la
+	# PREMIERE qui monte le plus haut (+12) — celle ou le banc arrete la
+	# voiture pour la capture 81_ville.png, et ou l'image qui reprend engloutit
+	# six echantillons. Le seuil couvre donc deux fois et demie le pire releve,
+	# et pas davantage : la derive qu'on traque ici ne se comptait pas en
+	# echantillons, elle se comptait en centaines de metres.
+	#
+	# VERIFIE EN LE CASSANT : _on_fork_committed remis a l'ancienne formule
+	# (head_index() + edge_length - FORK_AFTER_TOWN_M) sur une copie jetable du
+	# depot. Cette ligne : false, +302 sur Corbeny > Malassis et +274 sur
+	# Malassis > Peyrelade (+300 et +272 au second lancement) — pendant que LA
+	# VILLE TOMBE JUSTE, deux ecrans plus haut, restait verte a +2 m sur la
+	# seule arete sans Y. C'est le defaut entier en trois lignes de console.
+	#
+	# DEUX LIGNES, ET PAS UNE : LA COUVERTURE N'EST PAS LE VERDICT. La version
+	# d'avant tranchait sur `marks.size() >= 4 and ys >= 2 and worst < 30` —
+	# un ET entre une mesure et une CONDITION D'EXPERIENCE. Le banc ne GARANTIT
+	# pas ses deux Y, il les CONSTATE : le Y se prend au volant, et quand il
+	# part du mauvais cote l'itineraire change, le compte de Y tombe a 1 et la
+	# ligne rougissait — sous un titre qui parle de derive. C'est arrive, et le
+	# releve dit tout : « 4 aretes dont 1 avec Y, pire derive 2 m pour 30 ».
+	# Metrique parfaite, ligne rouge. Un rouge qu'on apprend a ne plus croire
+	# est pire qu'un vert de trop.
+	#
+	# Alors : LA METRIQUE NE DERIVE PLUS ne juge plus que la derive, sur les
+	# aretes que le banc a EFFECTIVEMENT roulees ; et ce que le banc a roule se
+	# lit sur la ligne d'a cote, qui porte son propre nom et son propre
+	# verdict. Quand la seconde rougit, la premiere ne dit plus rien de la
+	# route a Y — mais elle le dit sans mentir sur ce qu'elle a mesure, et on
+	# relance.
+	var worst := 0.0
+	var ys := 0
+	var told := []
+	for i in range(1, marks.size()):
+		var a: String = marks[i - 1][0]
+		var b: String = marks[i][0]
+		var ann: float = MapScript.edge_length(a, b)
+		var run := float(int(marks[i][1]) - int(marks[i - 1][1])) * RoadScript.STEP
+		var y: bool = marks_y.has(i - 1)
+		if y:
+			ys += 1
+		worst = maxf(worst, absf(run - ann))
+		told.append("%s > %s%s annonce %d, roule %d, derive %+d" % [
+			a, b, " (Y) " if y else " ", int(ann), int(run), int(round(run - ann))])
+	print("  LA METRIQUE NE DERIVE PLUS : %s   (pire derive %.0f m pour 30, sur les %d arete(s) roulee(s) de panneau a panneau ; %s)" % [
+		told.size() > 0 and worst < 30.0, worst, told.size(), " | ".join(told)])
+	# LA COUVERTURE, ET ELLE N'EST PAS DECORATIVE : sans deux aretes a Y, la
+	# ligne du dessus est verte sur une route qui ne prouve rien — c'est
+	# exactement l'angle mort qui a laisse passer +314 m pendant que la seule
+	# arete sans Y affichait +2. Elle rougit quand le banc n'a pas pu rouler ce
+	# qu'il voulait rouler (un Y pris du mauvais cote, un echange qui n'est pas
+	# venu, une image trop longue au panneau), et c'est une raison de RELANCER,
+	# pas un defaut du jeu. On imprime donc ce qui manque, pas seulement un
+	# faux.
+	print("  LE BANC A ROULE SES DEUX Y  : %s   (couverture, PAS metrique : %d arete(s) roulee(s) pour 3 attendues, dont %d a fourche pour 2 — le cote vivant sur Corbeny > Malassis, l'echange de rubans sur Malassis > Peyrelade)" % [
+		told.size() >= 3 and ys >= 2, told.size(), ys])
+
+	Engine.time_scale = 1.0
+	get_tree().quit()
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai des plans de ville
+# --------------------------------------------------------------------------
+
+## Le J1 ne pose pas une pierre dans le monde : il ecrit le PLAN des huit
+## bourgs, et rien d'autre. Ce banc est donc le seul du depot a ne pas demarrer
+## la nuit — pas de monstres, pas de taxi, pas d'horloge, pas une seule image
+## attendue. Huit tirages de donnee pure, huit dessins, et il rend la main.
+##
+## Le dessin n'est pas une coquetterie. Un plan de ville qu'on ne peut pas
+## regarder ne se corrige pas : les neuf invariants ci-dessous diraient encore
+## "true" d'un bourg dont toutes les rues seraient tassees dans un coin. C'est
+## le trace ASCII qui repond a la seule question qu'aucun seuil ne pose — est-ce
+## que ca ressemble a un bourg.
+##
+## LE RUBAN N'A PAS BOUGE n'est pas ici et n'y sera pas : il appartient a
+## maptest, qui roule pour de vrai. On le renvoie, on ne le duplique pas — deux
+## bancs qui mesurent la meme chose finissent toujours par ne plus etre
+## d'accord, et c'est le faux qu'on croit alors. Mais le renvoi est une NOTE,
+## en bas de la section, pas une ligne d'invariant : il a longtemps porte le
+## titre en capitales et les deux-points d'un verdict sans porter de booleen,
+## et une ligne qui ne peut pas rougir sous un nom d'invariant rassure sans
+## rien garantir. La place d'invariant revient a LA VILLE SE COUD AU RUBAN,
+## que ce banc-ci peut mesurer sans une image : les trois cotes que
+## town_plan.gd recopie de road.gd a la main.
+##
+## LE PIEGE DU BANC, paye ici : le banc ne doit RIEN emprunter au fichier qu'il
+## juge. town_plan.gd sait deja calculer la distance d'une facade a une rue, la
+## rue la plus proche d'un point et l'emprise d'une rue ; s'en servir pour se
+## noter, c'est demander a l'accuse d'ecrire le verdict. Distances et emprises
+## sont donc recalculees en dessous (_plan_seg_seg, _plan_axis_dist,
+## _plan_emprise), a la main, et la grille de nearest() est confrontee au
+## balayage complet des sept rues.
+##
+## LE SECOND PIEGE, paye plus tard et plus cher : un seuil qui recite une
+## CONSTANTE du fichier juge ne mesure rien non plus. Trois lignes en sont
+## mortes ici — la marge des murs comparee a KEEP_CLEAR, l'ecart des adresses
+## compare a une fenetre qui contenait walk_mid() par construction, et un
+## "seen_max < 12" quand sept rues font sept. Chaque seuil de ce banc se
+## compare desormais a une PROMESSE (l'emprise de la rue, la bande de trottoir,
+## le cout du balayage complet), jamais a un nombre pris dans town_plan.gd.
+func _plan_test() -> void:
+	var TownPlan := preload("res://scripts/town_plan.gd")
+	var plans := []
+	for id in MapScript.towns():
+		plans.append(TownPlan.of(id))
+
+	# --- la graine ---------------------------------------------------------
+	print("--- la graine ----------------------------------------------------")
+	# Trois tirages NEUFS du meme bourg. On ne peut pas les demander a of() :
+	# il memoise, et trois fois le meme objet ne prouve rien du tout. On refait
+	# donc a la main ce que of() fait, trois fois, et on compare les octets —
+	# rues, carrefours, mats, maisons, adresses et enveloppe.
+	var sigs := []
+	for k in 3:
+		var q = TownPlan.new()
+		q.id = "Corbeny"
+		q._generate(MapScript.seed_of("Corbeny"))
+		sigs.append(_plan_sig(q))
+	var same: bool = sigs[0] == sigs[1] and sigs[1] == sigs[2]
+	print("  CORBENY EST TOUJOURS CORBENY     : %s   (3 tirages neufs, graine %d, %d octets de plan compares au bit)" % [
+		same, MapScript.seed_of("Corbeny"), (sigs[0] as PackedByteArray).size()])
+
+	var twins := 0
+	var len_lo := 1.0e9
+	var len_hi := -1.0e9
+	for i in plans.size():
+		len_lo = minf(len_lo, plans[i].total_len())
+		len_hi = maxf(len_hi, plans[i].total_len())
+		for j in range(i + 1, plans.size()):
+			if plans[i].streets.size() == plans[j].streets.size() \
+					and absf(plans[i].total_len() - plans[j].total_len()) < 0.5:
+				twins += 1
+	print("  LES HUIT VILLES SONT DIFFERENTES : %s   (%d paires, %d jumelle(s) ; longueur de rue cumulee de %.0f a %.0f m)" % [
+		twins == 0, plans.size() * (plans.size() - 1) / 2, twins, len_lo, len_hi])
+
+	# --- la geometrie du plan ----------------------------------------------
+	print("--- la geometrie du plan -----------------------------------------")
+	# L'angle droit n'est pas espere, il est construit : une rue est parallele
+	# ou perpendiculaire au tronc, et rien d'autre. Ce qu'on mesure ici, c'est
+	# que la construction n'a pas ete contournee quelque part.
+	var nj := 0
+	var worst_angle := 0.0
+	for p in plans:
+		for j in p.junction_count():
+			nj += 1
+			var da: Vector2 = p.street_dir(p.junction_a(j))
+			var db: Vector2 = p.street_dir(p.junction_b(j))
+			worst_angle = maxf(worst_angle, absf(absf(da.angle_to(db)) - PI * 0.5))
+	print("  TOUT CARREFOUR EST UN RECTANGLE        : %s   (%d carrefours, ecart maxi a l'angle droit %.6f rad, seuil 0,001)" % [
+		worst_angle < 0.001, nj, worst_angle])
+
+	# Deux axes de rue qui se coupent sans carrefour declare, c'est une rue qui
+	# traverse une autre rue au milieu du bitume : le GPS y ferait tourner, la
+	# ville n'y poserait pas de pave. Force brute sur toutes les paires.
+	var stray := 0
+	var pairs := 0
+	for p in plans:
+		for i in p.streets.size():
+			for j in range(i + 1, p.streets.size()):
+				pairs += 1
+				var x = Geometry2D.segment_intersects_segment(
+					_plan_end(p, i, 0), _plan_end(p, i, 1),
+					_plan_end(p, j, 0), _plan_end(p, j, 1))
+				if x == null:
+					continue
+				var listed := false
+				for k in p.junction_count():
+					var ja: int = p.junction_a(k)
+					var jb: int = p.junction_b(k)
+					if (ja == i and jb == j) or (ja == j and jb == i):
+						if p.junction_su(k).distance_to(x as Vector2) < 0.01:
+							listed = true
+				if not listed:
+					stray += 1
+	print("  AUCUNE RUE NE SE CROISE HORS CARREFOUR : %s   (%d paires de rues examinees, %d croisement(s) sans carrefour)" % [
+		stray == 0, pairs, stray])
+
+	# Le cycle, c'est la SECONDE CHANCE : sans lui, se tromper de rue est une
+	# impasse et il faut refaire le chemin a l'envers. On le compte sur le VRAI
+	# graphe — les carrefours pour noeuds, les troncons entre deux carrefours
+	# consecutifs d'une meme rue pour aretes.
+	#
+	# PAS avec la formule du plan (docs/PLAN_VILLES.md:483, "cycles = rues -
+	# noeuds + 1") : elle prend une rue pour une arete alors qu'une rue en porte
+	# jusqu'a trois, et sur Corbeny — 7 rues, 12 carrefours — elle rend 7 - 12
+	# + 1 = -4, donc "false" sur un bourg dont on fait le tour du pate. Le
+	# nombre cyclomatique se compte aretes - noeuds + morceaux, et rien d'autre.
+	var cyc_min := 1 << 30
+	var comps_max := 0
+	var routes := 0
+	var routes_ok := 0
+	var hops_max := 0
+	for p in plans:
+		var nv: int = p.junction_count()
+		var parent := PackedInt32Array()
+		parent.resize(nv)
+		for k in nv:
+			parent[k] = k
+		var ne := 0
+		for i in p.streets.size():
+			var cross: bool = p.streets[i]["kind"] == "cross"
+			var along := []
+			for j in nv:
+				if p.junction_a(j) != i and p.junction_b(j) != i:
+					continue
+				var su: Vector2 = p.junction_su(j)
+				along.append([su.y if cross else su.x, j])
+			along.sort_custom(func(u, v): return u[0] < v[0])
+			for k in along.size() - 1:
+				ne += 1
+				_plan_union(parent, along[k][1], along[k + 1][1])
+		var roots := {}
+		for k in nv:
+			roots[_plan_find(parent, k)] = true
+		comps_max = maxi(comps_max, roots.size())
+		cyc_min = mini(cyc_min, ne - nv + roots.size())
+		# Du panneau d'entree (s = 0, u = 0, sur le tronc) a chacune des quatre
+		# portes. Une liste non vide ne suffit pas : on verifie que deux rues
+		# consecutives de l'itineraire se croisent vraiment, et que la derniere
+		# est bien celle de l'adresse.
+		for k in p.addrs.size():
+			routes += 1
+			var r: PackedInt32Array = p.route(Vector2.ZERO, p.addr_su(k))
+			hops_max = maxi(hops_max, r.size())
+			var ok: bool = r.size() > 0 and r[r.size() - 1] == int(p.addrs[k]["street"])
+			for m in r.size() - 1:
+				var linked := false
+				for j in nv:
+					var ja: int = p.junction_a(j)
+					var jb: int = p.junction_b(j)
+					if (ja == r[m] and jb == r[m + 1]) or (ja == r[m + 1] and jb == r[m]):
+						linked = true
+				if not linked:
+					ok = false
+			if ok:
+				routes_ok += 1
+	print("  LE GRAPHE EST CONNEXE ET BOUCLE        : %s   (1 seul morceau par bourg : %d au pire ; cycles mini %d — aretes - noeuds + morceaux sur le graphe des carrefours —, seuil 1 ; %d/%d itineraires du panneau a une porte, %d rues au plus)" % [
+		comps_max == 1 and cyc_min >= 1 and routes_ok == routes,
+		comps_max, cyc_min, routes_ok, routes, hops_max])
+
+	# --- ce qui est bati ---------------------------------------------------
+	print("--- ce qui est bati ----------------------------------------------")
+	# La marge se mesure de l'EMPREINTE a l'AXE, sur les quatre cotes du
+	# rectangle et sur TOUTES les rues, la sienne comprise — town_plan.gd, lui,
+	# saute sa propre rue (il a le droit : le retrait la garantit). Un banc qui
+	# sauterait la meme rue ne verrait jamais un retrait mal pose.
+	#
+	# CE QUI A CHANGE, ET POURQUOI CETTE LIGNE NE POUVAIT PAS ROUGIR. Le seuil
+	# etait "worst_clear >= 4.5" : un seul nombre pour tout le bourg, et ce
+	# nombre etait la valeur qu'avait alors KEEP_CLEAR dans le fichier juge. Le
+	# banc recitait la constante de l'accuse au lieu de mesurer sa promesse.
+	# Deux consequences, toutes deux payees :
+	#  - du seul cote que le generateur ne verifie pas lui-meme — la rue de la
+	#    maison, garantie par le retrait —, la ligne ne pouvait pratiquement
+	#    pas descendre jusqu'au seuil : SETBACK pose la facade a 6,0 m de
+	#    l'axe, et le lacet de 4 degres ne rapproche le coin d'une facade de
+	#    13 m que de 6,5 x sin(4) = 0,45 m. Soit 5,55 m pour 4,5 demandes,
+	#    1,05 m d'avance permanente et rien a mesurer ;
+	#  - surtout, 4,5 derivait de l'emprise d'une RUE (4,2 m de l'axe au bord
+	#    de trottoir) et le bourg en a DEUX : le tronc en tient 8,0. Deux
+	#    maisons de Vieux-Bourg ont tenu 0,21 m DANS le trottoir de la
+	#    nationale — 7,79 m de l'axe pour 8,0 d'emprise — pendant que cette
+	#    ligne affichait "true" sous le titre AUCUN BATIMENT SUR UNE RUE. Le
+	#    titre etait faux deux fois et le banc ne l'a jamais dit.
+	#
+	# On compare donc rue par rue, a l'EMPRISE DE LA RUE PORTEUSE, resommee
+	# ici a la main depuis les trois nombres bruts du plan (demi-chaussee +
+	# accotement + trottoir) : ni edge_half(), ni KEEP_CLEAR, ni 4,5. Une marge
+	# negative, c'est un mur dans le trottoir : rouge, et on dit quelle ville.
+	#
+	# VERIFIE EN LE CASSANT, sur une copie jetable du depot : la garde des murs
+	# remise a plat (_se = 4,5 m pour toutes les rues, l'etat d'avant la
+	# correction de town_plan.gd), cette ligne tombe a false — 14 empietements,
+	# un mur a 2,639 m DANS le trottoir de la nationale, a Malassis. Sur le
+	# MEME plan, l'ancienne ligne imprimait "true (marge mini facade/axe
+	# 4.579 m, seuil 4,5)" : elle voyait le 4,579 d'une venelle, qui a 0,379 m
+	# d'avance sur son emprise de 4,2, et jamais le 5,361 du tronc, qui en
+	# manque 2,639 a la sienne de 8,0. La copie remise en etat : true.
+	var nb := 0
+	var nbi := 0
+	var pokes := 0
+	# Trois genres de rue, trois emprises, trois marges a suivre : melangees en
+	# un seul minimum, celle du tronc — la plus large, donc la plus exposee —
+	# disparaissait derriere celle des venelles.
+	var clear := [1.0e9, 1.0e9, 1.0e9]
+	var worst_m := 1.0e9
+	var worst_who := ""
+	for p in plans:
+		for k in p.bld_count():
+			nb += 1
+			var co := _plan_corners(p, k)
+			for i in p.streets.size():
+				nbi += 1
+				var m := _plan_rect_axis(p, co, i) - _plan_emprise(p, i)
+				var g := _plan_genre(p, i)
+				clear[g] = minf(clear[g], m)
+				if m < 0.0:
+					pokes += 1
+				if m < worst_m:
+					worst_m = m
+					worst_who = "%s, %s" % [p.id, p.streets[i]["kind"]]
+	print("  AUCUN BATIMENT SUR UNE RUE        : %s   (%d batiments, %d couples mur/rue, %d empietement(s) ; marge du mur au BORD DE TROTTOIR, au plus juste : tronc %+.3f m, transversale %+.3f, parallele %+.3f ; pire cas %+.3f m sur %s)" % [
+		pokes == 0, nb, nbi, pokes, clear[0], clear[1], clear[2], worst_m, worst_who])
+
+	# Une adresse doit tomber sur le TROTTOIR : trop pres, le client attend sur
+	# la chaussee ; trop loin, il attend dans un salon. Et jamais sur le tronc,
+	# ou le trottoir commence a 5,8 m alors que la baie de validation s'arrete
+	# a 5,0 (PLAN_VILLES.md:300) — on s'y garerait sur la nationale.
+	#
+	# CE QUI A CHANGE, ET POURQUOI CETTE LIGNE MESURAIT UNE CONSTANTE. Elle
+	# demandait "l'ecart a l'axe est entre 2,6 et 6,0 m" — la fenetre de
+	# PLAN_VILLES.md:485 — a un point qui vaut, par construction,
+	# point(i, t, side * walk_mid(i)) : l'ecart a l'axe EST walk_mid(i), donc
+	# 3,40 m sur une rue, et le releve le disait tout haut, "de 3.40 a 3.40".
+	# Une constante comparee a une fenetre qui l'entoure de 0,8 m d'un cote et
+	# de 2,6 m de l'autre : aucun tirage ne pouvait la faire rougir.
+	#
+	# Pire : le SEUL cas que cette fenetre aurait attrape — une adresse sur le
+	# tronc, a 6,90 m de l'axe — etait deja compte dans on_trunk, imprime juste
+	# a cote... et absent du booleen. Le banc voyait le defaut, l'affichait, et
+	# rendait "true".
+	#
+	# Quatre mesures a la place, dont aucune n'est walk_mid deguise :
+	#  1. le tronc est refuse, ET C'EST DANS LE VERDICT. _lay_addrs le filtre
+	#     aujourd'hui (town_plan.gd:1010-1012), rien ne le garantit demain, et
+	#     une porte sur la nationale est une course impossible a valider ;
+	#  2. l'ecart tombe dans la BANDE DE TROTTOIR DE LA RUE PORTEUSE — de
+	#     half + shoulder au bord de l'emprise, soit 2,6 a 4,2 m sur une rue et
+	#     5,8 a 8,0 sur le tronc —, et non plus dans une fenetre unique qui
+	#     pretendait valoir pour les deux emprises a la fois ;
+	#  3. l'abscisse tombe dans l'ETENDUE de la rue : une porte 40 m apres le
+	#     bout de sa venelle est sur le trottoir de personne ;
+	#  4. le compte y est. QUATRE portes par ville (PLAN_VILLES.md:298), pas
+	#     trois : _lay_addrs abandonne au bout de 600 essais, et une course
+	#     sans arrivee n'existe pas. "na > 0" acceptait une seule porte pour
+	#     les huit bourgs.
+	#
+	# VERIFIE EN LE CASSANT, quatre fois, sur une copie jetable du depot ;
+	# entre chaque, remise en etat et retour au vert :
+	#  - le tronc laisse entrer dans le tirage des portes : false, 8 portes sur
+	#    le tronc. L'ancienne ligne rougissait aussi — c'etait le seul cas
+	#    qu'elle attrapait, et par accident : par le 6,90 m, pas par le tronc ;
+	#  - la porte posee 1,5 m plus loin que le milieu du trottoir : false, 32
+	#    hors bande, 0,70 m au-dela du bord. ANCIENNE LIGNE, meme plan : "true
+	#    (de 4.90 a 4.90 m, fenetre 2,6-6,0)" — trente-deux clients qui
+	#    attendent dans un salon, et un verdict vert ;
+	#  - l'abscisse poussee de 40 m au-dela du bout de sa rue : false, 17 hors
+	#    de leur rue, 38,0 m au-dela du bout ;
+	#  - ADDR_N ramene a 3 : false, 24 portes pour 8 bourgs. ANCIENNE LIGNE :
+	#    "true (24 adresses, de 3.40 a 3.40 m)" — huit villes amputees d'une
+	#    porte, et un verdict vert.
+	var na := 0
+	var on_trunk := 0
+	var off_band := 0
+	var off_end := 0
+	var in_lo := 1.0e9      # marge au bord INTERIEUR du trottoir (le caniveau)
+	var in_hi := 1.0e9      # marge au bord EXTERIEUR (le pied des facades)
+	var end_lo := 1.0e9     # marge au bout de la rue, le long de celle-ci
+	for p in plans:
+		for k in p.addrs.size():
+			na += 1
+			var i: int = p.addrs[k]["street"]
+			var st: Dictionary = p.streets[i]
+			if st["kind"] == "trunk":
+				on_trunk += 1
+			var d := _plan_axis_dist(p, i, p.addr_su(k))
+			var lo := float(st["half"]) + float(st["shoulder"])
+			var hi := _plan_emprise(p, i)
+			in_lo = minf(in_lo, d - lo)
+			in_hi = minf(in_hi, hi - d)
+			if d < lo or d > hi:
+				off_band += 1
+			var t := float(p.addrs[k]["t"])
+			end_lo = minf(end_lo, minf(t - float(st["a"]), float(st["b"]) - t))
+			if t < float(st["a"]) or t > float(st["b"]):
+				off_end += 1
+	print("  LES ADRESSES SONT SUR UN TROTTOIR : %s   (%d portes pour %d bourgs ; %d sur le tronc, %d hors de la bande de trottoir de leur rue, %d hors de leur rue ; marge mini au caniveau %+.2f m, au mur %+.2f m, au bout de la rue %+.1f m)" % [
+		na == plans.size() * 4 and on_trunk == 0 and off_band == 0 and off_end == 0,
+		na, plans.size(), on_trunk, off_band, off_end, in_lo, in_hi, end_lo])
+
+	# --- la recherche du plus proche ---------------------------------------
+	print("--- la recherche du plus proche ----------------------------------")
+	# La grille de 20 m ne sert pas a aller vite — il y a sept rues — mais a ce
+	# que le GPS puisse appeler nearest() a chaque image sans que le cout
+	# depende de la taille du bourg. Sa reponse doit donc etre EXACTE, pas
+	# approchee : on la confronte au balayage complet sur deux mille points.
+	# La graine du banc est ecrite : un desaccord se rejoue a l'identique.
+	#
+	# OU L'ON TIRE LES POINTS, ET POURQUOI CE N'EST PLUS SEULEMENT AUTOUR DU
+	# BOURG. Ce banc a tire ses 2 000 points dans bounds.grow(20) PILE — vingt
+	# metres de marge autour d'une enveloppe de 340 x 112 m. Dans cette bande,
+	# la grille couvre tout, la preuve d'optimalite vient toujours, et le
+	# rattrapage de nearest() (town_plan.gd:550-565, le balayage qui finit le
+	# travail quand les anneaux s'epuisent sans preuve) NE SERT JAMAIS. Le banc
+	# le gardait donc sans jamais le voir. A/B, ce rattrapage retire :
+	#   grow(+20)  : 0 faux sur 2 000     grow(+300) : 0 faux sur 2 000
+	#   grow(+600) : 1 049 faux sur 2 000, ecart maxi 90 m
+	# Vert, vert, et rouge — le meme banc, la meme panne, la seule difference
+	# etant la boite de tirage. Un test de non-regression qui ne peut pas voir
+	# la panne qu'il garde ne garde rien : il rassure. Un point a 600 m du
+	# bourg n'est pas une lubie de banc, c'est le GPS qui interroge le plan de
+	# la ville d'a cote pendant qu'on roule entre deux bourgs — la plus courte
+	# arete de la carte fait 950 m.
+	#
+	# UN TIERS DES POINTS PART DONC A grow(600), et le verdict se lit en deux
+	# temps parce que les deux zones ne promettent pas la meme chose :
+	#  - la REPONSE doit etre exacte PARTOUT, pres comme loin. C'est la moitie
+	#    de la ligne qui etait aveugle.
+	#  - le COUT en troncons ne se juge que PRES. Hors de l'enveloppe, la
+	#    grille n'a plus une seule case a offrir et nearest() descend
+	#    volontairement au balayage a deux mailles du bord (town_plan.gd:521,
+	#    releve dans ce fichier-la : 626 us de cases vides balayees avant, 2,6
+	#    apres). `seen` y vaut donc streets.size() par CHOIX, et non par panne :
+	#    compter ces points-la comme "payes au prix du balayage complet"
+	#    rougirait sur un correctif, pas sur un defaut.
+	#
+	# LE SECOND SEUIL, LUI, NE POUVAIT PAS ROUGIR : c'etait "seen_max < 12".
+	# Une ville porte au plus SEPT rues — une traversante, quatre transversales
+	# (CROSS_N.y) et deux paralleles (RAIL_N.y) —, nearest() marque chaque rue
+	# une seule fois dans son masque de bits, et le balayage de secours ne
+	# visite que les rues non marquees. Le plafond arithmetique de `seen` vaut
+	# donc 7, le releve en donnait 4, et le seuil en demandait 12 : cinq de
+	# plus que le maximum atteignable. Aucun bourg, aucune graine, aucune
+	# panne de la grille ne pouvait faire rougir cette moitie de ligne.
+	#
+	# Ce qu'on mesure maintenant DEPEND du bourg, puisqu'on le compare au
+	# bourg : PRES DU BOURG, la grille doit toujours couter MOINS que le
+	# balayage complet de cette ville-la. C'est exactement ce qui casse quand
+	# elle degenere — grille vide, anneaux a zero, cle mal calculee : la boucle
+	# sort sans preuve, le secours de town_plan.gd:550-565 balaie, `seen` monte
+	# a streets.size() pile, et la ligne rougit. Le nombre de CASES visitees
+	# serait plus fin encore, mais il vit a l'interieur de nearest() : il
+	# faudrait instrumenter le fichier qu'on juge, et ce banc s'interdit de le
+	# faire. On imprime a la place le cout moyen du plus petit bourg et celui
+	# du plus grand : c'est la, en clair, que se lit "le cout ne suit pas la
+	# taille de la ville" — 1,73 troncon sur les 5 rues des Essarts, 2,13 sur
+	# un bourg qui en porte 7, quand le balayage complet couterait 5 et 7.
+	#
+	# VERIFIE EN LE CASSANT, DEUX FOIS, sur une copie jetable du depot.
+	#
+	# (1) _rings force a 0 — la grille rend la case du point et rien de plus,
+	# la preuve ne vient jamais, le secours balaie. Cette ligne : false, les
+	# 1 328 points proches TOUS payes au prix du balayage complet, cout moyen
+	# 5,00 troncons sur le bourg a 5 rues et 7,00 sur celui a 7 — le cout suit
+	# alors exactement la taille de la ville, ce que la grille existe pour
+	# eviter. L'ANCIENNE LIGNE, meme plan, meme panne : "true (troncons visites
+	# maxi 7, seuil 12)".
+	#
+	# (2) le rattrapage retire (`if not proved:` force a faux) — la reponse
+	# devient fausse la ou les anneaux s'epuisent sans preuve. Cette ligne :
+	# false, et le releve dit ou : 0 desaccord sur les 1 328 points proches,
+	# 648 sur les 672 points loin, DANS LA MEME EXECUTION. C'est l'A/B en une
+	# ligne : la boite de tirage d'hier ne pouvait pas voir cette panne-la, la
+	# boite d'aujourd'hui la crie. Les couts, eux, s'effondrent a 0,04 et 0,12
+	# troncon au large — un banc qui n'aurait regarde que le cout aurait vu la
+	# panne comme un progres.
+	#
+	# La copie remise en etat, les deux fois : true.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260829
+	var pts := 0
+	var far_pts := 0
+	var wrong := 0
+	var wrong_far := 0
+	var seen_max := 0
+	var full := 0
+	var costs := []
+	for p in plans:
+		var bb: Rect2 = (p.bounds as Rect2).grow(20.0)
+		var wide: Rect2 = (p.bounds as Rect2).grow(600.0)
+		var sum := 0
+		var near_n := 0
+		var fsum := 0
+		for n in 250:
+			pts += 1
+			# Un point sur trois est tire au LARGE. La boite large contient la
+			# petite — 2,9 % de son aire —, donc deux ou trois points "loin"
+			# retombent pres du bourg par le tirage : ils sont comptes au
+			# large quand meme, et c'est ce qui abaisse un peu le cout moyen
+			# imprime pour cette zone sous le compte de rues.
+			var far: bool = n % 3 == 0
+			var box: Rect2 = wide if far else bb
+			var su := Vector2(rng.randf_range(box.position.x, box.end.x),
+				rng.randf_range(box.position.y, box.end.y))
+			var got: Dictionary = p.nearest(su)
+			var s := int(got["seen"])
+			var best := 1.0e18
+			for i in p.streets.size():
+				best = minf(best, _plan_axis_dist(p, i, su))
+			var bad: bool = absf(float(got["dist"]) - best) > 0.001
+			if far:
+				far_pts += 1
+				fsum += s
+				if bad:
+					wrong_far += 1
+				continue
+			near_n += 1
+			sum += s
+			seen_max = maxi(seen_max, s)
+			# Le balayage complet, c'est la grille qui n'a servi a rien — et
+			# PRES du bourg, elle n'a aucune excuse : toutes ses cases sont la.
+			if s >= p.streets.size():
+				full += 1
+			if bad:
+				wrong += 1
+		costs.append([p.streets.size(), float(sum) / float(near_n),
+			float(fsum) / float(250 - near_n)])
+	costs.sort_custom(func(u, v): return u[0] < v[0])
+	print("  LA GRILLE REPOND JUSTE : %s   (%d points tires, dont %d a 600 m du bourg ; %d desaccord(s) avec le balayage complet pres, %d loin ; pres : %d point(s) payes au prix du balayage complet, troncons visites maxi %d, cout moyen %.2f troncon(s) sur un bourg de %d rues et %.2f sur un bourg de %d ; loin : %.2f et %.2f troncons, le balayage assume)" % [
+		wrong == 0 and wrong_far == 0 and full == 0,
+		pts, far_pts, wrong, wrong_far, full, seen_max,
+		costs[0][1], costs[0][0], costs[-1][1], costs[-1][0],
+		costs[0][2], costs[-1][2]])
+
+	# --- la couture avec le ruban ------------------------------------------
+	print("--- la couture avec le ruban -------------------------------------")
+	# CE QU'IL Y AVAIT ICI : "LE RUBAN N'A PAS BOUGE : voir maptest", puis une
+	# phrase. Un titre d'invariant en capitales, deux-points, une explication —
+	# la forme exacte d'un verdict, sans booleen dedans. On la lisait verte
+	# parce qu'elle ne disait rien, et une ligne qui ne peut pas rougir sous un
+	# nom d'invariant est pire qu'une ligne absente : elle rassure. Le renvoi,
+	# lui, etait juste — c'est maptest qui roule et qui mesure ce ruban-la —,
+	# il descend donc en note, en bas, sans capitales et sans deux-points.
+	#
+	# A la place, ce que CE banc peut vraiment mesurer sans rouler une image :
+	# LA COUTURE. town_plan.gd recopie a la main trois nombres de road.gd —
+	# STEP (road.gd:36), ROAD_HALF (:39), SHOULDER (:40) — parce qu'un preload
+	# refermerait la boucle road -> town -> town_plan -> road ; il l'ecrit
+	# lui-meme (town_plan.gd:62-70 — ou ses propres renvois, "road.gd:32" et
+	# "road.gd:35-36", ont pris quatre lignes de retard sur le fichier ; c'est
+	# deja la copie qui derive, en petit). Une constante recopiee derive en
+	# silence : le jour ou la nationale s'elargit, le tronc du bourg garde
+	# l'ancienne largeur, et le joueur prend un decrochement de trottoir a
+	# 90 km/h a l'entree de la ville. Le banc, lui, a le droit de charger les
+	# deux fichiers et de comparer. Et on ne s'arrete pas aux constantes : on
+	# verifie que le tronc de chacun des huit plans PORTE ces cotes-la — la
+	# constante peut etre juste et _lay_streets poser autre chose.
+	#
+	# VERIFIE EN LE CASSANT : ROAD_HALF porte de 3,4 a 3,6 dans road.gd, sur
+	# une copie jetable. Cette ligne : false, "demi-chaussee 3.40 = 3.60".
+	# L'ancienne ligne, elle, n'avait rien a dire de la panne : elle n'avait
+	# pas de booleen a rendre. La copie remise en etat : true.
+	var seam: bool = TownPlan.STEP == RoadScript.STEP \
+		and TownPlan.TRUNK_HALF == RoadScript.ROAD_HALF \
+		and TownPlan.SHOULDER == RoadScript.SHOULDER
+	var trunks := 0
+	var sewn := 0
+	for p in plans:
+		for i in p.streets.size():
+			if p.streets[i]["kind"] != "trunk":
+				continue
+			trunks += 1
+			if absf(float(p.streets[i]["half"]) - RoadScript.ROAD_HALF) <= 0.001 \
+					and absf(float(p.streets[i]["shoulder"]) - RoadScript.SHOULDER) <= 0.001:
+				sewn += 1
+	print("  LA VILLE SE COUD AU RUBAN : %s   (pas %.2f = %.2f m, demi-chaussee %.2f = %.2f, accotement %.2f = %.2f ; %d tronc(s) sur %d aux cotes exactes de la nationale, un par bourg pour %d bourgs)" % [
+		seam and trunks == plans.size() and sewn == trunks,
+		TownPlan.STEP, RoadScript.STEP,
+		TownPlan.TRUNK_HALF, RoadScript.ROAD_HALF,
+		TownPlan.SHOULDER, RoadScript.SHOULDER,
+		sewn, trunks, plans.size()])
+	print("  (note, pas un invariant : le ruban lui-meme ne se juge pas sur de la donnee. C'est LE RUBAN EST SANS COUTURE, dans maptest, qui roule et qui mesure le ruban echange — |pas - STEP| < 0,01 m et virage < 1,72 deg/pas, le plafond du brin mort —, et LE RUBAN RESTE SANS COUTURE, dans rubantest, qui mesure les deux raccords de la ville.)")
+
+	# --- les huit bourgs, vus du dessus ------------------------------------
+	print("--- les huit bourgs, vus du dessus -------------------------------")
+	print("  '=' la traversante | '|' une transversale | '-' une parallele | '+' un carrefour | '#' une maison | '>' le panneau d'entree et la sortie | '1'-'4' les portes")
+	print("  une colonne = 6 m le long de la route, une ligne = 10 m en travers ; le sens de la marche va vers la DROITE, et +u (la droite du conducteur qui entre) vers le BAS")
+	for p in plans:
+		_plan_trace(p)
+
+	get_tree().quit()
+
+
+## Les octets d'un plan : tout ce qui a ete tire, et rien de ce qui en derive.
+## C'est ce qu'on compare d'un tirage a l'autre.
+func _plan_sig(p) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.append_array(var_to_bytes(p.streets))
+	out.append_array(var_to_bytes(p.junctions))
+	out.append_array(var_to_bytes(p.lamps))
+	out.append_array(var_to_bytes(p.blds))
+	out.append_array(var_to_bytes(p.addrs))
+	out.append_array(var_to_bytes(p.bounds))
+	return out
+
+
+## Un bout de l'axe d'une rue, dans le plan : `e` vaut 0 pour le debut, 1 pour
+## la fin.
+func _plan_end(p, i: int, e: int) -> Vector2:
+	return p.point(i, float(p.streets[i]["b" if e == 1 else "a"]))
+
+
+## Les quatre coins d'un batiment, recalcules depuis le 7-uplet brut : le lacet
+## est l'angle de la FACADE, la profondeur le suit, la largeur lui est
+## perpendiculaire.
+func _plan_corners(p, k: int) -> PackedVector2Array:
+	var o := k * 7
+	var c := Vector2(p.blds[o], p.blds[o + 1])
+	var w: float = p.blds[o + 2]
+	var d: float = p.blds[o + 3]
+	var f := Vector2(cos(p.blds[o + 5]), sin(p.blds[o + 5]))
+	var r := Vector2(-f.y, f.x)
+	var out := PackedVector2Array()
+	out.append(c + f * (d * 0.5) + r * (w * 0.5))
+	out.append(c + f * (d * 0.5) - r * (w * 0.5))
+	out.append(c - f * (d * 0.5) - r * (w * 0.5))
+	out.append(c - f * (d * 0.5) + r * (w * 0.5))
+	return out
+
+
+func _plan_seg_dist(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var l2 := ab.length_squared()
+	if l2 < 1.0e-9:
+		return p.distance_to(a)
+	return p.distance_to(a + ab * clampf((p - a).dot(ab) / l2, 0.0, 1.0))
+
+
+func _plan_seg_seg(p1: Vector2, p2: Vector2, q1: Vector2, q2: Vector2) -> float:
+	if Geometry2D.segment_intersects_segment(p1, p2, q1, q2) != null:
+		return 0.0
+	return minf(minf(_plan_seg_dist(p1, q1, q2), _plan_seg_dist(p2, q1, q2)),
+		minf(_plan_seg_dist(q1, p1, p2), _plan_seg_dist(q2, p1, p2)))
+
+
+## La distance d'un point a l'AXE de la rue `i`, borne compris.
+func _plan_axis_dist(p, i: int, su: Vector2) -> float:
+	return _plan_seg_dist(su, _plan_end(p, i, 0), _plan_end(p, i, 1))
+
+
+## L'EMPRISE de la rue `i` : de l'axe au bord du trottoir. 8,0 m sur le tronc
+## (3,4 de chaussee + 2,4 d'accotement + 2,2 de trottoir), 4,2 sur une rue
+## (2,6 + 0 + 1,6). C'est la seule largeur qui vaille pour juger un mur ou une
+## porte, et c'est le bourg lui-meme qui la declare, rue par rue.
+##
+## Resommee ici a la main depuis les trois nombres bruts du plan, et pas prise
+## a edge_half() : le banc lit la DONNEE de l'accuse, jamais son calcul. La
+## nuance n'est pas theorique — le seuil unique de 4,5 m qui trainait dans ce
+## banc etait justement un edge_half() de rue recopie a la main, et il a laisse
+## passer deux maisons dans le trottoir de la nationale.
+func _plan_emprise(p, i: int) -> float:
+	var st: Dictionary = p.streets[i]
+	return float(st["half"]) + float(st["shoulder"]) + float(st["walk"])
+
+
+## Le genre d'une rue, pour ranger un releve : 0 le tronc (la nationale qui
+## traverse le bourg), 1 une transversale, 2 une parallele. Trois genres, deux
+## emprises — et c'est parce qu'un seul minimum les melangeait que celle du
+## tronc, la plus large donc la plus exposee, disparaissait derriere celle des
+## venelles.
+func _plan_genre(p, i: int) -> int:
+	var kind: String = p.streets[i]["kind"]
+	if kind == "trunk":
+		return 0
+	return 1 if kind == "cross" else 2
+
+
+## La distance d'une empreinte a l'axe de la rue `i`. Zero si l'axe traverse la
+## maison de part en part : c'est le cas qu'un test de coins seuls laisserait
+## passer avec une distance bien positive, et c'est le seul qui compte.
+func _plan_rect_axis(p, co: PackedVector2Array, i: int) -> float:
+	var a := _plan_end(p, i, 0)
+	var b := _plan_end(p, i, 1)
+	if Geometry2D.is_point_in_polygon(a, co) or Geometry2D.is_point_in_polygon(b, co):
+		return 0.0
+	var best := 1.0e18
+	for k in 4:
+		best = minf(best, _plan_seg_seg(a, b, co[k], co[(k + 1) % 4]))
+	return best
+
+
+func _plan_find(parent: PackedInt32Array, i: int) -> int:
+	var r := i
+	while parent[r] != r:
+		r = parent[r]
+	return r
+
+
+func _plan_union(parent: PackedInt32Array, i: int, j: int) -> void:
+	var a := _plan_find(parent, i)
+	var b := _plan_find(parent, j)
+	if a != b:
+		parent[b] = a
+
+
+## Le bourg vu du dessus, en caracteres. Six metres par colonne et dix par
+## ligne : dans une console ou un caractere est deux fois plus haut que large,
+## ca rend la ville a peu pres a sa forme, et une rangee de maisons a 9-14 m
+## d'entraxe laisse un '#' toutes les une ou deux colonnes — on lit une rangee,
+## pas un mur.
+func _plan_trace(p) -> void:
+	var cs := 6.0
+	var cu := 10.0
+	var bb: Rect2 = p.bounds
+	var cols := int(ceil(bb.size.x / cs)) + 1
+	var rows := int(ceil(bb.size.y / cu)) + 1
+	var grid := []
+	for r in rows:
+		var line := PackedByteArray()
+		line.resize(cols)
+		line.fill(32)
+		grid.append(line)
+
+	# L'ordre de peinture EST la hierarchie de lecture : le bati d'abord, les
+	# rues par-dessus, les carrefours ensuite, les portes en dernier. Ce qui
+	# compte le plus est ce qui survit.
+	for k in p.bld_count():
+		_plan_put(grid, bb, cs, cu, Vector2(p.blds[k * 7], p.blds[k * 7 + 1]), 35)
+	for i in p.streets.size():
+		var st: Dictionary = p.streets[i]
+		var ch := 124
+		if st["kind"] == "trunk":
+			ch = 61
+		elif st["kind"] == "rail":
+			ch = 45
+		var t: float = st["a"]
+		while t <= float(st["b"]):
+			_plan_put(grid, bb, cs, cu, p.point(i, t), ch)
+			t += 3.0
+	for j in p.junction_count():
+		_plan_put(grid, bb, cs, cu, p.junction_su(j), 43)
+	for k in p.addrs.size():
+		_plan_put(grid, bb, cs, cu, p.addr_su(k), 49 + k)
+	_plan_put(grid, bb, cs, cu, Vector2.ZERO, 62)
+	_plan_put(grid, bb, cs, cu, Vector2(p.cross_len(), 0.0), 62)
+
+	print("")
+	print("  %s — graine %d — %d rues, %d carrefours, %d maisons, %d mats, %.0f m de rue cumules, etendue %.0f x %.0f m" % [
+		p.id, MapScript.seed_of(p.id), p.streets.size(), p.junction_count(),
+		p.bld_count(), p.lamp_count(), p.total_len(), bb.size.x, bb.size.y])
+	for line in grid:
+		print("    " + (line as PackedByteArray).get_string_from_ascii())
+	var names := []
+	for i in p.streets.size():
+		names.append("%s [%s]" % [p.streets[i]["name"], p.streets[i]["kind"]])
+	print("    rues : " + ", ".join(names))
+	for k in p.addrs.size():
+		var a: Dictionary = p.addrs[k]
+		var amen: String = a["amen"]
+		print("    %d = %s%s" % [k + 1, a["name"],
+			"  (%s)" % amen if amen != "" else ""])
+
+
+func _plan_put(grid: Array, bb: Rect2, cs: float, cu: float, su: Vector2, ch: int) -> void:
+	var r := int(floor((su.y - bb.position.y) / cu))
+	if r < 0 or r >= grid.size():
+		return
+	var line: PackedByteArray = grid[r]
+	var c := int(floor((su.x - bb.position.x) / cs))
+	if c < 0 or c >= line.size():
+		return
+	line[c] = ch
+	grid[r] = line
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai du ruban en ville
+# --------------------------------------------------------------------------
+
+## LE PREMIER BANC DU RUBAN. road.gd tient la route depuis le premier jour et
+## n'a jamais eu de juge a lui : maptest mesure la CARTE et ne se sert du ruban
+## que pour y arriver, plantest ne demarre meme pas la nuit. Tout ce que le J2
+## a pose dans road.gd — la tangente d'avance, la traversee pre-calculee, la
+## courbure bornee, le silence des props, le portail exempte — n'etait donc
+## prouve que de biais.
+##
+## CE QUE CE BANC MESURE, ET DANS QUEL ORDRE : il roule une nuit courte. Cent
+## metres en travers de la route au depart (la tangente), cinq kilometres de
+## transit (l'ulp du float32 vaut 1 mm a 10 km : une couture mesuree a froid
+## prouverait la mauvaise chose), une traversee de bourg conduite AU VOLANT et
+## non au rail, puis un Y pris par la sortie.
+##
+## POURQUOI IL RAMASSE LES ECHANTILLONS A MESURE. La fenetre vivante n'en porte
+## que 150 (300 m) ; la traversee dessinee en fait 171 et la zone de silence des
+## props 211. Aucun instant du banc ne les voit tous : on les range dans un
+## dictionnaire indexe par ECHANTILLON GLOBAL, un a un, a mesure qu'ils naissent
+## (_ruban_record). C'est le seul moyen de juger une ville entiere.
+##
+## CE QU'IL EMPRUNTE AUX MEMBRES PRIVES, ET POURQUOI. Trois choses : _town_heads
+## (la traversee pre-calculee — c'est justement l'objet de la mesure, et rien de
+## public ne la rend), _trees / _poles (les pools de decor, qu'aucune API ne
+## liste), et _pos / _closest_index / _bpos / _fork_main pour conduire, comme le fait
+## deja _rail. Un banc a le droit d'ouvrir le capot ; c'est taxi.gd qui ne l'a
+## pas, et LE JUGE NE LIT PLUS LES PRIVES le verifie ligne a ligne.
+
+
+## Le conducteur A BANDE MORTE : il ne touche au volant que quand il le DOIT.
+##
+## LE PIEGE, ET IL EST DE TAILLE : le rail des autres bancs POSE la voiture sur
+## sa voie (position laterale et cap ecrits a la main) et ne se sert jamais du
+## volant. car.steer y reste a 0,000 d'un bout a l'autre. Un banc qui
+## demanderait au rail si le volant travaille aurait sa reponse d'avance, et
+## elle serait fausse dans les deux sens.
+##
+## Celui-ci conduit pour de vrai — steer_left / steer_right, les memes actions
+## que le joueur — et ne corrige que quand l'ecart l'y force : erreur laterale
+## a la voie visee, plus huit metres d'anticipation sur le cap (0,64 s a
+## 12,5 m/s), contre une bande morte de 35 cm. Sur une route rigoureusement
+## droite prise dans l'axe, il ne touche a rien et car.steer reste a zero —
+## c'est exactement ce qu'on veut qu'il fasse, parce que c'est ce que la
+## monotonie de sleep.gd compte (|car.steer| < 0,04 pendant mono_after = 10 s,
+## sleep.gd:41 et 163).
+##
+## LA POUSSEE EST PROPORTIONNELLE, ET CE N'EST PAS UN DETAIL. Une premiere
+## version poussait a fond des que la bande etait franchie : releve |steer|
+## maxi 1,000, soit butee a butee dans une traversee a 45 km/h. La mesure
+## restait vraie mais le mobile ne l'etait plus — un banc qui envoie la voiture
+## de gauche a droite en pleine ville fabrique son propre volant, et n'apprend
+## plus rien de la route. On pousse donc a la force de l'ecart : il faut
+## 1,2 m de plus que la bande pour aller en butee.
+func _ruban_drive(lane: float, band: float) -> void:
+	var line: PackedVector3Array = road._pos
+	var i: int = road._closest_index(line, car.global_position)
+	var fwd := Vector3(0.0, 0.0, -1.0)
+	if i + 1 < line.size():
+		fwd = (line[i + 1] - line[i]).normalized()
+	elif i > 0:
+		fwd = (line[i] - line[i - 1]).normalized()
+	var right: Vector3 = fwd.cross(Vector3.UP).normalized()
+	var err: float = (car.global_position - line[i]).dot(right) - lane
+	var lead: float = (-car.global_transform.basis.z).dot(right)
+	var ctrl: float = err + 8.0 * lead
+	var push: float = clampf((absf(ctrl) - band) / 1.2, 0.0, 1.0)
+	if ctrl > 0.0 and push > 0.0:
+		Input.action_press("steer_left", push)
+	else:
+		Input.action_release("steer_left")
+	if ctrl < 0.0 and push > 0.0:
+		Input.action_press("steer_right", push)
+	else:
+		Input.action_release("steer_right")
+
+
+## Range les echantillons de [a, b] qui sont NES et pas encore connus, par
+## index global. sample_at rend l'identite hors fenetre : a cinq kilometres de
+## l'origine, une origine a zero ne peut etre que ca.
+func _ruban_record(rec: Dictionary, a: int, b: int) -> void:
+	for g in range(a, b + 1):
+		if rec.has(g):
+			continue
+		var tr: Transform3D = road.sample_at(g)
+		if tr.origin == Vector3.ZERO:
+			continue
+		rec[g] = tr
+
+
+## L'echantillon range le plus proche d'un point, et sa distance a l'axe :
+## [index global, ecart lateral]. [-1, 0] si rien n'est range.
+##
+## C'est ce qui SITUE un arbre : un arbre est pose a `_pos[i] + _right[i] * off`
+## avec off <= 20,4 m, donc l'echantillon le plus proche de lui est le sien.
+func _ruban_nearest(rec: Dictionary, p: Vector3) -> Array:
+	var best := -1
+	var bd := 1.0e18
+	for g in rec:
+		var o: Vector3 = (rec[g] as Transform3D).origin
+		var d: float = Vector2(p.x - o.x, p.z - o.z).length_squared()
+		if d < bd:
+			bd = d
+			best = g
+	return [best, sqrt(bd)]
+
+
+func _ruban_test() -> void:
+	var TownPlan := preload("res://scripts/town_plan.gd")
+	await get_tree().create_timer(0.8).timeout
+	_start_normal_world()
+	# La jauge de veille ne bouge pas : ce banc roule cinq kilometres en temps
+	# accelere, soit plusieurs fois full_span. Endormi, il basculerait dans le
+	# cauchemar — et suspend_town() annulerait la ville qu'il mesure.
+	sleep.full_span = 1.0e9
+	car.gear = 5
+
+	# --- la tangente d'avance ---------------------------------------------
+	# ON LE FAIT LA, AVANT DE ROULER, ET C'EST VOULU. Au demarrage road.gd pose
+	# _head sans rotation (road.gd:262) et _curve_goal vaut 0 pendant les 16
+	# premiers echantillons : _pos[0..16] est RIGOUREUSEMENT droit, la voiture
+	# est sur _pos[12] = head_index(), et le vecteur droite y est exactement
+	# perpendiculaire a la tangente sous _pos[0]. Plus loin dans la nuit le
+	# ruban serpente, la tangente sous _pos[0] et celle sous la voiture
+	# divergent de douze echantillons de courbure, et 100 m de travers en
+	# projetteraient jusqu'a 21 sur la premiere : le banc mesurerait la
+	# courbure, pas la tangente.
+	print("--- la tangente d'avance -----------------------------------------")
+	var g_side: int = road.head_index()
+	var side: Vector3 = (road.sample_at(g_side) as Transform3D).basis.x
+	car.rotation.y = atan2(-side.x, -side.z)
+	var p_side: Vector3 = car.global_position
+	Engine.time_scale = 4.0
+	var t := 0.0
+	while t < 40.0 and Vector2(car.global_position.x - p_side.x,
+			car.global_position.z - p_side.z).length() < 100.0:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = 25.0
+	car.speed = 0.0
+	var across: float = Vector2(car.global_position.x - p_side.x,
+		car.global_position.z - p_side.z).length()
+	var slid: int = road.head_index() - g_side
+	# LE CHIFFRE D'AVANT N'EST PAS 38, ET LE PLAN SE TROMPAIT DANS LE BON SENS.
+	# Son calcul — (100 - 24) / 2 — suppose que _pos[0] reste ou il est pendant
+	# qu'on s'ecarte. Il n'y reste pas : il avance LE LONG DE LA ROUTE, donc
+	# perpendiculairement au nez, et la projection sur le nez ne redescend
+	# jamais. Le ruban defile tant que la route n'a pas assez tourne pour
+	# rattraper les 100 m. Releve sur une copie cassee (la tangente rendue au
+	# nez de la voiture, une ligne changee) : 261 echantillons, pas 38.
+	print("  ROULER EN TRAVERS NE FAIT PLUS AVANCER LA ROUTE : %s   (%.0f m parcourus perpendiculairement a la route, %d echantillon(s) de defile pour un seuil de 2 ; sur le nez de la voiture, releve : 261)" % [
+		across >= 99.0 and absi(slid) < 2, across, slid])
+
+	# --- le transit : cinq kilometres avant de mesurer une couture ---------
+	# L'ulp du float32 vaut 1 mm a 10 km de l'origine. Une couture mesuree sur
+	# la premiere ville, a 950 m, tiendrait a 0,1 mm meme si le ruban RECALCULAIT
+	# la traversee au lieu de la reposer : le banc dirait vrai sans avoir rien
+	# prouve. On roule donc jusqu'au cinquieme bourg.
+	Engine.time_scale = 6.0
+	t = 0.0
+	while t < 400.0 and float(road.head_index()) * RoadScript.STEP < 5000.0:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+
+	# On attend l'armement SUIVANT, pas la ville qui traine : la bascule de
+	# town_span().x de -1 a un index, c'est l'instant ou _simulate_town_path
+	# vient de ranger ses 150 transforms et ou la ville s'est batie dessus.
+	var g_arm := -1
+	# LES TRANSFORMS ENTIERES, pas seulement leurs origines : le quadrillage du
+	# bourg s'extrude sur le vecteur DROITE de chaque tete, donc un cap qui
+	# differe cisaille les rues sans deplacer l'axe d'un millimetre. La couture
+	# se mesure sur les deux.
+	var heads: Array[Transform3D] = []
+	var prev_in: int = (road.town_span() as Vector2i).x
+	t = 0.0
+	while t < 200.0 and g_arm < 0:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+		var sp: Vector2i = road.town_span()
+		if sp.x >= 0 and prev_in < 0:
+			g_arm = sp.x + TownPlan.PAD
+			for h in road._town_heads:
+				heads.append(h as Transform3D)
+		prev_in = sp.x
+	var t_in: int = (road.town_span() as Vector2i).x
+	var t_out: int = (road.town_span() as Vector2i).y
+	var t_end: int = t_out + TownPlan.PAD
+	var quiet_a: int = t_in - RoadScript.PROP_QUIET
+	var quiet_b: int = t_end + RoadScript.PROP_QUIET
+	var rec_a: int = quiet_a - 60
+	var rec_b: int = quiet_b + 60
+	var rolled: float = float(road.head_index()) * RoadScript.STEP
+	print("--- le bourg -----------------------------------------------------")
+	print("  (\"%s\" armee a l'echantillon %d apres %.0f m roules ; elle dessine %d a %d, les props se taisent de %d a %d)" % [
+		road.town.town_name, g_arm, rolled, t_in, t_end, quiet_a, quiet_b])
+
+	# LE PORTAIL : demande MAINTENANT, a un echantillon du milieu de la
+	# traversee. C'est l'invariant qui compte le plus du jalon — le portail est
+	# la seule sortie du cauchemar, et un filtre de props trop large l'eteindrait
+	# sans un bruit, enfermant le joueur dans le rouge parce qu'une ville s'est
+	# trouvee sur son chemin.
+	var want_portal: int = g_arm + TownPlan.CROSS / 2
+	road.set_portal(want_portal)
+
+	# --- la traversee, conduite au volant ---------------------------------
+	var rec := {}
+	var seen_tree := {}
+	var seen_pole := {}
+	var tree_gs := PackedInt32Array()
+	var pole_gs := PackedInt32Array()
+	var steer_gap := 0.0
+	var steer_run := 0.0
+	var steer_max := 0.0
+	var cross_t := 0.0
+	t = 0.0
+	while t < 400.0 and road.head_index() <= quiet_b:
+		await get_tree().process_frame
+		var dt: float = get_process_delta_time()
+		t += dt
+		# ON RANGE AVANT DE JUGER : l'arbre de l'echantillon qui vient de naitre
+		# a besoin de son axe pour etre situe, et il nait dans la meme image.
+		_ruban_record(rec, rec_a, rec_b)
+		var hg: int = road.head_index()
+		var driving: bool = hg >= t_in and hg <= t_end
+		if driving:
+			# 12,5 m/s = 45 km/h : la vitesse de traversee du plan (21 s pour
+			# les 260 m). Au volant, pas au rail — voir _ruban_drive.
+			Engine.time_scale = 2.0
+			car.speed = 12.5
+			_ruban_drive(1.2, 0.35)
+		else:
+			Engine.time_scale = 6.0
+			car.speed = maxf(car.speed, 25.0)
+			_rail(1.2)
+
+		# Les props qui viennent de naitre. On ne balaye pas les 96 arbres
+		# contre les 331 echantillons ranges a chaque image (32 000 distances) :
+		# on ne regarde que ceux dont la POSITION A CHANGE, soit environ un par
+		# image. Le pool tourne (96 arbres, 18 poteaux) et un arbre pose dans la
+		# ville serait recouvert avant la fin du banc si on comptait a la fin.
+		for k in road._trees.size():
+			var tr: Node3D = road._trees[k]
+			if not tr.visible:
+				continue
+			var p: Vector3 = tr.global_position
+			if seen_tree.has(k) and seen_tree[k] == p:
+				continue
+			seen_tree[k] = p
+			var nr: Array = _ruban_nearest(rec, p)
+			var gg: int = nr[0]
+			if gg < 0 or float(nr[1]) > 25.0:
+				continue
+			tree_gs.append(gg)
+		for k in road._poles.size():
+			var po: Node3D = road._poles[k]
+			if not po.visible:
+				continue
+			var p2: Vector3 = po.global_position
+			if seen_pole.has(k) and seen_pole[k] == p2:
+				continue
+			seen_pole[k] = p2
+			var nr2: Array = _ruban_nearest(rec, p2)
+			var gg2: int = nr2[0]
+			if gg2 < 0 or float(nr2[1]) > 12.0:
+				continue
+			pole_gs.append(gg2)
+
+		# Le volant, mesure PANNEAU A PANNEAU — la traversee de la section 4.1
+		# du plan. Les 20 echantillons d'approche n'en sont pas : road.gd:412
+		# les redresse expres pour qu'on arrive SUR un bourg, pas en glissade.
+		if driving and hg >= g_arm and hg <= t_out:
+			cross_t += dt
+			steer_max = maxf(steer_max, absf(car.steer))
+			if absf(car.steer) > 0.04:
+				steer_gap = maxf(steer_gap, steer_run)
+				steer_run = 0.0
+			else:
+				steer_run += dt
+	steer_gap = maxf(steer_gap, steer_run)
+	Input.action_release("steer_left")
+	Input.action_release("steer_right")
+	Engine.time_scale = 5.0
+
+	# --- la couture : le ruban ET la ville sont le meme point --------------
+	# Ce que la ville a recu a l'armement, tete par tete, contre ce que le ruban
+	# a fini par poser — l'origine ET LE CAP. Le cap est neuf ici : le
+	# quadrillage du bourg s'extrude sur le vecteur droite de chaque tete, donc
+	# deux tetes au meme point mais de cap different cisaillent les rues sans
+	# deplacer l'axe d'un millimetre. Il manquait a la mesure.
+	#
+	# CE QUE CETTE LIGNE NE MESURE PAS, et son ancien commentaire le pretendait
+	# noir sur blanc : elle ne distingue pas "reposer" de "recalculer".
+	# _simulate_town_path et _append_sample font la MEME arithmetique, dans le
+	# MEME ordre, sur les MEMES float32 — origine plus STEP le long de -basis.z,
+	# puis rotation locale de curve fois STEP. Un recalcul rendrait 0,0000 lui
+	# aussi, bit pour bit, a cinq kilometres comme a cinquante. La
+	# justification par l'ulp du float32 etait donc fausse par construction.
+	#
+	# ET LA GARDE QU'ELLE TRAINAIT NE GARDAIT RIEN. Le verdict portait
+	# `rolled >= 5000.0` au nom d'un raisonnement sur la distance A L'ORIGINE
+	# DU MONDE — deux grandeurs differentes, parce que le ruban serpente. Sur
+	# six lancements la meme ligne a imprime 2063, 5312, 5364, 5447, 3042 et
+	# 2957 m de l'origine pour 5 000 m ROULES : trois fois sur six la
+	# precaution ne tenait pas, et la ligne restait verte en imprimant sa
+	# propre contradiction. On roule toujours les 5 km — ce banc veut un bourg
+	# qui vient apres des fourches, des props et quatre villes, pas le premier
+	# de la nuit — mais les deux distances sont maintenant du DECOR imprime, et
+	# plus un booleen.
+	#
+	# CE QU'ELLE MESURE VRAIMENT, ET C'EST DEJA TOUT CE QU'IL FAUT : que la
+	# ville et le ruban parlent du MEME echantillon. Les pannes possibles sont
+	# STRUCTURELLES, donc metriques, jamais au bit pres. Un decalage d'un pas —
+	# road.gd le nomme lui-meme a l'endroit ou il l'evite, « L'inverser
+	# decalerait la traversee d'un pas » — vaut 2 m, cent fois le seuil. Un
+	# bourg arme sur un autre echantillon, un chemin rejoue depuis une autre
+	# courbure, un _town_heads survivant a un echange de ruban : des dizaines
+	# de metres. 0,02 m et 0,05 deg, c'est un ZERO avec de la place pour le
+	# float, pas une tolerance.
+	var seam := 0.0
+	var seam_deg := 0.0
+	var seam_n := 0
+	for k in heads.size():
+		var g: int = g_arm + 1 + k
+		if not rec.has(g):
+			continue
+		seam_n += 1
+		var got: Transform3D = rec[g]
+		var want: Transform3D = heads[k]
+		seam = maxf(seam, got.origin.distance_to(want.origin))
+		# L'angle par atan2 et pas par acos : a 1e-7 pres de l'alignement,
+		# acos rend son propre bruit (la derivee y est infinie) et un ecart
+		# nul s'imprimerait a 0,03 deg. angle_to reste juste au zero.
+		seam_deg = maxf(seam_deg, absf(rad_to_deg(
+			Vector2(-got.basis.z.x, -got.basis.z.z).angle_to(
+				Vector2(-want.basis.z.x, -want.basis.z.z)))))
+	print("  LA COUTURE EST NETTE : %s   (%d transforms pre-calculees a l'armement, toutes retrouvees dans le ruban : %.4f m et %.4f deg d'ecart maxi, seuils 0,02 m et 0,05 deg — un decalage d'UN pas en ferait 2,000. Decor, pas seuil : releve a %.0f m de route roulee et %.0f m de l'origine du monde, et ces deux-la ne sont pas la meme grandeur)" % [
+		seam_n == heads.size() and heads.size() > 0
+		and seam < 0.02 and seam_deg < 0.05,
+		seam_n, seam, seam_deg, rolled, car.global_position.length()])
+
+	# --- la traversee ne se replie pas ------------------------------------
+	# UNE MESURE, UN VERDICT — et c'est le correctif de cette ligne, qui
+	# portait deux seuils pour une seule grandeur. La compression a 60 m de
+	# l'axe vaut la courbure fois 60, exactement (rayon R, corde extrudee a
+	# 60 m : 1 - 60/R). Avec un plafond de courbure a 0,0016 elle ne pouvait
+	# donc pas depasser 9,6 % : elle etait STRUCTURELLEMENT incapable
+	# d'atteindre son propre seuil de 12 sans que la courbure ait rougi une
+	# ligne plus tot. Releve 8,1 a 8,6 %. Deux nombres, une mesure, et le
+	# second ne pouvait jamais parler le premier.
+	#
+	# CELLE QU'ON GARDE EST CELLE QUE LE BOURG SUBIT, parce que c'est le titre
+	# de la ligne : on EXTRUDE les deux lignes a 60 m de l'axe — la ou tombent
+	# les bouts de transversale du plan — et on mesure le plus court de leurs
+	# segments. Un quadrillage pose en coordonnees curvilignes se replie de ca,
+	# pas de radians.
+	#
+	# LE SEUIL EST CELUI DE road.gd, ET IL EST ATTEIGNABLE. le commentaire de TOWN_CURVE, dans road.gd, pose les
+	# deux bornes de son propre raisonnement : a TOWN_CURVE (0,0015 rad/m,
+	# rayon 667 m) la compression vaut 9 % et « ne se voit pas » ; a MAX_CURVE
+	# (rayon 111 m) elle vaut 54 % et « les ilots se replieraient sur
+	# eux-memes ». 12 % est du bon cote, avec un tiers de marge sur les 9,0 %
+	# que le plafond d'aujourd'hui autorise. Et il faut dire tout haut QUAND
+	# cette ligne rougit, parce que ce n'est plus theorique : le jour ou le
+	# clamp lache (courbure libre, 54 %), et le jour ou l'on desserre
+	# TOWN_CURVE au-dela de 0,0020 rad/m. C'est exactement le marche que le
+	# chantier du volant regarde — voir LE VOLANT TRAVAILLE EN VILLE plus bas,
+	# qui tire dans l'autre sens et le dit aussi.
+	#
+	# La courbure reste imprimee, mais comme MECANISME et non comme verdict :
+	# c'est elle qui produit la compression. Et l'approche est imprimee a part
+	# parce qu'elle n'est PAS bridee, seulement redressee (la regle d'approche de _append_sample, `lerpf(_curve, 0.0, 0.4)`) — sans
+	# la separer, on croirait le clamp casse a chaque lancement.
+	var kmax := 0.0
+	var kappr := 0.0
+	for g in range(t_in + 1, t_end + 1):
+		if not (rec.has(g - 1) and rec.has(g) and rec.has(g + 1)):
+			continue
+		var d0: Vector3 = ((rec[g] as Transform3D).origin - (rec[g - 1] as Transform3D).origin).normalized()
+		var d1: Vector3 = ((rec[g + 1] as Transform3D).origin - (rec[g] as Transform3D).origin).normalized()
+		var k: float = acos(clampf(d0.dot(d1), -1.0, 1.0)) / RoadScript.STEP
+		if g > g_arm:
+			kmax = maxf(kmax, k)
+		else:
+			kappr = maxf(kappr, k)
+	var minseg: float = RoadScript.STEP
+	var sq_n := 0
+	for u in [-60.0, 60.0]:
+		for g in range(g_arm, t_end):
+			if not (rec.has(g) and rec.has(g + 1)):
+				continue
+			sq_n += 1
+			var a: Transform3D = rec[g]
+			var b: Transform3D = rec[g + 1]
+			minseg = minf(minseg,
+				(a.origin + a.basis.x * u).distance_to(b.origin + b.basis.x * u))
+	var squeeze: float = (1.0 - minseg / RoadScript.STEP) * 100.0
+	print("  LA TRAVERSEE NE SE REPLIE PAS : %s   (compression %.1f %% a 60 m de l'axe, seuil 12 — et il est atteignable : 54 %% si le clamp de road.gd lache, 12 %% des que TOWN_CURVE passe 0,0020 rad/m. Mesure sur %d segments extrudes. MECANISME, pas verdict : la courbure vaut %.5f rad/m au pire sur les %d echantillons du panneau a la fin du dessin, quand l'approche, elle, garde ses %.5f rad/m — la regle d'approche de _append_sample la redresse, elle ne la bride pas)" % [
+		sq_n > 200 and squeeze < 12.0, squeeze, sq_n, kmax,
+		t_end - g_arm + 1, kappr])
+
+	# --- le ruban reste sans couture --------------------------------------
+	# CE QUE CETTE LIGNE MESURAIT NE POUVAIT PAS ECHOUER, et elle le disait
+	# presque : « pas maxi 2.000 m pour 2.0 ». Le pas VAUT STEP par
+	# construction — _append_sample avance de STEP le long du nez, un point
+	# c'est tout — donc partout ou la meme regle a fabrique les deux bouts d'un
+	# segment, 2,000 m n'est pas un releve, c'est une definition. Et le virage
+	# est plafonne par MAX_CURVE fois STEP, soit 1,03 deg/pas, contre un seuil
+	# de 4,0 : quatre fois le plafond structurel.
+	#
+	# PIRE QUE CA : le releve imprimait STEP a la place de son propre seuil.
+	# « 2.000 m pour 2.0 » — le 2.0 etait le pas nominal, le seuil valait 3,0.
+	# La ligne avait l'air d'etre a la limite quand elle avait 50 % de marge.
+	#
+	# ET LE TEST N'AVAIT PAS DE PLANCHER. `pas < 3,0` laisse passer un pas de
+	# 0,00 m les doigts dans le nez — soit exactement le defaut que
+	# _grow_branch raconte avoir paye : la tete de reprise rangee SUR le
+	# dernier point au lieu d'un pas au-dela, « un segment de longueur nulle,
+	# une normale en 0/0 et un faux virage de 90 degres au releve ». On mesure
+	# donc |pas - STEP|, qui attrape les deux cotes.
+	#
+	# ON MESURE OU CA PEUT CASSER : AUX RACCORDS. Il y en a exactement deux
+	# dans la fenetre rangee, et ce sont les deux endroits ou la REGLE change
+	# de main — a g_arm le ruban cesse de tirer sa courbure au sort et repose
+	# les tetes pre-calculees de la ville (road.gd, `on_town_path`), a t_end il
+	# reprend la main, _town_heads epuise. Un decalage d'un pas dans la
+	# traversee, une tete de reprise mal rangee, un chemin d'une longueur qui
+	# ne tombe pas juste : tout ca se voit LA, et nulle part ailleurs.
+	#
+	# La plaine reste mesuree et imprimee a cote, pour deux raisons : c'est la
+	# REFERENCE qui donne son sens au chiffre du raccord (0,0002 m ici, 0,0002
+	# la : la couture est du meme ordre que le bruit du float), et elle n'est
+	# plus incassable non plus depuis que les seuils valent 0,01 m et le
+	# plafond de courbure — un clamp casse dans _advance_curve la ferait rougir.
+	var seam_seg := {g_arm: true, t_end: true}
+	var seam_vtx := {g_arm: true, g_arm + 1: true, t_end: true, t_end + 1: true}
+	var off := [0.0, 0.0]      # [plaine, raccord] : |pas - STEP|, en metres
+	var bend := [0.0, 0.0]     # [plaine, raccord] : virage, en deg/pas
+	var seg_n := 0
+	var raccords := 0
+	for g in range(rec_a, rec_b):
+		if not (rec.has(g) and rec.has(g + 1)):
+			continue
+		seg_n += 1
+		var w: int = 1 if seam_seg.has(g) else 0
+		raccords += w
+		off[w] = maxf(off[w], absf((rec[g] as Transform3D).origin.distance_to(
+			(rec[g + 1] as Transform3D).origin) - RoadScript.STEP))
+	for g in range(rec_a + 1, rec_b):
+		if not (rec.has(g - 1) and rec.has(g) and rec.has(g + 1)):
+			continue
+		var w2: int = 1 if seam_vtx.has(g) else 0
+		var a2: Vector3 = (rec[g - 1] as Transform3D).origin
+		var b2: Vector3 = (rec[g] as Transform3D).origin
+		var c2: Vector3 = (rec[g + 1] as Transform3D).origin
+		bend[w2] = maxf(bend[w2], rad_to_deg(acos(clampf(
+			(b2 - a2).normalized().dot((c2 - b2).normalized()), -1.0, 1.0))))
+	# Le plafond vient de road.gd et il vaut pour les deux regions : la
+	# nationale erre sous MAX_CURVE, la traversee sous TOWN_CURVE, et
+	# TOWN_CURVE est le plus petit des deux — le maxf est la pour que ce banc
+	# survive au chantier du volant si l'un passe devant l'autre.
+	var bend_max: float = rad_to_deg(maxf(RoadScript.MAX_CURVE,
+		RoadScript.TOWN_CURVE) * RoadScript.STEP)
+	print("  LE RUBAN RESTE SANS COUTURE : %s   (AUX DEUX RACCORDS — l'entree a l'echantillon %d, ou la traversee pre-calculee prend la main ; la sortie au %d, ou le ruban la reprend : ecart au pas %.4f m pour un SEUIL DE 0,01 (un echantillon DOUBLE en ferait 2,000) et virage %.3f deg/pas pour un SEUIL DE %.3f, soit le plafond de road.gd — le plus grand de MAX_CURVE et TOWN_CURVE, fois STEP, %.3f deg/pas — et 15 %% pour le float. La plaine autour, %d segments, pour reference : %.4f m et %.3f deg/pas)" % [
+		seg_n > 300 and raccords == 2
+		and off[0] < 0.01 and off[1] < 0.01
+		and bend[0] < bend_max * 1.15 and bend[1] < bend_max * 1.15,
+		g_arm, t_end, off[1], bend[1], bend_max * 1.15, bend_max,
+		seg_n - raccords, off[0], bend[0]])
+
+	# --- le volant travaille en ville -------------------------------------
+	# LE VERDICT EST CELUI DU PLAN, A LA LETTRE : |car.steer| passe au-dessus
+	# de 0,04 au moins une fois toutes les 8 s de traversee. C'est ce que
+	# sleep.gd compte (sleep.gd:163) et c'est ce que le plan promet (section 1.4 :
+	# « courbure bornee, pas annulee — donc pas de declenchement de la
+	# monotonie »).
+	#
+	# LES DEUX RELEVES DE ROUTE QUI SUIVENT SONT LA POUR DIRE POURQUOI, parce
+	# qu'un verdict faux sans explication n'est qu'une plainte. Le cap ne tourne
+	# que de 4 a 14 deg sur les 260 m selon le tirage, et sa portion la plus
+	# plate va de 20 a 145 m : ce n'est pas une regle, mais ce n'est pas non
+	# plus un volant qui travaille.
+	#
+	# L'ARITHMETIQUE QUI TRANCHE, et elle ne depend pas du conducteur de ce
+	# banc : pour tenir une courbure k a la vitesse v, il faut
+	# `steer = v * k / (steer_rate * grip * stability)` (car.gd:726-728). A
+	# 12,5 m/s : grip = 1, stability = 0,806, steer_rate = 1,15, donc
+	# steer = 13,5 * k. Au PLAFOND de la traversee (TOWN_CURVE = 0,0015) cela
+	# fait 0,020 de volant — LA MOITIE du seuil de monotonie. Aucun reglage de
+	# bande morte n'y change rien : c'est le regime permanent, pas le transitoire.
+	# Seuls les changements de sens de la courbure font passer 0,04, et le
+	# releve le montre (|steer| maxi de 0,021 a 0,071 sur douze lancements).
+	#
+	# ET LE LEVIER N'EST PAS CELUI QU'ON CROIT. TOWN_CURVE est un PLAFOND, et il
+	# ne mord presque jamais : la courbure de la traversee est tiree en
+	# `randfn(0,0 ; 0,0010)` (road.gd:532), donc le clamp a 0,0015 n'attrape
+	# que 13 % des tirages. Verifie sur une copie : TOWN_CURVE monte a 0,005,
+	# le tirage inchange — le cap tourne toujours de 12 deg sur la traversee et
+	# le silence reste a 8,3 s. C'est l'ECART-TYPE qu'il faudrait monter, pas
+	# le plafond : avec 0,005 d'ecart-type, le cap tourne de 40 deg, |steer|
+	# monte a 0,112 et le silence tombe a 5,1 s — vert. Mais la compression a
+	# 60 m passe alors a 41 %, quatre fois ce que LA TRAVERSEE NE SE REPLIE PAS
+	# autorise : les deux invariants tirent en sens contraire, et c'est ca le
+	# vrai resultat de cette ligne.
+	#
+	# Ce que ca veut dire, en clair : a 45 km/h la traversee ne desarme PAS la
+	# monotonie de sleep.gd, et elle ne peut pas le faire sans replier le
+	# quadrillage du bourg. La section 4.5 du plan, elle, l'admet deja pour la
+	# vigilance : « La ville prend de la vigilance ; le cafe en rend. »
+	var turn_tot := 0.0
+	var flat_run := 0
+	var flat_max := 0
+	for g in range(g_arm, t_out + 1):
+		if not (rec.has(g - 1) and rec.has(g) and rec.has(g + 1)):
+			continue
+		var d0: Vector3 = ((rec[g] as Transform3D).origin - (rec[g - 1] as Transform3D).origin).normalized()
+		var d1: Vector3 = ((rec[g + 1] as Transform3D).origin - (rec[g] as Transform3D).origin).normalized()
+		var k: float = acos(clampf(d0.dot(d1), -1.0, 1.0)) / RoadScript.STEP
+		turn_tot += k * RoadScript.STEP
+		if k < 0.00044:
+			flat_run += 1
+			flat_max = maxi(flat_max, flat_run)
+		else:
+			flat_run = 0
+	var flat_m: float = float(flat_max) * RoadScript.STEP
+	print("  LE VOLANT TRAVAILLE EN VILLE : %s   (au volant et non au rail : le plus long silence du volant vaut %.1f s pour un seuil de 8,0, sur %.1f s de traversee a 12,5 m/s, |steer| maxi %.3f pour un seuil de monotonie de 0,04 ; la route, elle, tourne son cap de %.1f deg sur les %.0f m de traversee et sa portion la plus plate fait %.0f m — au plafond TOWN_CURVE il ne faut que 0,020 de volant, la moitie du seuil)" % [
+		cross_t >= 8.0 and steer_gap < 8.0, steer_gap, cross_t, steer_max,
+		rad_to_deg(turn_tot), float(t_out - g_arm) * RoadScript.STEP, flat_m])
+
+	# --- aucun arbre ni poteau dans la ville -------------------------------
+	# ON COMPTE AUSSI CE QUI AURAIT DU NAITRE, et c'est la moitie de
+	# l'invariant. Un "0" tout seul dit la meme chose quand le filtre travaille
+	# et quand la nuit n'avait rien a poser : le tirage vaut p = 0,55 par
+	# echantillon pour un arbre (road.gd:720) et un poteau tous les POLE_EVERY
+	# (road.gd:738), et c'est ce compte-la qu'il faut avoir retire.
+	#
+	# LA REGION EST CELLE DU PLAN : de _town_in - PROP_QUIET a _town_out + PAD,
+	# soit 191 echantillons et 105 arbres promis (PLAN_VILLES.md, J2). On imprime
+	# en plus le decoupage, parce que c'est lui qui dit OU ca se passe : les
+	# echantillons d'avant le panneau sont nes AVANT que _town_in n'existe —
+	# les bornes se posent a l'armement (road.gd:463), et la ville dessine PAD
+	# echantillons plus tot que ca. Le filtre n'a jamais eu la main sur eux.
+	var reg_tree := 0
+	var reg_pole := 0
+	var draw_tree := 0
+	var draw_pole := 0
+	var pad_tree := 0
+	var pad_pole := 0
+	var after_tree := 0
+	var after_pole := 0
+	for g in tree_gs:
+		if g >= quiet_a and g <= t_end:
+			reg_tree += 1
+		if g >= t_in and g <= t_end:
+			draw_tree += 1
+		if g >= t_in and g < g_arm:
+			pad_tree += 1
+		if g >= g_arm and g <= quiet_b:
+			after_tree += 1
+	for g in pole_gs:
+		if g >= quiet_a and g <= t_end:
+			reg_pole += 1
+		if g >= t_in and g <= t_end:
+			draw_pole += 1
+		if g >= t_in and g < g_arm:
+			pad_pole += 1
+		if g >= g_arm and g <= quiet_b:
+			after_pole += 1
+	var reg_n: int = t_end - quiet_a + 1
+	print("  AUCUN ARBRE NI POTEAU DANS LA VILLE : %s   (%d arbres et %d poteaux sur les %d echantillons ou road.gd promet le silence, quand le tirage en promettait %.0f et %.0f ; %d et %d dans les %d echantillons que la ville DESSINE, dont %d et %d dans les %d d'avant le panneau — nes avant que _town_in n'existe ; du panneau a la fin de la zone, %d echantillons : %d et %d)" % [
+		reg_tree == 0 and reg_pole == 0, reg_tree, reg_pole, reg_n,
+		0.55 * float(reg_n), float(reg_n) / float(RoadScript.POLE_EVERY),
+		draw_tree, draw_pole, t_end - t_in + 1, pad_tree, pad_pole, g_arm - t_in,
+		quiet_b - g_arm + 1, after_tree, after_pole])
+
+	# --- le portail survit -------------------------------------------------
+	print("  LE PORTAIL SURVIT : %s   (demande a l'echantillon %d, en plein milieu de la traversee ; obtenu %d, ecart %d pour un seuil de 5)" % [
+		road.portal_index >= 0 and absi(road.portal_index - want_portal) < 5,
+		want_portal, road.portal_index, absi(road.portal_index - want_portal)])
+
+	# --- le juge ne lit plus les prives ------------------------------------
+	# Le grep du plan, ecrit en GDScript. GDScript ne dit RIEN quand un membre
+	# prive change de nom ou de sens : taxi.gd continuerait de tourner et le
+	# client se mettrait a raler d'un bas-cote imaginaire, en silence, une nuit
+	# entiere. Le texte du fichier est la seule preuve qui ne mente pas.
+	var src: String = FileAccess.get_file_as_string("res://scripts/taxi.gd")
+	var privates: int = src.count("road._")
+	print("  LE JUGE NE LIT PLUS LES PRIVES : %s   (grep \"road\\._\" sur les %d octets de scripts/taxi.gd : %d resultat(s), seuil 0)" % [
+		privates == 0, src.length(), privates])
+
+	# --- la trace se recoud au Y -------------------------------------------
+	# On force le passage sur la SORTIE (le brin mort), comme maptest : la
+	# voiture est posee dessus, l'echange des rubans est ce qu'on eprouve, pas
+	# le coup de volant.
+	#
+	# CE QUE LE BANC A TROUVE ICI, et qui n'etait pas prevu : la trace perd un
+	# point sur deux echanges environ. _push_trail est cadence sur l'INDEX
+	# GLOBAL (road.gd:294, `_index0 % TRAIL_EVERY == 0`), et _swap_to_branch
+	# repose _index0 sur `_fork_g + 1 + start` (road.gd:1065) : les index qui
+	# separent l'ancien du nouveau ne sont jamais pousses. Quand un multiple de
+	# TRAIL_EVERY tombe dans ce trou — une fois sur deux, puisque le saut fait
+	# quelques index —, la trace passe de 8 a 16 m entre deux points.
+	#
+	# Ce n'est pas une dechirure : les deux points restent SUR la route, la
+	# fourche etant tenue droite. C'est un point perdu, exactement un, et le
+	# releve le dit en cadences pour qu'on ne confonde pas les deux.
+	print("--- le Y ---------------------------------------------------------")
+	var trail0: int = (road.trail() as PackedVector2Array).size()
+	var commits := [0]
+	var swapped := [false]
+	road.fork_committed.connect(func(s: String, _id: String) -> void:
+		commits[0] += 1
+		swapped[0] = s != String(road._fork_main))
+	t = 0.0
+	while t < 200.0 and commits[0] == 0:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		var near: bool = road.fork_state() in ["grow", "window"] \
+			and road.head_index() >= road.fork_index() - 25
+		if near:
+			Engine.time_scale = 2.0
+			car.speed = minf(maxf(car.speed, 8.0), 9.0)
+			if road.head_index() >= road.fork_index() + 4 and road._bpos.size() > 1:
+				_rail_on(road._bpos, 0.0)
+			else:
+				_rail(1.2)
+		else:
+			Engine.time_scale = 5.0
+			car.speed = maxf(car.speed, 25.0)
+			_rail(1.2)
+	Engine.time_scale = 5.0
+	t = 0.0
+	while t < 90.0 and (road.trail() as PackedVector2Array).size() < trail0 + 24:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+	car.speed = 0.0
+	var tr2: PackedVector2Array = road.trail()
+	var jump := 0.0
+	for i in range(maxi(trail0 - 4, 1), tr2.size()):
+		jump = maxf(jump, tr2[i].distance_to(tr2[i - 1]))
+	var jump_all := 0.0
+	for i in range(1, tr2.size()):
+		jump_all = maxf(jump_all, tr2[i].distance_to(tr2[i - 1]))
+	var cadence: float = RoadScript.TRAIL_EVERY * RoadScript.STEP
+	print("  LA TRACE SE RECOUD AU Y : %s   (sortie prise %s ; saut maxi %.2f m pour un seuil de 12, soit %.2f fois la cadence de %.0f m, sur les %d points poses autour de l'echange ; %.2f m sur les %d points de toute la nuit)" % [
+		swapped[0] and jump < 12.0 and tr2.size() > trail0,
+		swapped[0], jump, jump / cadence, cadence,
+		tr2.size() - maxi(trail0 - 4, 1), jump_all, tr2.size()])
 
 	Engine.time_scale = 1.0
 	get_tree().quit()
@@ -5579,3 +7411,1681 @@ func _fare_test() -> void:
 
 	Engine.time_scale = 1.0
 	get_tree().quit()
+
+
+
+# --------------------------------------------------------------------------
+# Banc d'essai de la ville — J3
+# --------------------------------------------------------------------------
+
+## LE PREMIER BANC DU DEPOT QUI OUVRE UN MAILLAGE. Tous les autres mesurent des
+## positions, des angles, des sommes d'argent ; celui-ci lit les tampons de
+## sommets et compte ce qui y est ECRIT. C'est la seule facon de prouver le
+## masque de dessin — et le J2 l'a promis pendant tout un jalon sans jamais
+## regarder un triangle. Son invariant LA COUTURE EST NETTE (rubantest, verte a
+## 0,0000 m dix fois sur dix) compare deux tableaux de Transform3D : c'est une
+## identite de DONNEE, elle est vraie, et elle ne dit rien de ce qui est
+## dessine. Le ruban et la traversante posaient bien le meme point ; personne
+## n'avait verifie qu'ils ne le dessinaient pas TOUS LES DEUX.
+##
+## CE QU'IL EMPRUNTE AUX MEMBRES PRIVES, ET POURQUOI. Un banc a le droit
+## d'ouvrir le capot (c'est taxi.gd qui ne l'a pas, et rubantest le verifie
+## ligne a ligne). Ici : road._mesh et town._mesh (les tampons, l'objet meme de
+## la mesure), road._pos / _right / _index0 / _town_in / _town_g (pour situer un
+## sommet sur le ruban), town._plan / _c_pos / _mast_pos / _light_mast (pour
+## placer la voiture et les captures), et town._step (pour savoir quelle etape
+## de construction tourne dans quelle image).
+##
+## LE BANC CASSE CE QU'IL SURVEILLE, EXPRES, ET LE REMET. Trois lignes portent
+## leur propre contre-epreuve, dans la meme image et sur la meme geometrie :
+## le masque est refait une fois ferme (road._town_in a -1, _rebuild(), on
+## compte, on remet) ; la couture est remesuree apres qu'on a decale de 5 cm le
+## seul echantillon du ruban qui la porte ; l'enroulement est recompte sur une
+## copie ou UN triangle a ete retourne ; la marge entre deux villes est
+## recalculee sur une liste d'evenements ou l'armement qui suit la plus courte
+## marge a ete ramene a 60 m. Une ligne verte qui ne sait pas rougir ne garantit
+## rien — c'est la lecon que le J2 a payee trois fois sur neuf, et ce banc l'a
+## repayee deux fois en s'ecrivant : sa mediane d'etape a imprime 0,00 ms sur un
+## releve vide, et son test d'aire signee a accuse le clocher de Corbeny de
+## vingt-huit triangles a l'envers qui regardaient simplement le sol.
+
+
+## L'echantillon du ruban le plus proche d'un point, en index LOCAL.
+##
+## C'est ce qui SITUE un sommet dessine. Un sommet de bande est pose a
+## `pos[i] + right[i] * off` avec |off| <= 5,8 m sur la nationale : son
+## echantillon est le sien et pas un voisin, parce que le voisin est a
+## sqrt(STEP^2 + off^2) > |off| et que la courbure plafonnee (MAX_CURVE,
+## 0,009 rad/m) ne deplace le bord que de 5,8 x 0,018 = 10 cm sur un pas.
+func _ville_sample_of(pos: PackedVector3Array, p: Vector3) -> int:
+	var best := 1.0e18
+	var bi := 0
+	for i in pos.size():
+		var q: Vector3 = pos[i]
+		var d: float = (p.x - q.x) * (p.x - q.x) + (p.z - q.z) * (p.z - q.z)
+		if d < best:
+			best = d
+			bi = i
+	return bi
+
+
+## Combien de triangles de `mesh` ont leurs DEUX EXTREMITES dans la fenetre
+## d'echantillons [g0, g1] du ruban. C'est la mesure du masque, mot pour mot
+## celle que le plan demande : la ou la ville dessine sa traversante, le ruban
+## national ne doit plus poser un seul triangle.
+##
+## POURQUOI LES DEUX EXTREMITES ET PAS UNE. Un quad du ruban enjambe deux
+## echantillons ; strip.gd saute les QUADS d'indices [skip_from, skip_to) et
+## jamais les sommets. Le dernier quad emis est donc (_town_in - 1 -> _town_in),
+## et ses sommets de tete tombent EXACTEMENT sur _town_in, le premier point de
+## la traversante. Compter un triangle des qu'une extremite touche la fenetre
+## rendrait donc rouge un ruban parfaitement masque.
+func _ville_in_window(mesh: ArrayMesh, pos: PackedVector3Array, index0: int,
+		g0: int, g1: int) -> int:
+	var n := 0
+	for s in mesh.get_surface_count():
+		var arr: Array = mesh.surface_get_arrays(s)
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var f: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		var gs := PackedInt32Array()
+		gs.resize(v.size())
+		for i in v.size():
+			gs[i] = index0 + _ville_sample_of(pos, v[i])
+		for t in f.size() / 3:
+			var a: int = gs[f[t * 3]]
+			var b: int = gs[f[t * 3 + 1]]
+			var c: int = gs[f[t * 3 + 2]]
+			if mini(a, mini(b, c)) >= g0 and maxi(a, maxi(b, c)) <= g1:
+				n += 1
+	return n
+
+
+## L'aire signee d'un triangle projete en (x, z).
+func _ville_area(a: Vector3, b: Vector3, c: Vector3) -> float:
+	return 0.5 * ((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z))
+
+
+## LE SIGNE DE REFERENCE, RELEVE SUR LA NATIONALE ET PAS SUPPOSE. Rend
+## [signe de l'aire a plat, signe du produit normale geometrique . normale
+## d'ombrage, triangles comptes, triangles en desaccord avec la majorite].
+##
+## Pourquoi le relever au lieu de l'ecrire : "enroulement horaire vu du dessus"
+## est une phrase, et le depot a paye deux fois pour avoir cru la lire. La
+## chaussee de road.gd, elle, SE VOIT a l'ecran depuis le premier jour — c'est
+## la seule definition non circulaire de "a l'endroit" dont ce banc dispose. Et
+## le rapport des deux normales est le vrai resultat de la mesure : la
+## chaussee, visible du dessus, a sa normale GEOMETRIQUE (produit vectoriel,
+## main droite) vers le BAS et sa normale d'OMBRAGE vers le haut. C'est ce
+## produit negatif qui dit "a l'endroit", et il vaut pour un mur vertical
+## exactement comme pour un trottoir.
+func _ville_ref(mesh: ArrayMesh, surf: int) -> Array:
+	var pos_area := 0
+	var neg_area := 0
+	var pos_dot := 0
+	var neg_dot := 0
+	var arr: Array = mesh.surface_get_arrays(surf)
+	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var nn: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+	var f: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	for t in f.size() / 3:
+		var ia: int = f[t * 3]
+		var ib: int = f[t * 3 + 1]
+		var ic: int = f[t * 3 + 2]
+		var ar: float = _ville_area(v[ia], v[ib], v[ic])
+		if ar > 0.0:
+			pos_area += 1
+		elif ar < 0.0:
+			neg_area += 1
+		var geo: Vector3 = (v[ib] - v[ia]).cross(v[ic] - v[ia])
+		var sh: Vector3 = nn[ia] + nn[ib] + nn[ic]
+		var dp: float = geo.dot(sh)
+		if dp > 0.0:
+			pos_dot += 1
+		elif dp < 0.0:
+			neg_dot += 1
+	var sa := 1.0 if pos_area >= neg_area else -1.0
+	var sd := 1.0 if pos_dot >= neg_dot else -1.0
+	return [sa, sd, f.size() / 3,
+		mini(pos_area, neg_area) + mini(pos_dot, neg_dot)]
+
+
+## L'audit d'enroulement d'un maillage entier, triangle par triangle, contre le
+## signe releve sur la nationale. Rend un releve nomme, parce qu'un compte tout
+## seul ne dit pas OU c'est faux.
+##
+## DEUX MESURES, ET LA SECONDE EST CELLE QUI ATTRAPE UN MUR :
+##  - l'AIRE SIGNEE en (x, z), la lettre du plan. Elle ne parle que des
+##    triangles A PLAT — un mur vertical se projette sur un segment, son aire
+##    vaut zero, et lui demander un signe serait demander n'importe quoi ;
+##  - la NORMALE GEOMETRIQUE contre la normale d'OMBRAGE ecrite dans le tampon
+##    par town.gd. Celle-la vaut pour les 4 610 triangles du bourg, murs,
+##    toits, fenetres, mats et repere compris.
+func _ville_winding(mesh: ArrayMesh, want_area: float, want_dot: float) -> Dictionary:
+	var out := {"tri": 0, "flat": 0, "area_bad": 0, "dot_bad": 0, "degen": 0,
+		"deux_faces": 0, "sous_face": 0, "worst": 1.0e18, "detail": ""}
+	for s in mesh.get_surface_count():
+		var arr: Array = mesh.surface_get_arrays(s)
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var nn: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var f: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		# LES FACES A DEUX COTES SE RECONNAISSENT, ELLES NE SE DEVINENT PAS.
+		# _quad2 (town.gd) emet EXPRES les deux enroulements du meme quad : une
+		# tete de lampadaire se croise dans les deux sens, et une tete visible
+		# d'un seul cote s'eteindrait dans le retroviseur. La moitie de ces
+		# triangles contredit donc sa normale d'ombrage, et c'est voulu. On les
+		# reconnait au fait que le MEME triple de sommets existe deux fois dans
+		# la surface : c'est une propriete du tampon, pas une liste de cas
+		# particuliers a tenir a jour. Releve avant cette regle : 96 faux sur la
+		# surface 6 de Corbeny, soit 24 mats x 2 quads x 2 triangles, tous
+		# legitimes.
+		var pairs := {}
+		for t in f.size() / 3:
+			var key := "%d,%d,%d" % [
+				mini(f[t * 3], mini(f[t * 3 + 1], f[t * 3 + 2])),
+				f[t * 3] + f[t * 3 + 1] + f[t * 3 + 2],
+				maxi(f[t * 3], maxi(f[t * 3 + 1], f[t * 3 + 2]))]
+			pairs[key] = int(pairs.get(key, 0)) + 1
+		# OU c'est faux compte autant que COMBIEN : les surfaces 5 et 6 versent
+		# les maisons, puis les mats, puis le repere — dans cet ordre. Un
+		# defaut cantonne aux DERNIERS triangles d'une surface designe le
+		# repere ; etale sur toute la surface, il designe town.gd.
+		var s_area := 0
+		var s_dot := 0
+		var s_first := -1
+		var s_last := -1
+		for t in f.size() / 3:
+			var ia: int = f[t * 3]
+			var ib: int = f[t * 3 + 1]
+			var ic: int = f[t * 3 + 2]
+			var a: Vector3 = v[ia]
+			var b: Vector3 = v[ib]
+			var c: Vector3 = v[ic]
+			out["tri"] += 1
+			var geo: Vector3 = (b - a).cross(c - a)
+			if geo.length() < 1.0e-9:
+				out["degen"] += 1
+				continue
+			var sh: Vector3 = nn[ia] + nn[ib] + nn[ic]
+			if sh.length() > 1.0e-6:
+				var key2 := "%d,%d,%d" % [
+					mini(ia, mini(ib, ic)), ia + ib + ic, maxi(ia, maxi(ib, ic))]
+				if int(pairs.get(key2, 0)) > 1:
+					out["deux_faces"] += 1
+					continue
+				var dp: float = geo.normalized().dot(sh.normalized()) * want_dot
+				out["worst"] = minf(out["worst"], dp)
+				if dp <= 0.0:
+					out["dot_bad"] += 1
+					s_dot += 1
+					s_first = t if s_first < 0 else s_first
+					s_last = t
+				# A PLAT : la normale d'ombrage est verticale. C'est la seule
+				# famille dont l'aire signee veut dire quelque chose.
+				#
+				# ET LE SIGNE ATTENDU SUIT LA NORMALE, il n'est pas constant. La
+				# reference relevee sur la chaussee vaut pour une face qui
+				# regarde le CIEL ; le dessous d'une corniche de clocher, lui,
+				# regarde le sol et son aire signee est de l'autre signe — par
+				# construction, et pas par erreur. Le premier releve de ce banc
+				# comptait 28 fautes sur le clocher de Corbeny pour cette seule
+				# raison : c'etait le banc qui avait tort.
+				var flat_up: float = signf(sh.normalized().y)
+				if absf(sh.normalized().y) > 0.9:
+					out["flat"] += 1
+					if flat_up < 0.0:
+						out["sous_face"] += 1
+					var ar: float = _ville_area(a, b, c)
+					if absf(ar) < 1.0e-7 or signf(ar) != want_area * flat_up:
+						out["area_bad"] += 1
+						s_area += 1
+						s_first = t if s_first < 0 else s_first
+						s_last = t
+		if s_area + s_dot > 0:
+			out["detail"] += "surface %d : %d aire / %d normale sur %d triangles, du %d au %d ; " % [
+				s + 1, s_area, s_dot, f.size() / 3, s_first, s_last]
+	return out
+
+
+## La mediane d'un releve. Une moyenne suffirait si les images se ressemblaient ;
+## elles ne se ressemblent pas — une image sur vingt porte un ramasse-miettes ou
+## une allocation de tampon, et elle tire la moyenne de six mesures d'un tiers.
+func _ville_median(a: Array) -> float:
+	if a.is_empty():
+		return 0.0
+	var b := a.duplicate()
+	b.sort()
+	return float(b[b.size() / 2])
+
+
+## Le rail sur la ligne mediane de la VILLE, dans un sens ou dans l'autre.
+##
+## Pourquoi pas _rail : au demi-tour la voiture repart en arriere, elle
+## s'eloigne de road._pos[0] au lieu de s'en approcher, et _closest_index sur le
+## ruban vivant la ramenerait a son premier echantillon — 200 m devant elle.
+## La ville, elle, garde ses 171 echantillons a demeure (town._c_pos) : c'est la
+## seule ligne du jeu qui reste sous la voiture quand on revient sur ses pas.
+##
+## `back` inverse le cap ET le cote : on roule a droite dans les deux sens.
+func _ville_rail(line: PackedVector3Array, lane: float, back: bool) -> void:
+	var i: int = road._closest_index(line, car.global_position)
+	var fwd := Vector3(0.0, 0.0, -1.0)
+	if i + 1 < line.size():
+		fwd = (line[i + 1] - line[i]).normalized()
+	elif i > 0:
+		fwd = (line[i] - line[i - 1]).normalized()
+	var right: Vector3 = fwd.cross(Vector3.UP).normalized()
+	var off: float = -lane if back else lane
+	var p: Vector3 = line[i] \
+		+ fwd * (car.global_position - line[i]).dot(fwd) + right * off
+	car.global_position.x = p.x
+	car.global_position.z = p.z
+	car.rotation.y = atan2(fwd.x, fwd.z) if back else atan2(-fwd.x, -fwd.z)
+
+
+## Gare la voiture a un point et a un cap, a l'arret. Les phares restent
+## allumes (car.gd les leve au demarrage) et le moteur tourne : le point mort et
+## la remise en marche se font UNE fois, avant la premiere capture.
+func _ville_park(p: Vector3, yaw: float) -> void:
+	car.speed = 0.0
+	car.global_position.x = p.x
+	car.global_position.z = p.z
+	car.rotation.y = yaw
+
+
+## Une capture prise d'une camera POSEE EXPRES, hors de la voiture.
+##
+## AUCUN COUP DE POUCE D'EXPOSITION, et c'est la difference avec _giant_shot et
+## _strangler_shot : eux photographient une peau d'albedo 0,05 sous une lune
+## sans ombres et n'ont pas le choix. Le bourg, lui, porte ses propres
+## lumieres — fenetres emissives, tetes de lampadaire, phares de la voiture.
+## Une ville qu'il faudrait eclairer a l'ambiante 18 pour la voir serait une
+## ville que le joueur ne verra jamais : la capture doit mentir aussi peu que
+## possible sur ce qu'on aura sous les yeux.
+func _ville_cam_shot(fname: String, eye: Vector3, aim: Vector3, fov: float) -> void:
+	var ext := Camera3D.new()
+	ext.fov = fov
+	ext.far = 600.0
+	add_child(ext)
+	ext.global_position = eye
+	ext.look_at(aim, Vector3.UP)
+	ext.make_current()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await _shot(fname)
+	car.cam.make_current()
+	ext.queue_free()
+
+
+## Une capture QU'ON MESURE : l'image part sur le disque, et ce qu'elle porte
+## revient en trois chiffres. Une capture qu'on ne mesure pas ne prouve rien —
+## c'est exactement ce qui manquait a la ville du cauchemar, ecrite, executee,
+## et verifiee par personne. Rend [luminance moyenne, feux chauds, pixels lus].
+##
+## LES FEUX CHAUDS SONT LA VRAIE MESURE, ET LA LUMINANCE MOYENNE NE L'EST PAS.
+## Releve : eteindre tout le bourg ne fait tomber la moyenne de l'image que de
+## 5 %, parce que la flaque des PHARES sur la chaussee pese plus que la ville
+## entiere et qu'elle, elle ne bouge pas. On compte donc les pixels CHAUDS et
+## CLAIRS de la MOITIE HAUTE de l'image : les fenetres emissives et les tetes
+## de lampadaire y sont, la flaque des phares n'y est pas, et le nom du panneau
+## est gris neutre (0,72 / 0,74 / 0,70) donc hors du compte. C'est le seul
+## chiffre de l'image qui ne parle que de la ville.
+##
+## UN PIXEL SUR SEIZE (un sur quatre dans chaque sens) : sur 1152 x 648 cela
+## fait encore 46 000 echantillons, et le balayage entier coutait une
+## demi-seconde de GDScript par capture.
+func _ville_shot_stats(fname: String) -> Array:
+	await RenderingServer.frame_post_draw
+	var path := "user://%s" % fname
+	var img: Image = get_viewport().get_texture().get_image()
+	img.save_png(path)
+	print("SHOT: ", ProjectSettings.globalize_path(path))
+	var sum := 0.0
+	var n := 0
+	var warm := 0
+	var half: int = img.get_height() / 2
+	for y in range(0, img.get_height(), 4):
+		for x in range(0, img.get_width(), 4):
+			var c: Color = img.get_pixel(x, y)
+			sum += c.get_luminance()
+			n += 1
+			if y < half and c.get_luminance() > 0.10 and c.r > c.b * 1.4:
+				warm += 1
+	return [sum / float(maxi(n, 1)), warm, n]
+
+
+## Les lumieres a ombres de TOUTE la scene, comptees en descendant l'arbre.
+## Deux, et ce sont les phares : c'est le seul poste de rendu que le depot
+## n'ait jamais eu le droit d'augmenter.
+func _ville_shadow_lights(n: Node, out: Array) -> void:
+	if n is Light3D and (n as Light3D).shadow_enabled:
+		out.append(n.name)
+	for c in n.get_children():
+		_ville_shadow_lights(c, out)
+
+
+## Ce qu'un noeud porte, sa descendance comprise : acc[0] les MeshInstance3D,
+## acc[1] les noeuds, lui-meme exclu. Deux compteurs et un seul parcours —
+## compter les enfants directs comptait quatre objets sur cinq comme nuls.
+func _ville_count(n: Node, acc: Array) -> void:
+	for c in n.get_children():
+		acc[1] = int(acc[1]) + 1
+		if c is MeshInstance3D:
+			acc[0] = int(acc[0]) + 1
+		_ville_count(c, acc)
+
+
+## Toutes les OmniLight3D portees par un noeud et sa descendance.
+func _ville_omnis(n: Node, out: Array) -> void:
+	if n is OmniLight3D:
+		out.append(n)
+	for c in n.get_children():
+		_ville_omnis(c, out)
+
+
+## Le releve complet d'un bourg, une fois bati ET le masque en place. Rendu par
+## ville armee : les seuils du jalon (8 000 sommets, 6 500 triangles, 6
+## surfaces) ne valent que compares sur PLUSIEURS bourgs, parce que le compte
+## depend du tirage — 60 maisons a Peyrelade, 70 a Malassis.
+##
+## LE MASQUE SE MESURE DEUX FOIS, ET LA SECONDE EST LA CONTRE-EPREUVE : on
+## ferme le masque a la main (road._town_in a -1, _rebuild()), on recompte dans
+## la MEME fenetre, on remet, on re-triangule. Meme image, meme ruban, meme
+## bourg : ce que la seconde mesure trouve est exactement ce que la premiere
+## doit avoir supprime. Une ligne verte qui ne sait pas rougir ne garantit rien.
+func _ville_audit(town: Node3D, ref: Array) -> Dictionary:
+	var TownPlan := preload("res://scripts/town_plan.gd")
+	var mesh: ArrayMesh = town._mesh
+	var out := {}
+	out["nom"] = String(town.town_name)
+	out["surf"] = mesh.get_surface_count()
+	var vt := 0
+	var tt := 0
+	var per := ""
+	for s in mesh.get_surface_count():
+		var arr: Array = mesh.surface_get_arrays(s)
+		var nv: int = (arr[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+		var nt: int = (arr[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+		vt += nv
+		tt += nt
+		per += "%d/%d " % [nv, nt]
+	out["v"] = vt
+	out["t"] = tt
+	out["par_surface"] = per.strip_edges()
+	# LES OBJETS DU BOURG, COMPTES EN DESCENDANT L'ARBRE. La premiere version ne
+	# regardait que les enfants DIRECTS et imprimait "1 MeshInstance3D au plus"
+	# — un chiffre faux, et faux du bon cote, ce qui est le pire : le maillage
+	# aux six surfaces est bien seul, mais les deux panneaux portent chacun un
+	# poteau et une tole, petits-enfants de la ville, et ils dessinent. Cinq
+	# MeshInstance3D, donc, et l'en-tete de town.gd le disait deja sans que le
+	# banc le confirme. On compte aussi TOUS les noeuds de la descendance : ce
+	# sont les dix-sept objets que cet en-tete oppose aux 274 du hameau d'avant.
+	var acc := [0, 0]
+	_ville_count(town, acc)
+	out["mi"] = acc[0]
+	out["noeuds"] = acc[1]
+
+	# --- le masque, sur les triangles du ruban -----------------------------
+	var pos: PackedVector3Array = road._pos
+	var i0: int = road._index0
+	var g0: int = road._town_in
+	var g1: int = road._town_out + TownPlan.PAD
+	out["g0"] = g0
+	out["g1"] = g1
+	out["ready"] = bool(road._town_ready)
+	out["dans"] = _ville_in_window(road._mesh, pos, i0, g0, g1)
+	var keep: int = road._town_in
+	road._town_in = -1
+	road._rebuild()
+	out["ferme"] = bool(road._town_ready)
+	out["dans_sans"] = _ville_in_window(road._mesh, pos, i0, g0, g1)
+	road._town_in = keep
+	road._rebuild()
+	out["remis"] = bool(road._town_ready)
+
+	# --- la couture, SUR LE DESSIN ----------------------------------------
+	# Le dernier sommet que road.gd emet avant le trou contre le premier point
+	# que la ville dessine. Pas deux Transform3D d'un tableau : les trois
+	# sommets d'asphalte de l'echantillon _town_in, tels qu'ils sont ECRITS
+	# dans le tampon de chacun des deux maillages, apres extrusion, apres
+	# decalage lateral, apres la hauteur de couche. Si les deux fichiers
+	# n'etaient pas d'accord sur ROAD_HALF, sur Y_ROAD, sur le nombre de
+	# colonnes ou sur le vecteur droite, c'est ici, et ici seulement, que ca se
+	# verrait.
+	var k: int = road._town_in - road._index0
+	var seam := -1.0
+	var seam_n := 0
+	if k >= 0 and k < pos.size() and mesh.get_surface_count() > 0:
+		var ra: Array = road._mesh.surface_get_arrays(1)   # l'asphalte du ruban
+		var ta: Array = mesh.surface_get_arrays(0)         # l'asphalte du bourg
+		var rv: PackedVector3Array = ra[Mesh.ARRAY_VERTEX]
+		var tv: PackedVector3Array = ta[Mesh.ARRAY_VERTEX]
+		seam = 0.0
+		for c in 3:
+			var ir: int = k * 3 + c
+			if ir < rv.size() and c < tv.size():
+				seam = maxf(seam, rv[ir].distance_to(tv[c]))
+				seam_n += 1
+	out["couture"] = seam
+	out["couture_n"] = seam_n
+
+	# --- l'enroulement -----------------------------------------------------
+	var w: Dictionary = _ville_winding(mesh, float(ref[0]), float(ref[1]))
+	out["tri"] = w["tri"]
+	out["plat"] = w["flat"]
+	out["aire_faux"] = w["area_bad"]
+	out["normale_faux"] = w["dot_bad"]
+	out["degenere"] = w["degen"]
+	out["pire"] = w["worst"]
+	out["deux_faces"] = w["deux_faces"]
+	out["sous_face"] = w["sous_face"]
+	out["detail"] = w["detail"]
+	return out
+
+
+## LE BANC DE LA VILLE POSEE — le J3.
+##
+## CE QU'IL FAIT, DANS L'ORDRE : il roule une nuit courte jusqu'au premier
+## bourg de la carte (Corbeny, 950 m, l'arete de depart de _start_normal_world),
+## RELEVE la nationale nue comme reference de rendu, FORCE l'armement dans le
+## pire cas que road.gd sache produire — une image qui engendre ses 150
+## echantillons de garde-fou —, chronometre les quatre etapes de construction,
+## ouvre les deux maillages et compte leurs triangles, traverse le bourg, y
+## fait DEMI-TOUR au volant sur un carrefour, prend les quatre captures, mesure
+## le cout en A/B a l'arret, puis enchaine cinq bourgs de plus pour la marge
+## entre deux villes.
+##
+## POURQUOI LE PIRE CAS SE FORCE ET NE S'ATTEND PAS. Dans une nuit ordinaire
+## l'armement tombe dans une image qui pousse UN echantillon : road.gd rattrape
+## 2 m de route et la ville se batit sur un ruban immobile. Le garde-fou
+## `while guard < SAMPLES` de road.gd existe pour l'autre cas — une image
+## longue, un rechargement, un saut — et c'est celui-la qui coute. On porte donc
+## la voiture au bout du ruban vivant en une image, road.gd rattrape ses 150
+## echantillons, et town.arm() tombe dedans. Un banc qui mesurerait le cas
+## facile annoncerait un cout qu'aucun joueur ne paie.
+func _ville_test() -> void:
+	var TownPlan := preload("res://scripts/town_plan.gd")
+	await get_tree().create_timer(0.8).timeout
+	_start_normal_world()
+	# La jauge de veille ne bouge pas : ce banc roule plusieurs kilometres en
+	# temps accelere. Endormi, il basculerait dans le cauchemar — et
+	# suspend_town() eteindrait la ville qu'il mesure.
+	sleep.full_span = 1.0e9
+	car.gear = 5
+	# LES IMAGES SE MESURENT ICI, DONC LA SYNCHRO VERTICALE SAUTE. Avec elle,
+	# toute image plus courte que la periode de l'ecran s'imprime a la periode
+	# de l'ecran : ELLE SE BATIT SANS SAUTER UNE IMAGE et LE COUT NE SE VOIT
+	# PAS mesureraient le moniteur et pas le bourg, et une etape de 3 ms serait
+	# indiscernable d'une etape de 15.
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
+	var town: Node3D = road.town
+
+	# --- la nationale nue : la reference de rendu -------------------------
+	print("--- la nationale nue ---------------------------------------------")
+	Engine.time_scale = 4.0
+	var t := 0.0
+	while t < 60.0 and road.head_index() < 60:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+	var bare_ms := 0.0
+	var bare_calls := 0.0
+	var bare_n := 0
+	var t_prev := Time.get_ticks_usec()
+	for k in 90:
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		if k > 8:
+			bare_ms += float(now - t_prev) / 1000.0
+			bare_calls += float(RenderingServer.get_rendering_info(
+				RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME))
+			bare_n += 1
+		t_prev = now
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+	bare_ms /= float(bare_n)
+	bare_calls /= float(bare_n)
+	# Le signe d'enroulement de reference : celui de la chaussee de la
+	# nationale, qui se voit a l'ecran depuis le premier jour.
+	var ref: Array = _ville_ref(road._mesh, 1)
+	print("  (nationale nue, %d images, vsync coupee : %.2f ms par image soit %.0f ips, %.1f appels de dessin par image sur les quatre vues)" % [
+		bare_n, bare_ms, 1000.0 / bare_ms, bare_calls])
+	print("  (enroulement de reference, releve sur les %d triangles d'asphalte du ruban : aire signee en (x,z) de signe %+.0f, produit normale geometrique . normale d'ombrage de signe %+.0f, %d triangle(s) en desaccord)" % [
+		ref[2], ref[0], ref[1], ref[3]])
+
+	# --- l'armement, dans le PIRE CAS -------------------------------------
+	print("--- l'armement, dans le pire cas ---------------------------------")
+	t = 0.0
+	while t < 120.0 and road._town_g >= 0 \
+			and road._town_g - (road._index0 + road._pos.size()) > 128:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 25.0)
+		_rail(1.2)
+	var avance: int = road._town_g - (road._index0 + road._pos.size())
+
+	# LES DEUX IMAGES DE REFERENCE, prises a la meme vitesse et a la meme
+	# horloge que la construction : celle d'AVANT le saut, ou le bourg n'existe
+	# pas encore, et celle d'APRES, ou il est dessine. Elles ne portent aucun
+	# verdict — le cout des etapes se mesure plus bas, sur six reconstructions
+	# et journal coupe. Elles sont la pour que le lecteur voie de quoi est fait
+	# le temps d'image quand la construction tombe dedans, et pour chiffrer ce
+	# que le bourg coute a l'ecran une fois pose.
+	Engine.time_scale = 1.0
+	var pre_ms := 0.0
+	var pre_n := 0
+	t_prev = Time.get_ticks_usec()
+	for k in 16:
+		await get_tree().process_frame
+		var now2 := Time.get_ticks_usec()
+		if k > 5:
+			pre_ms += float(now2 - t_prev) / 1000.0
+			pre_n += 1
+		t_prev = now2
+		car.speed = maxf(car.speed, 12.5)
+		_rail(1.2)
+	pre_ms /= float(maxi(pre_n, 1))
+
+	# LE SAUT. La voiture est portee au bout du ruban vivant plus 30 m : a
+	# l'image suivante, road.gd doit rattraper (300 + 30 - 24) / 2 = 153
+	# echantillons et son garde-fou l'arrete a 150. C'est exactement le pire cas
+	# que le plan demande de mesurer, et il ne s'attend pas : dans une nuit
+	# ordinaire l'armement tombe dans une image qui pousse UN echantillon.
+	await get_tree().process_frame
+	var lastr: Vector3 = road._right[road._right.size() - 1]
+	var fwd_end: Vector3 = Vector3.UP.cross(lastr).normalized()
+	car.global_position = road._pos[road._pos.size() - 1] + fwd_end * 30.0
+	car.rotation.y = atan2(-fwd_end.x, -fwd_end.z)
+	car.speed = 12.5
+
+	# Les images qui suivent, une par une : combien d'echantillons road.gd y a
+	# pousses, et quelle etape de la ville y a tourne. town._step est lu AVANT
+	# le _process de l'image (process_frame est emis juste avant), donc il dit
+	# ce qui VA tourner et non ce qui a tourne. Ce releve-ci sert au PIRE CAS —
+	# l'image de l'armement — et au decor ; le cout des quatre etapes, lui, se
+	# mesure juste apres, six fois et journal coupe.
+	var f_ms := PackedFloat32Array()
+	var f_step := PackedInt32Array()
+	var f_pushed := PackedInt32Array()
+	t_prev = Time.get_ticks_usec()
+	for k in 22:
+		var step_before: int = town._step
+		var idx_before: int = road._index0
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		f_ms.append(float(now - t_prev) / 1000.0)
+		f_step.append(step_before)
+		f_pushed.append(road._index0 - idx_before)
+		t_prev = now
+		car.speed = maxf(car.speed, 12.5)
+		if k >= 2:
+			_rail(1.2)
+	var burst := 0
+	var burst_ms := 0.0
+	var step_ms := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+	var post_ms := 0.0
+	var post_n := 0
+	for k in f_ms.size():
+		if f_pushed[k] > 60:
+			burst = maxi(burst, f_pushed[k])
+			burst_ms = maxf(burst_ms, f_ms[k])
+		elif f_step[k] >= 0 and f_step[k] <= 3:
+			step_ms[f_step[k]] = maxf(step_ms[f_step[k]], f_ms[k])
+		else:
+			post_ms += f_ms[k]
+			post_n += 1
+	post_ms = post_ms / maxf(float(post_n), 1.0)
+	print("  (l'image de l'armement a pousse %d echantillons — le garde-fou de road.gd en autorise %d — et la ville etait demandee %d echantillons au-dela du ruban vivant ; elle a dure %.2f ms : rattrapage du ruban, re-triangulation entiere et _gather des 171 echantillons de la ville. Les images voisines faisaient %.2f ms avant le saut et %.2f apres, et la construction qui a suivi %.2f / %.2f / %.2f / %.2f ms — journal de town.gd compris, voir les deux lignes suivantes)" % [
+		burst, RoadScript.SAMPLES, avance, burst_ms, pre_ms, post_ms,
+		step_ms[0], step_ms[1], step_ms[2], step_ms[3]])
+	var loud_ms := PackedFloat32Array([step_ms[0], step_ms[1], step_ms[2], step_ms[3]])
+
+	# --- les quatre etapes, CHRONOMETREES UNE PAR UNE ---------------------
+	# ON APPELLE LES QUATRE ETAPES, ON NE REGARDE PLUS LES IMAGES. La premiere
+	# version de cette ligne mesurait le TEMPS D'IMAGE dans lequel chaque etape
+	# tombe, et elle n'a jamais rien mesure de stable : sur cinq lancements du
+	# meme banc, la meme etape a rendu +0,62, +4,40, +9,94, +4,58 et -2,27 ms,
+	# et l'image de reference elle-meme est passee de 3,6 a 14,8 ms selon la
+	# charge de la machine. Une etape qui coute deux millisecondes ne se lit pas
+	# dans une image qui en dure quinze et qui varie de cinq.
+	#
+	# Les quatre builders de town.gd sont des methodes ordinaires : on rearme le
+	# bourg, on EFFACE sa machine a etats (_step a -1, sinon _process les
+	# rappellerait dans les images suivantes et le maillage recevrait douze
+	# surfaces), et on les appelle nous-memes, chronometre au microseconde. Ce
+	# qu'on mesure alors est l'etape et rien qu'elle — c'est exactement ce que
+	# le seuil de 4,0 ms du plan designe.
+	#
+	# CE QUE CETTE MESURE NE CONTIENT PAS, ET IL FAUT LE DIRE : le premier RENDU
+	# du maillage, qui tombe dans l'image ou _build_glow leve _mi.visible. Il est
+	# du cote de la carte graphique, il est mesure a part par LE COUT NE SE VOIT
+	# PAS, et il ne depend pas du decoupage en quatre images.
+	#
+	# LE JOURNAL DE town.gd EST COUPE le temps de la mesure (`_loud` a faux) :
+	# _build_glow finit par _print_cost() des qu'un banc tourne, et sur une
+	# sortie redirigee dans un tube ces deux lignes ont coute 25,7 ms un
+	# lancement et 42,4 ms le suivant — plus que toute la geometrie du bourg. Un
+	# joueur ne le paiera jamais.
+	town._loud = false
+	car.speed = 0.0
+	var st_all := [[], [], [], []]
+	for r in 12:
+		town.arm(town.global_transform, String(town.town_name))
+		town._step = -1
+		for e in 4:
+			var t0 := Time.get_ticks_usec()
+			match e:
+				0: town._build_roads()
+				1: town._build_walks()
+				2: town._build_town()
+				3: town._build_glow()
+			(st_all[e] as Array).append(float(Time.get_ticks_usec() - t0) / 1000.0)
+		await get_tree().process_frame
+	town._loud = true
+	var net := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+	var worst_step := 0.0
+	var worst_i := 0
+	var spread := 0.0
+	for k in 4:
+		net[k] = _ville_median(st_all[k])
+		var hi := 0.0
+		for x in (st_all[k] as Array):
+			hi = maxf(hi, float(x))
+		spread = maxf(spread, hi)
+		if net[k] > worst_step:
+			worst_step = net[k]
+			worst_i = k
+	# LE PLAN DEMANDE AUSSI "aucune image de l'armement au-dessus de 14,0 ms",
+	# ET CE SEUIL-LA NE MESURERAIT PAS LE BOURG SUR CETTE MACHINE : l'image de
+	# la NATIONALE NUE est imprimee plus haut et vaut de 14 a 21 ms selon la
+	# charge, ville ou pas. On garde donc les deux choses que le bourg controle
+	# vraiment : le cout de chaque etape, et le fait que l'armement tienne dans
+	# une image qui pousse les 150 echantillons du garde-fou.
+	print("  ELLE SE BATIT SANS SAUTER UNE IMAGE : %s   (douze reconstructions du meme bourg, journal coupe, chaque etape appelee et chronometree a part — mediane : chaussees %.2f, trottoirs %.2f, bati %.2f, emissif %.2f ms, la pire est l'etape %d a %.2f ms pour un seuil de 4,0, et la plus longue des quarante-huit mesures fait %.2f ms. L'armement, lui, est mesure dans le PIRE CAS : %d echantillons pousses dans son image, la ou le garde-fou de road.gd en autorise %d)" % [
+		worst_step < 4.0 and burst >= RoadScript.SAMPLES,
+		net[0], net[1], net[2], net[3], worst_i + 1, worst_step, spread,
+		burst, RoadScript.SAMPLES])
+
+	# --- les quatre IMAGES de construction, JOURNAL DEJA COUPE -------------
+	# LA MESURE QUI MANQUAIT, ET LA SEULE QUI REPONDE FRANCHEMENT A « EST-CE
+	# QU'UNE IMAGE SAUTE ». Le banc en avait deux, et aucune ne repondait :
+	#  - la ligne du dessus chronometre les quatre etapes A LA MICROSECONDE,
+	#    mais HORS IMAGE — on appelle les builders a la main ;
+	#  - la ligne d'avant chronometre les quatre IMAGES, mais journal de
+	#    town.gd DEDANS : _print_cost et _print_landmark appellent
+	#    surface_get_arrays six fois et ont coute 25,7 puis 42,4 ms sur une
+	#    sortie redirigee dans un tube. Le banc EXPLIQUAIT que ses images
+	#    longues etaient son propre journal ; personne ne le VERIFIAIT dans le
+	#    meme lancement, et rien n'imprimait ces quatre images journal coupe.
+	# On le fait ici : six rearmements de plus, _loud a faux, _process batit en
+	# quatre images comme chez le joueur, la voiture roule a 12,5 m/s, et on
+	# chronometre LES IMAGES. On mesure en plus les quatre images VOISINES sans
+	# construction, au meme endroit et a la meme vitesse : sans elles, un
+	# chiffre de 12 ms ne dirait pas si la ville coute onze millisecondes ou si
+	# la machine en est simplement la ce soir.
+	#
+	# L'ALIGNEMENT SE VERIFIE AU LIEU DE SE SUPPOSER. arm() pose _step a 0 et
+	# _arm_frame a l'image courante, que town.gd saute deliberement : les etapes
+	# tombent sur les quatre images SUIVANTES. On relit _step au debut de chaque
+	# image — process_frame est emis avant les _process, donc il dit ce qui VA
+	# tourner — et une image qui ne porte pas l'etape attendue est comptee a
+	# part plutot que versee dans la mauvaise colonne.
+	town._loud = false
+	var frm := [[], [], [], []]
+	var rest_l: Array = []
+	var mis_align := 0
+	for r in 6:
+		await get_tree().process_frame
+		town.arm(town.global_transform, String(town.town_name))
+		await get_tree().process_frame
+		var tp := Time.get_ticks_usec()
+		for e in 4:
+			var st_b: int = town._step
+			await get_tree().process_frame
+			var nw := Time.get_ticks_usec()
+			if st_b == e:
+				(frm[e] as Array).append(float(nw - tp) / 1000.0)
+			else:
+				mis_align += 1
+			tp = nw
+			car.speed = maxf(car.speed, 12.5)
+			_rail(1.2)
+		for e2 in 4:
+			await get_tree().process_frame
+			var nw2 := Time.get_ticks_usec()
+			rest_l.append(float(nw2 - tp) / 1000.0)
+			tp = nw2
+			car.speed = maxf(car.speed, 12.5)
+			_rail(1.2)
+	town._loud = true
+	var frm_med := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+	var frm_hi := 0.0
+	var frm_n := 0
+	for e in 4:
+		frm_med[e] = _ville_median(frm[e])
+		frm_n += (frm[e] as Array).size()
+		for x in (frm[e] as Array):
+			frm_hi = maxf(frm_hi, float(x))
+	var rest_med: float = _ville_median(rest_l)
+	var frm_worst := 0.0
+	for e in 4:
+		frm_worst = maxf(frm_worst, frm_med[e])
+	print("  (les quatre IMAGES de construction, JOURNAL DEJA COUPE et voiture a 12,5 m/s, six rearmements : mediane %.2f / %.2f / %.2f / %.2f ms sur %d images alignees et %d hors alignement ; la plus longue des %d fait %.2f ms. Les quatre images VOISINES sans construction, meme endroit et meme vitesse, tiennent %.2f ms : la pire etape depasse son voisinage de %+.2f ms. Les MEMES quatre images journal compris, relevees plus haut, faisaient %.2f / %.2f / %.2f / %.2f ms — l'ecart est le journal, et c'est la premiere fois qu'il est mesure dans le meme lancement)" % [
+		frm_med[0], frm_med[1], frm_med[2], frm_med[3], frm_n, mis_align,
+		frm_n, frm_hi, rest_med, frm_worst - rest_med,
+		loud_ms[0], loud_ms[1], loud_ms[2], loud_ms[3]])
+
+	# --- le maillage, le masque, la couture, l'enroulement -----------------
+	t = 0.0
+	while t < 20.0 and not (town._built and road._town_ready):
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 12.5)
+		_rail(1.2)
+	var audits: Array = []
+	audits.append(_ville_audit(town, ref))
+	var a0: Dictionary = audits[0]
+	print("--- le bourg -----------------------------------------------------")
+	print("  (\"%s\" : %d surface(s), %d sommets, %d triangles, par surface %s ; la ville dessine les echantillons %d a %d, la voiture est au %d)" % [
+		a0["nom"], a0["surf"], a0["v"], a0["t"], a0["par_surface"],
+		a0["g0"], a0["g1"], road.head_index()])
+
+	# LES TROIS LAMPES SE RELEVENT ICI, quelques images apres le _place_lights
+	# de la derniere reconstruction et VOITURE A L'ARRET depuis : c'est le seul
+	# instant ou la distance mesuree est encore celle de l'ALLUMAGE. Dix
+	# secondes plus tard la voiture a avance de 130 m et la mesure ne dirait
+	# plus rien de la regle qu'on juge.
+	var omnis: Array = []
+	_ville_omnis(town, omnis)
+	var fog_max := 0.0
+	var lamp_min := 1.0e18
+	var lamp_moves := 0
+	# COMBIEN DES TROIS BRULENT, et pas seulement a quelle distance elles se
+	# rallument. La ville promet au conducteur d'en croiser trois d'un bout a
+	# l'autre du bourg ; un releve qui ne compte que les rallumages dirait la
+	# meme chose d'un bourg ou une seule lampe aurait trouve un mat.
+	var lamp_lit_min := 3
+	var lamp_lit_max := 0
+	var lamp_pos: Array = []
+	for l in omnis:
+		var ol: OmniLight3D = l
+		fog_max = maxf(fog_max, ol.light_volumetric_fog_energy)
+		lamp_pos.append(ol.global_position)
+		if ol.visible:
+			lamp_moves += 1
+			lamp_min = minf(lamp_min,
+				ol.global_position.distance_to(car.global_position))
+
+	# --- 87 : l'arrivee sur le bourg --------------------------------------
+	# LE PLAFONNIER S'ETEINT D'ABORD, ET PAR LE GESTE. Il est allume au
+	# demarrage (dome_light.gd, `on := true`) : a 15 cm de la casquette et du
+	# ciel de toit, il fait de l'habitacle la chose la plus claire de l'image et
+	# le tonemap filmique ecrase tout le reste — premiere serie de captures, on
+	# ne distinguait ni le panneau, ni les fenetres, ni la tete des lampadaires.
+	# Un conducteur de nuit l'eteint ; on l'eteint comme lui, en le visant et en
+	# cliquant (_dome_switch), pas en ecrivant `on = false`.
+	Engine.time_scale = 1.0
+	t = 0.0
+	while t < 60.0 and road.head_index() < road.town_span().x + TownPlan.PAD - 7:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 12.5)
+		_rail(1.2)
+	car.speed = 0.0
+	await _dome_switch(car.cabin.dome_light, false)
+	# LE MOTEUR RESTE EN MARCHE. S'arreter en cinquieme le CALE, et la premiere
+	# serie de captures portait "MOTEUR ARRETE" en rouge sur toute la largeur du
+	# tableau de bord. On repasse au point mort et on relance a la cle.
+	await _restart_engine()
+	# LE REGARD REND LA MAIN A LA ROUTE, ET LE BANDEAU D'AIDE S'EFFACE. Des
+	# qu'on regarde droit devant, la visee accroche le pare-soleil range : son
+	# bandeau ("Maintiens clic gauche : placer le pare-soleil") s'imprimait EN
+	# PLEIN MILIEU des quatre premieres captures et la tole du pare-soleil s'y
+	# allumait en surbrillance. On regarde donc la chaussee a six metres, ou il
+	# n'y a rien a saisir, et on eteint le bandeau pour la duree des prises : il
+	# appartient au jeu, pas a la photographie.
+	await _aim_at(Vector3(car.SEAT_X, -0.2, -6.0))
+	car.interaction._hint.visible = false
+
+	# La voiture posee a 14 m du panneau, la camera derriere et au-dessus
+	# d'elle : le pare-brise ne convient pas pour celle-la, le retroviseur
+	# interieur couvre justement la bande de 12 a 32 degres a droite ou le
+	# panneau tombe (releve sur la premiere serie), et le panneau est ce qu'on
+	# vient voir. De la, on a les deux cones de phares, la tole du panneau
+	# qu'ils accrochent, et les premieres fenetres du bourg derriere.
+	var i_sign: int = TownPlan.PAD
+	var ie: int = maxi(i_sign - 7, 1)
+	var fe: Vector3 = (town._c_pos[ie + 1] - town._c_pos[ie]).normalized()
+	var re: Vector3 = fe.cross(Vector3.UP).normalized()
+	_ville_park(town._c_pos[ie] + re * 1.2, atan2(-fe.x, -fe.z))
+	await get_tree().process_frame
+	await _ville_cam_shot("87_ville_entree.png",
+		car.global_position - fe * 6.5 + re * 1.3 + Vector3(0.0, 2.05, 0.0),
+		car.global_position + fe * 34.0 + Vector3(0.0, 2.6, 0.0), 58.0)
+
+	# --- la traversee : ce que le bourg fait pendant qu'on le traverse ----
+	# La ville reste allumee (LA VILLE NE S'ETEINT PAS DEDANS), les trois
+	# lampes ne s'allument jamais sous le nez (TROIS LUMIERES), et la voiture
+	# ne racle jamais (LE DEMI-TOUR TIENT, premiere moitie).
+	var vis_n := 0
+	var vis_off := 0
+	var off_max := 0.0
+	# LE MAT LE PLUS PROCHE QU'ON CROISE, allume ou non : c'est le temoin de
+	# TROIS LUMIERES. Il dit ou une lampe se serait allumee si la regle avait
+	# ete "le mat le plus proche" au lieu de "le plus proche AU-DELA de 60 m".
+	var mast_near := 1.0e18
+	# Le carrefour du demi-tour : la transversale la plus proche de 200 m
+	# apres le panneau — la moitie de la traversee, et le seul endroit du jeu
+	# ou deux chaussees se croisent.
+	var s_cross := -1.0e9
+	for st in (town._plan.streets as Array):
+		if String(st["kind"]) != "cross":
+			continue
+		if absf(float(st["s"]) - 200.0) < absf(s_cross - 200.0):
+			s_cross = float(st["s"])
+	Engine.time_scale = 2.0
+	t = 0.0
+	var cross_ms := 0.0
+	var cross_n := 0
+	var t_cross := Time.get_ticks_usec()
+	var prev_car: Vector3 = car.global_position
+	var stop_at: Vector3 = town._world(s_cross - 2.5, 0.0)
+	while t < 90.0 and car.global_position.distance_to(stop_at) > 2.5:
+		prev_car = car.global_position
+		await get_tree().process_frame
+		var n_cross := Time.get_ticks_usec()
+		cross_ms += float(n_cross - t_cross) / 1000.0
+		t_cross = n_cross
+		cross_n += 1
+		t += get_process_delta_time()
+		car.speed = 12.5
+		_ville_rail(town._c_pos, 1.2, false)
+		vis_n += 1
+		if not town.visible:
+			vis_off += 1
+		off_max = maxf(off_max, road.off_road_dist(car.global_position))
+		for mp in (town._mast_pos as PackedVector3Array):
+			mast_near = minf(mast_near, mp.distance_to(car.global_position))
+		# LA DISTANCE D'ALLUMAGE SE PREND A L'IMAGE D'AVANT, ET C'EST OBLIGE.
+		# town._relight tourne dans le _process de la ville, donc APRES celui de
+		# ce banc (l'arbre descend des parents vers les enfants, et la ville est
+		# petite-fille de main). On voit donc la lampe bouger a l'image
+		# SUIVANTE, quand la voiture s'est deja rapprochee de 40 cm a 25 m/s :
+		# mesurer la depuis la position courante rognerait le releve de 40 cm
+		# sous un plancher de 60,0 m, et un vert deviendrait rouge sans que la
+		# ville ait rien fait. On garde la position de l'image d'avant.
+		var lit := 0
+		for li in omnis.size():
+			var l2: OmniLight3D = omnis[li]
+			if l2.visible:
+				lit += 1
+			if l2.visible and l2.global_position != lamp_pos[li]:
+				lamp_pos[li] = l2.global_position
+				lamp_moves += 1
+				lamp_min = minf(lamp_min,
+					l2.global_position.distance_to(prev_car))
+		lamp_lit_min = mini(lamp_lit_min, lit)
+		lamp_lit_max = maxi(lamp_lit_max, lit)
+
+	# --- le demi-tour, AU VOLANT ------------------------------------------
+	# LA VILLE EST LE SEUL ENDROIT DU JEU OU L'ON PEUT FAIRE DEMI-TOUR, et le
+	# plan en fait un fait mesure et non une image. On le fait donc pour de
+	# vrai : plein braquage a 4 m/s, les memes actions que le joueur, sur le
+	# carrefour et pas entre deux. Le carrefour n'est pas une coquetterie —
+	# c'est de l'arithmetique. A 4 m/s, grip = 0,8 et stability = 0,938
+	# (car.gd), le lacet vaut 1,15 x 0,8 x 0,938 = 0,86 rad/s et le rayon
+	# 4,6 m : un demi-tour emmene la voiture a 1,2 - 2 x 4,6 = 8,0 m de l'axe
+	# du tronc, hors des 5,8 m de chaussee plus accotement. Ce qui la rattrape,
+	# c'est l'AUTRE rue : au point le plus ecarte, elle est sur l'axe de la
+	# transversale. off_road_dist prend le plus petit des deux, et c'est
+	# exactement le service que street_dist rend au juge de course.
+	var off_cross: float = off_max
+	var turn_a: float = road.off_road_dist(car.global_position)
+	var turn_max: float = turn_a
+	var turn_in := 0
+	var turn_n := 0
+	var yaw_prev: float = car.rotation.y
+	var turned := 0.0
+	Engine.time_scale = 1.0
+	Input.action_press("steer_left", 1.0)
+	t = 0.0
+	while t < 30.0 and absf(turned) < PI:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = 4.0
+		turned += wrapf(car.rotation.y - yaw_prev, -PI, PI)
+		yaw_prev = car.rotation.y
+		turn_max = maxf(turn_max, road.off_road_dist(car.global_position))
+		turn_n += 1
+		if town.contains(car.global_position):
+			turn_in += 1
+		vis_n += 1
+		if not town.visible:
+			vis_off += 1
+	Input.action_release("steer_left")
+	var turn_arc: float = turn_max
+	var yaw_done: float = rad_to_deg(absf(turned))
+	# CE N'EST PAS UNE MESURE, C'EST LA CONDITION D'ARRET DE LA BOUCLE ci-dessus,
+	# et il fallait le nommer : la boucle ne sort qu'a PI de cap tourne ou a 30 s
+	# de delai. Un faux ici ne dit rien du demi-tour — il dit que le banc a
+	# manque de temps, et que l'ecart maxi releve porte sur une manoeuvre
+	# tronquee. C'est un garde-fou de banc, pas un invariant du monde.
+	var turn_done: bool = absf(turned) >= PI
+
+	# Le retour au panneau, sur la ligne de la ville et a contresens du ruban.
+	Engine.time_scale = 2.0
+	t = 0.0
+	var prev_ret: Vector3 = car.global_position
+	while t < 120.0 and car.global_position.distance_to(town.global_position) > 12.0:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = 9.0
+		_ville_rail(town._c_pos, 1.2, true)
+		turn_max = maxf(turn_max, road.off_road_dist(car.global_position))
+		turn_n += 1
+		if town.contains(car.global_position):
+			turn_in += 1
+		vis_n += 1
+		if not town.visible:
+			vis_off += 1
+		# LES LAMPES SE SUIVENT AUSSI AU RETOUR, et c'est la moitie du releve :
+		# la traversee aller ne les fait bouger qu'une ou deux fois (elles sont
+		# posees a l'armement sur des mats deja loin devant), le retour a
+		# contresens les fait toutes lacher leur mat l'une apres l'autre.
+		var lit2 := 0
+		for li in omnis.size():
+			var l3b: OmniLight3D = omnis[li]
+			if l3b.visible:
+				lit2 += 1
+			if l3b.visible and l3b.global_position != lamp_pos[li]:
+				lamp_pos[li] = l3b.global_position
+				lamp_moves += 1
+				lamp_min = minf(lamp_min,
+					l3b.global_position.distance_to(prev_ret))
+		lamp_lit_min = mini(lamp_lit_min, lit2)
+		lamp_lit_max = maxi(lamp_lit_max, lit2)
+		prev_ret = car.global_position
+	var back_m: float = car.global_position.distance_to(town.global_position)
+	# Meme remarque que pour turn_done : la boucle du retour s'arrete a 12 m du
+	# panneau ou a 120 s. `back_m < 13` ne pouvait donc rougir que sur un delai
+	# depasse, et la ligne le presentait comme un troisieme releve.
+	var back_done: bool = back_m <= 12.0
+	off_max = maxf(off_max, turn_max)
+
+	# --- 88, 89, 90 : les trois captures du bourg -------------------------
+	# LA CAMERA SE PLACE, ELLE NE SE SUBIT PAS. Les captures des autres bancs
+	# sortent de la ou la voiture se trouvait quand le banc a fini sa mesure :
+	# elles PROUVENT, elles ne MONTRENT pas. Ici on choisit le point de vue sur
+	# la geometrie du bourg — le mat allume que les trois lampes tiennent en ce
+	# moment, la bouche d'une rue laterale, l'axe de la rue que le repere
+	# ferme — et la voiture s'y gare, phares allumes.
+	Engine.time_scale = 1.0
+	car.speed = 0.0
+
+	# 88 : le carrefour, sous un lampadaire allume. La camera se pose a hauteur
+	# d'homme SUR LE BORD OPPOSE au mat et le vise : depuis le siege, la tete du
+	# lampadaire monte a 16 degres a 12 m et le pavillon coupe le ciel a 11
+	# (releve du banc de la lune) — elle serait sous la tole. La voiture reste
+	# 7,5 m derriere la camera, phares allumes : ce sont eux qui donnent la
+	# chaussee, le trottoir et la bouche de la transversale.
+	#
+	# LE MAT SE CHOISIT SUR SA DISTANCE AU TRONC, et pas sur le nom de sa rue.
+	# Premiere tentative : "celui qui tient une transversale, donc un
+	# carrefour" — sauf qu'une transversale s'etend de 34 a 62 m de part et
+	# d'autre, et le mat retenu s'est retrouve a quarante metres de la
+	# nationale : la capture montrait deux points orange a l'horizon. On garde
+	# donc le mat allume le plus proche de la ligne du tronc, celui qu'on croise
+	# en passant, et la camera se pose a huit metres devant lui.
+	var lamp_w := Vector3.ZERO
+	var lamp_d := 1.0e18
+	for li in omnis.size():
+		var ol2: OmniLight3D = omnis[li]
+		if not ol2.visible or town._light_mast[li] < 0:
+			continue
+		var lp: Vector3 = ol2.global_position
+		var d2: float = lp.distance_to(
+			town._c_pos[road._closest_index(town._c_pos, lp)])
+		if d2 < lamp_d:
+			lamp_d = d2
+			lamp_w = lp
+	if lamp_w != Vector3.ZERO:
+		var ic: int = clampi(road._closest_index(town._c_pos, lamp_w) - 4,
+			1, town._c_pos.size() - 2)
+		var f88: Vector3 = (town._c_pos[ic + 1] - town._c_pos[ic]).normalized()
+		var r88: Vector3 = f88.cross(Vector3.UP).normalized()
+		var side88: float = signf((lamp_w - town._c_pos[ic]).dot(r88))
+		var eye88: Vector3 = town._c_pos[ic] - r88 * side88 * 2.6 + Vector3(0.0, 1.75, 0.0)
+		_ville_park(town._c_pos[ic] - f88 * 5.5 + r88 * side88 * 1.2,
+			atan2(-f88.x, -f88.z))
+		await get_tree().process_frame
+		await _ville_cam_shot("88_ville_carrefour.png", eye88,
+			lamp_w + Vector3(0.0, -1.2, 0.0), 62.0)
+		print("  (88_ville_carrefour : le mat allume retenu est a %.1f m de l'axe du tronc, la camera a %.1f m de lui)" % [
+			lamp_d, eye88.distance_to(lamp_w)])
+
+	# 89 : une rue laterale, prise de sa bouche. La voiture est posee sur
+	# l'axe de la transversale, 9 m au-dela du bord de la nationale, nez dans
+	# la rue : les facades sont a 6 m de l'axe de part et d'autre (SETBACK), et
+	# ce sont leurs fenetres qu'on vient voir.
+	var i89 := -1
+	var side89 := 1.0
+	for si in (town._plan.streets as Array).size():
+		var st2: Dictionary = town._plan.streets[si]
+		if String(st2["kind"]) != "cross":
+			continue
+		if i89 < 0 or absf(float(st2["s"]) - 130.0) \
+				< absf(float(town._plan.streets[i89]["s"]) - 130.0):
+			i89 = si
+	if i89 >= 0:
+		var st3: Dictionary = town._plan.streets[i89]
+		side89 = 1.0 if absf(float(st3["b"])) > absf(float(st3["a"])) else -1.0
+		var s89: float = float(st3["s"])
+		# LA VOITURE EST DEVANT L'OBJECTIF, PAS DERRIERE. Prise du siege, une
+		# rue laterale ne rend rien : l'asphalte est a 0,085 d'albedo, les
+		# phares eclairent du bitume, et la premiere version n'a montre qu'un
+		# pare-brise noir. De face, ce sont les DEUX FAISCEAUX qu'on voit,
+		# tailles dans le brouillard volumetrique, et les fenetres allumees des
+		# deux rangees de facades cadrent la rue.
+		var p89: Vector3 = town._world(s89, side89 * 12.0)
+		var e89: Vector3 = town._world(s89, side89 * 28.0)
+		var d89: Vector3 = (e89 - p89).normalized()
+		var q89: Vector3 = Vector3.UP.cross(d89).normalized()
+		_ville_park(p89, atan2(-d89.x, -d89.z))
+		await get_tree().process_frame
+		await _ville_cam_shot("89_ville_rue.png",
+			e89 + q89 * 4.2 + Vector3(0.0, 1.55, 0.0),
+			p89 + Vector3(0.0, 1.05, 0.0), 60.0)
+
+	# 90 : le repere au bout de sa rue. Camera POSEE dans la rue a 1,75 m du
+	# sol, a 38 m du socle, la voiture 6 m derriere elle et phares allumes. Le
+	# pare-brise ne convient pas pour celle-la : le pavillon coupe le ciel a
+	# 11 degres (releve du banc de la lune) et le clocher de Corbeny monte a
+	# 22 m, soit 30 degres a 38 m — le toit de la voiture le couperait en deux.
+	if town._lm_key != "" and town._lm_site.has(town.town_name):
+		var site: Vector4 = town._lm_site[town.town_name]
+		var top: float = float((town._lm[town._lm_key] as Array)[7])
+		var base: Vector3 = town._world(site.x, site.y)
+		var eye: Vector3 = town._world(site.x + site.z * 38.0,
+			site.y + site.w * 38.0)
+		var back: Vector3 = town._world(site.x + site.z * 44.0,
+			site.y + site.w * 44.0)
+		var d90: Vector3 = (base - back).normalized()
+		_ville_park(back, atan2(-d90.x, -d90.z))
+		await get_tree().process_frame
+		await _ville_cam_shot("90_ville_repere.png",
+			eye + Vector3(0.0, 1.75, 0.0),
+			base + Vector3(0.0, top * 0.40, 0.0), 62.0)
+
+	# --- 90bis : la ville du cauchemar ------------------------------------
+	# LA QUATRIEME PROMESSE DU J3, ET LA SEULE QUI N'AVAIT NI BANC NI CAPTURE.
+	# town.gd expose set_dark() et road.gd l'appelle dans suspend_town() —
+	# seulement PERSONNE N'APPELAIT suspend_town(), un grep n'en rendait que sa
+	# definition et deux commentaires. La ville du cauchemar etait donc une
+	# ville ORDINAIRE au milieu du monde rouge, et la capture 90 du banc etait
+	# le clocher de Corbeny. _enter_nightmare le corrige ; ceci le mesure.
+	#
+	# ON MESURE SUR LES PIXELS, PARCE QU'UN BOOLEEN NE PROUVE RIEN ICI. _dark a
+	# vrai, trois lampes eteintes et une reference de materiau echangee se
+	# lisent dans l'objet ; ce que le JOUEUR voit ne se lit que dans l'image.
+	# On prend donc DEUX captures au MEME cadrage, a la meme nuit, memes phares,
+	# meme brouillard, voiture a l'arret — seul suspend_town() tourne entre les
+	# deux — et on compare leur luminance moyenne, un pixel sur seize.
+	#
+	# LE ROUGE DE _enter_nightmare N'EST PAS ICI, ET C'EST VOULU : il baisse
+	# l'ambiante de 0,30 a 0,062, epaissit le brouillard de 0,030 a 0,045 et
+	# desature toute l'image. Il ferait tomber la luminance sans que la ville y
+	# soit pour rien, et la mesure n'aurait plus de sujet. Ce que le monde rouge
+	# ajoute par-dessus est l'affaire de sleeptest ; ici on isole la VILLE.
+	#
+	# CE QUE CE BLOC EMPRUNTE ET REND. suspend_town() annule aussi la ville
+	# PROMISE : sans la remettre, les cinq bourgs suivants ne s'armeraient
+	# jamais et DEUX VILLES JAMAIS ENSEMBLE resterait sans marge a mesurer. On
+	# releve donc _town_g / _town_id avant, et program_town les repose apres —
+	# program_town ne touche que ces deux champs, la remise est exacte.
+	print("--- la ville du cauchemar ----------------------------------------")
+	var i_dk: int = clampi(TownPlan.PAD - 3, 1, town._c_pos.size() - 2)
+	var f_dk: Vector3 = (town._c_pos[i_dk + 1] - town._c_pos[i_dk]).normalized()
+	var r_dk: Vector3 = f_dk.cross(Vector3.UP).normalized()
+	_ville_park(town._c_pos[i_dk] + r_dk * 1.2, atan2(-f_dk.x, -f_dk.z))
+	# Les trois lampes se reposent sur des mats d'ici : _relight ne tourne qu'a
+	# 4 Hz (RELIGHT_EVERY = 0,25 s) et le banc vient de porter la voiture d'un
+	# bout du bourg a l'autre pour les captures. Sans cette attente, l'image
+	# claire montrerait des lampes restees derriere, et l'eteinte n'aurait rien
+	# a eteindre.
+	t = 0.0
+	while t < 1.2:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+	var lamps_on := 0
+	for l4 in omnis:
+		if (l4 as OmniLight3D).visible:
+			lamps_on += 1
+	var cam_dk := Camera3D.new()
+	cam_dk.fov = 64.0
+	cam_dk.far = 600.0
+	add_child(cam_dk)
+	cam_dk.global_position = car.global_position + Vector3(0.0, 2.05, 0.0)
+	cam_dk.look_at(town._world(90.0, 0.0) + Vector3(0.0, 3.0, 0.0), Vector3.UP)
+	cam_dk.make_current()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var st_on: Array = await _ville_shot_stats("90_ville_claire.png")
+
+	# LA VILLE PROMISE, ET IL FAUT SOUVENT LA POSER SOI-MEME. A cet instant du
+	# banc, road.gd n'a rien en attente une fois sur deux : Corbeny a deux
+	# sorties, donc _on_town_reached y programme un Y et PAS une ville, et
+	# _town_g ne sera repose qu'au verdict du Y, 366 m plus loin. Sans cette
+	# promesse posee ici, la moitie des lancements mesurerait "-1 est retombe a
+	# -1" et la ligne serait verte sans rien avoir annule.
+	var g_keep: int = road._town_g
+	var id_keep: String = road._town_id
+	if g_keep < 0:
+		road.program_town(road.head_index() + 400, String(town.town_name))
+	var promised: int = road._town_g
+	road.suspend_town()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var st_off: Array = await _ville_shot_stats("90_ville_cauchemar.png")
+	var lamps_dark := 0
+	for l5 in omnis:
+		if (l5 as OmniLight3D).visible:
+			lamps_dark += 1
+	var num_dark: bool = town._number.visible
+	var glow_dark: bool = town._surf_glow >= 0 \
+		and town._mesh.surface_get_material(town._surf_glow) == town._mat_glow_dark
+	var warm_on: int = int(st_on[1])
+	var warm_off: int = int(st_off[1])
+	print("  LA VILLE DU CAUCHEMAR EST NOIRE : %s   (suspend_town() a rendu la ville PROMISE — l'echantillon %d est retombe a %d — et noirci celle qui est ARMEE : %d feu(x) chaud(s) dans la moitie haute de l'image allumee, %d eteinte, sur %d pixels lus, pour un seuil de 80 puis 0 ; luminance moyenne de l'image %.4f contre %.4f, et ce chiffre-la ne prouve rien — la flaque des phares ne bouge pas. %d lampe(s) allumee(s) contre %d, materiau emissif echange %s, numero d'adresse visible %s. Meme cadrage, meme nuit, memes phares, voiture a l'arret : 90_ville_claire.png et 90_ville_cauchemar.png)" % [
+		promised >= 0 and road._town_g == -1 and bool(town._dark) and glow_dark
+		and lamps_on == 3 and lamps_dark == 0
+		and warm_on > 80 and warm_off == 0,
+		promised, road._town_g, warm_on, warm_off, int(st_on[2]),
+		float(st_on[0]), float(st_off[0]),
+		lamps_on, lamps_dark, glow_dark, num_dark])
+	town.set_dark(false)
+	road.program_town(g_keep, id_keep)
+	cam_dk.queue_free()
+	car.cam.make_current()
+	await get_tree().process_frame
+
+	# --- le cout, en A/B EN ROULANT ---------------------------------------
+	# ON BASCULE LA VILLE, ON NE COMPARE PAS DEUX PAYSAGES. Une mesure "sur la
+	# nationale nue, puis au coeur du bourg" compare deux endroits differents :
+	# des arbres et des poteaux d'un cote, un bourg de l'autre, et le tirage de
+	# la nuit dans les deux. Elle donne d'ailleurs le bourg GAGNANT — 5,6 ms
+	# dans le bourg contre 14 sur la nationale plantee — ce qui ne prouve rien
+	# du cout de la ville. Ici, seule la ville s'allume et s'eteint, par blocs
+	# de quatre images, et on ne retient que les deux dernieres de chaque bloc
+	# (le rendu a une image de retard).
+	#
+	# ET ON ROULE, alors que la premiere version mesurait A L'ARRET. Le motif
+	# est arithmetique et il a fait rougir la ligne : a l'arret dans un bourg,
+	# l'image tombe a 2,8 ms sur cette machine, et le demi-milligramme de
+	# seconde que coute la ville y pese DIX-HUIT POUR CENT — pour un seuil de
+	# quinze. Le meme cout absolu pese 4 % sur les 12 ms d'une image chargee.
+	# Un pourcentage dont le denominateur est la vitesse a vide de la machine ne
+	# mesure pas le bourg ; on prend donc le denominateur du JEU, c'est-a-dire
+	# la traversee conduite a 12,5 m/s, exactement ce que le plan demande.
+	#
+	# Quatre metres separent deux blocs consecutifs a cette vitesse : le paysage
+	# ne change pas entre un bloc allume et le bloc eteint qui le suit.
+	#
+	# ET LA DIFFERENCE SE PREND BLOC A BLOC, PAS ENTRE DEUX MEDIANES GLOBALES —
+	# c'est la correction de cette version, et elle vient d'un releve, pas d'une
+	# idee. Dix lancements de l'ancienne formule ont rendu ces surcouts :
+	#   +6,6  +14,5  +3,1  +0,9  +5,0  -2,1  +7,0  +6,9  +3,0  +18,2 %
+	# mediane 5,8 pour un seuil de 15 — et UN ROUGE SUR DIX. Un cout de ville ne
+	# change pas de signe : le -2,1 dit a lui seul que la ligne mesurait autre
+	# chose. Les deux lancements les plus charges en absolu portaient les deux
+	# plus hauts ecarts : ce n'etait pas la ville, c'etait la DERIVE de la
+	# machine entre le debut et la fin des huit secondes de mesure, plus la
+	# queue des images longues, encaissees par une mediane globale qui ne sait
+	# pas d'ou vient chaque echantillon.
+	#
+	# Deux remedes, et le second n'a rien trouve a corriger — ce qui est aussi
+	# un releve :
+	#  - MEDIANE APPARIEE. Chaque bloc allume est compare au bloc eteint qui le
+	#    SUIT — 8 images d'ecart, 4 m de route —, et la ligne rend la mediane de
+	#    ces differences. Une derive lente sort du calcul par construction : elle
+	#    est dans les deux termes de chaque paire. Trois lancements du banc
+	#    corrige ont rendu +0,08, +0,11 et +0,02 ms, la ou l'ancienne formule
+	#    balayait de -0,3 a +1,5 ms sur le meme bourg.
+	#  - LES IMAGES DE RECONSTRUCTION DU RUBAN SORTENT. Des que road.gd avale un
+	#    echantillon (_index0 avance), l'image porte une re-triangulation
+	#    entiere de la fenetre vivante — plusieurs millisecondes qui ne
+	#    dependent pas de town.visible. ET IL N'Y EN A AUCUNE ICI, releve :
+	#    _index0 n'a pas bouge d'un echantillon sur les 960 images du A/B. Le
+	#    demi-tour et le retour au panneau ont ramene la voiture 90 echantillons
+	#    DERRIERE la fenetre vivante, road.gd n'a donc plus rien a consommer
+	#    pendant que le banc mesure. Le compteur reste, et il s'imprime : le
+	#    jour ou le banc mesurera ailleurs, on verra la difference au lieu de la
+	#    subir.
+	#
+	# CE QUE LE POURCENTAGE NE PEUT PAS ETRE, ET IL FAUT LE LIRE AVEC. Les
+	# millisecondes sont stables d'un lancement a l'autre ; le DENOMINATEUR ne
+	# l'est pas — l'image eteinte a valu 2,73, 3,49, 8,30 et 10,94 ms sur quatre
+	# lancements du meme banc, selon ce que la machine faisait par ailleurs. Le
+	# meme cout absolu y pese donc de 1 a 4 %. Le chiffre qui decrit le bourg
+	# est en millisecondes ; le pourcentage decrit le bourg DIVISE PAR la
+	# machine du soir, et c'est lui que le plan a mis un seuil dessus.
+	var ip: int = clampi(TownPlan.PAD + 5, 1, town._c_pos.size() - 2)
+	var fip: Vector3 = (town._c_pos[ip + 1] - town._c_pos[ip]).normalized()
+	var rip: Vector3 = fip.cross(Vector3.UP).normalized()
+	_ville_park(town._c_pos[ip] + rip * 1.2, atan2(-fip.x, -fip.z))
+	await get_tree().process_frame
+	Engine.time_scale = 2.0
+	var on_calls_l := []
+	var off_calls_l := []
+	var on_ms_l := []
+	var off_ms_l := []
+	var blocs: Array = []            # une case par bloc de 4 images, ses images retenues
+	var bloc: Array = []
+	var b_cur := -1
+	var ab_off := 0
+	var ab_skip := 0                 # images de reconstruction du ruban, ecartees
+	var ab_skip_ms := 0.0
+	var k := 0
+	t_prev = Time.get_ticks_usec()
+	# ON S'ARRETE AU BOURG, PAS A UN COMPTE D'IMAGES. Le plafond de 960 images
+	# vaut sur une machine chargee (8 s a 12 ms) ; sur une machine libre, ce
+	# sont les 340 m du bourg qui bornent, et le banc rendrait la main au milieu
+	# de la nationale, ou le paysage n'est plus le meme des deux cotes.
+	while k < 960 and road._closest_index(town._c_pos, car.global_position) \
+			< town._c_pos.size() - 20:
+		var b: int = k / 4
+		var pos4: int = k % 4
+		k += 1
+		if b != b_cur:
+			if b_cur >= 0:
+				blocs.append(bloc)
+			bloc = []
+			b_cur = b
+		var want: bool = b % 2 == 0
+		town.visible = want
+		var idx0: int = road._index0
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		var dt: float = float(now - t_prev) / 1000.0
+		t_prev = now
+		car.speed = 12.5
+		_ville_rail(town._c_pos, 1.2, false)
+		if not town.visible:
+			ab_off += 1
+		if pos4 < 2:
+			continue                 # le rendu a une image de retard : les deux premieres du bloc sautent
+		if road._index0 != idx0:
+			ab_skip += 1
+			ab_skip_ms = maxf(ab_skip_ms, dt)
+			continue
+		bloc.append(dt)
+		var calls := float(RenderingServer.get_rendering_info(
+			RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME))
+		if want:
+			on_calls_l.append(calls)
+			on_ms_l.append(dt)
+		else:
+			off_calls_l.append(calls)
+			off_ms_l.append(dt)
+	if b_cur >= 0:
+		blocs.append(bloc)
+	town.visible = true
+	Engine.time_scale = 1.0
+	car.speed = 0.0
+	var on_n: int = on_ms_l.size()
+	var off_n: int = off_ms_l.size()
+	var on_calls: float = _ville_median(on_calls_l)
+	var off_calls: float = _ville_median(off_calls_l)
+	var on_ms: float = _ville_median(on_ms_l)
+	var off_ms: float = _ville_median(off_ms_l)
+	var d_calls: float = on_calls - off_calls
+	# Les paires : bloc allume contre le bloc eteint qui le suit. Une paire dont
+	# un des deux cotes a tout perdu en reconstructions ne se compte pas — elle
+	# n'aurait plus de terme a soustraire.
+	var pairs: Array = []
+	for b in range(0, blocs.size() - 1, 2):
+		var a1: Array = blocs[b]
+		var a2: Array = blocs[b + 1]
+		if a1.is_empty() or a2.is_empty():
+			continue
+		pairs.append(_ville_median(a1) - _ville_median(a2))
+	var d_ms: float = _ville_median(pairs)
+	var d_lo := 1.0e18
+	var d_hi := -1.0e18
+	for p in pairs:
+		d_lo = minf(d_lo, float(p))
+		d_hi = maxf(d_hi, float(p))
+	if pairs.is_empty():
+		d_lo = 0.0
+		d_hi = 0.0
+	var d_ips: float = 100.0 * d_ms / off_ms
+
+	# --- les cinq bourgs suivants -----------------------------------------
+	# LA MARGE ENTRE DEUX VILLES SE MESURE EN METRES DE ROUTE, pas en images :
+	# le noeud-ville est UNIQUE (road.gd n'en fabrique qu'un), donc deux bourgs
+	# ne peuvent pas etre a l'ecran ensemble par construction. Ce qui PEUT
+	# arriver, et ce que cette ligne surveille, c'est que arm() tombe sur une
+	# ville encore visible : le bourg qu'on traverse disparaitrait d'un coup et
+	# un autre se batirait a sa place, 300 m devant. On compte donc les
+	# metres entre le sleep() de A et le arm() de B, et les images ou le nom a
+	# change sans que la ville se soit eteinte.
+	print("--- les bourgs suivants ------------------------------------------")
+	var events: Array = [["arm", String(town.town_name), road.head_index()]]
+	var last_vis: bool = town.visible
+	var last_name: String = String(town.town_name)
+	var overlaps := 0
+	var arms := 1
+	var built_names := {last_name: true}
+	Engine.time_scale = 6.0
+	t = 0.0
+	while t < 400.0 and arms < 6:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		var in_town_line: bool = town.visible \
+			and road._closest_index(town._c_pos, car.global_position) \
+				< town._c_pos.size() - 3
+		if in_town_line:
+			Engine.time_scale = 3.0
+			car.speed = 14.0
+			_ville_rail(town._c_pos, 1.2, false)
+		else:
+			Engine.time_scale = 6.0
+			car.speed = maxf(car.speed, 25.0)
+			_rail(1.2)
+		var vis: bool = town.visible
+		var nm: String = String(town.town_name)
+		if vis and not last_vis:
+			events.append(["arm", nm, road.head_index()])
+			arms += 1
+		elif last_vis and not vis:
+			events.append(["sleep", last_name, road.head_index()])
+		elif vis and last_vis and nm != last_name:
+			overlaps += 1
+			events.append(["arm", nm, road.head_index()])
+			arms += 1
+		last_vis = vis
+		last_name = nm
+		if vis and town._built and road._town_ready and not built_names.has(nm):
+			built_names[nm] = true
+			audits.append(_ville_audit(town, ref))
+	car.speed = 0.0
+	Engine.time_scale = 1.0
+
+	t = 0.0
+	while t < 20.0 and not (town._built and road._town_ready):
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		car.speed = maxf(car.speed, 14.0)
+		_rail(1.2)
+	car.speed = 0.0
+
+	# --- les verdicts ------------------------------------------------------
+	print("--- les invariants -----------------------------------------------")
+	var mask_ok := true
+	var mask_in := 0
+	var mask_off := 0
+	var seam_max := 0.0
+	var seam_cnt := 0
+	var surf_bad := 0
+	var v_max := 0
+	var t_max := 0
+	var mi_max := 0
+	var nd_max := 0
+	var tri_tot := 0
+	var flat_tot := 0
+	var area_bad := 0
+	var dot_bad := 0
+	var degen := 0
+	var twoface := 0
+	var under := 0
+	var worst_dot := 1.0e18
+	var names := ""
+	var detail := ""
+	for a in audits:
+		mask_in += int(a["dans"])
+		mask_off += int(a["dans_sans"])
+		seam_max = maxf(seam_max, float(a["couture"]))
+		seam_cnt += int(a["couture_n"])
+		if not (bool(a["ready"]) and bool(a["remis"])) or bool(a["ferme"]):
+			mask_ok = false
+		if int(a["surf"]) != 6:
+			surf_bad += 1
+		v_max = maxi(v_max, int(a["v"]))
+		t_max = maxi(t_max, int(a["t"]))
+		mi_max = maxi(mi_max, int(a["mi"]))
+		nd_max = maxi(nd_max, int(a["noeuds"]))
+		tri_tot += int(a["tri"])
+		flat_tot += int(a["plat"])
+		area_bad += int(a["aire_faux"])
+		dot_bad += int(a["normale_faux"])
+		degen += int(a["degenere"])
+		twoface += int(a["deux_faces"])
+		under += int(a["sous_face"])
+		worst_dot = minf(worst_dot, float(a["pire"]))
+		if detail == "" and String(a["detail"]) != "":
+			detail = "%s, %s" % [a["nom"], a["detail"]]
+		names += "%s %d/%d, " % [a["nom"], a["v"], a["t"]]
+	names = names.rstrip(", ")
+
+	print("  LE MASQUE EST OUVERT : %s   (%d triangle(s) du ruban national dans la fenetre que le bourg dessine, sur %d ville(s) — et %d dans la MEME fenetre, a la MEME image, une fois le masque referme a la main : c'est ce que le masque supprime. La couture, mesuree SUR LE DESSIN : %.6f m d'ecart maxi entre le dernier sommet d'asphalte que road.gd emet avant le trou et le premier que la ville pose, sur %d sommets compares, seuil 0,001)" % [
+		mask_ok and mask_in == 0 and mask_off > 0
+		and seam_cnt == 3 * audits.size() and seam_max < 0.001,
+		mask_in, audits.size(), mask_off, seam_max, seam_cnt])
+	# LE COMPTE EST CELUI DE TOUTE LA DESCENDANCE, ET IL EST PASSE DE 1 A 5.
+	# La ligne annoncait "1 MeshInstance3D au plus" en ne regardant que les
+	# enfants DIRECTS de la ville : le maillage aux six surfaces est bien seul a
+	# ce rang, mais chacun des deux panneaux porte un poteau et une tole, et
+	# quatre objets qui dessinent etaient comptes pour rien. Cinq, donc — et
+	# c'est le chiffre que l'en-tete de town.gd donnait deja, avec ses dix-sept
+	# noeuds, quand le banc en imprimait un.
+	print("  LA VILLE TIENT EN SIX SURFACES : %s   (%d MeshInstance3D au plus dans TOUTE la ville — le maillage aux six surfaces, plus le poteau et la tole de chacun des deux panneaux — sur %d noeuds de descendance ; %d ville(s) hors des 6 surfaces, %d sommets et %d triangles au pire pour des seuils de 8 000 et 6 500 — soit %.0f %% et %.0f %% de marge ; par bourg : %s)" % [
+		mi_max == 5 and nd_max == 17 and surf_bad == 0
+		and v_max < 8000 and t_max < 6500 and audits.size() >= 4,
+		mi_max, nd_max, surf_bad, v_max, t_max,
+		100.0 * (8000.0 - float(v_max)) / 8000.0,
+		100.0 * (6500.0 - float(t_max)) / 6500.0, names])
+	print("  LES APPELS DE DESSIN SONT COMPTES : %s   (%.1f appels par image dans le bourg contre %.1f la ville eteinte, medianes de %d et %d images alternees toutes les quatre sur la meme traversee : hausse %.1f pour un seuil de 60. La nationale nue, en roulant, en demandait %.1f)" % [
+		d_calls < 60.0 and on_n > 60 and off_n > 60,
+		on_calls, off_calls, on_n, off_n, d_calls, bare_calls])
+	print("  TOUT EST A L'ENDROIT : %s   (%d triangles de bourg sur %d ville(s) : %d a plat dont %d qui regardent le SOL, %d a deux faces (les _quad2 des tetes de lampadaire, exemptes et comptees), %d degeneres ; %d d'aire signee du mauvais signe et %d dont la normale geometrique contredit la normale d'ombrage. Le pire produit vaut %+.3f, la ou la chaussee de la nationale vaut +1)" % [
+		area_bad == 0 and dot_bad == 0 and tri_tot > 15000,
+		tri_tot, audits.size(), flat_tot, under, twoface, degen,
+		area_bad, dot_bad, worst_dot])
+	if detail != "":
+		print("    (ou : %s— les surfaces 5 et 6 versent les maisons, puis les mats, puis le repere, dans cet ordre)" % [detail])
+
+	var lights: Array = []
+	_ville_omnis(town, lights)
+	var shadows: Array = []
+	_ville_shadow_lights(get_tree().root, shadows)
+	print("  TROIS LUMIERES, JAMAIS SOUS LE NEZ : %s   (%d OmniLight3D dans le bourg, %d a %d allumees a chaque image de la traversee et du retour ; %d allumages releves, le plus proche a %.1f m pour un plancher de %.1f ; brouillard volumetrique %.2f au plus pour un plafond de 0,2)" % [
+		lights.size() == 3 and lamp_min >= 60.0 and fog_max <= 0.2
+		and lamp_lit_max == 3 and lamp_moves >= 4,
+		lights.size(), lamp_lit_min, lamp_lit_max, lamp_moves, lamp_min, 60.0,
+		fog_max])
+	print("  AUCUNE OMBRE NEUVE : %s   (%d lumiere(s) a ombres dans toute la scene, bourg arme : %s)" % [
+		shadows.size() == 2, shadows.size(), ", ".join(shadows)])
+	# LE VERDICT NE PORTE PLUS QUE CE QU'IL MESURE. Il avait quatre
+	# conjonctions et deux ne disaient rien : `yaw_done > 170` ne pouvait etre
+	# faux que si la boucle de braquage avait expire — elle ne sort qu'a PI,
+	# soit 180,0 deg — et `back_m < 13` que si celle du retour avait expire —
+	# elle ne sort qu'a 12,0 m. Deux detecteurs de depassement de delai
+	# deguises en invariants, verts par construction, et le lecteur croyait
+	# lire deux mesures de plus. Ce que cette ligne mesure vraiment tient en
+	# deux chiffres : l'ECART MAXI a la chaussee pendant la manoeuvre — c'est
+	# lui qui dit que la ville rattrape la voiture par l'autre rue — et le
+	# compte d'images ou contains() a tenu. Les deux garde-fous restent, ils
+	# sont imprimes a part et sous leur vrai nom.
+	print("  LE DEMI-TOUR TIENT : %s   (demi-tour AU VOLANT sur le carrefour a s = %.0f m : off_road_dist %.2f m au plus dans l'arc, %.2f m sur la manoeuvre entiere et %.2f m sur la traversee d'approche, seuil 5,80 ; contains() a repondu vrai sur %d des %d images du demi-tour et du retour. La manoeuvre est allee au bout — braquage %s a %.0f deg, retour %s a %.1f m du panneau : ce sont les conditions d'arret des deux boucles, elles ne rougissent que sur un delai depasse)" % [
+		off_max < 5.8 and turn_in == turn_n and turn_done and back_done,
+		s_cross, turn_arc, turn_max, off_cross, turn_in, turn_n,
+		turn_done, yaw_done, back_done, back_m])
+	print("  LA VILLE NE S'ETEINT PAS DEDANS : %s   (%d image(s) eteinte(s) sur les %d de la traversee, du demi-tour et du retour — hors les %d images ou le banc l'eteint LUI-MEME pour le A/B, comptees a part)" % [
+		vis_off == 0 and vis_n > 400, vis_off, vis_n, ab_off])
+
+	var margins := PackedFloat32Array()
+	var pending := -1
+	for e in events:
+		if String(e[0]) == "sleep":
+			pending = int(e[2])
+		elif String(e[0]) == "arm" and pending >= 0:
+			margins.append(float(int(e[2]) - pending) * RoadScript.STEP)
+			pending = -1
+	var marge_min := 1.0e18
+	var marge_txt := ""
+	for m in margins:
+		marge_min = minf(marge_min, m)
+		marge_txt += "%.0f " % m
+	print("  DEUX VILLES JAMAIS ENSEMBLE : %s   (%d bourgs armes, %d marge(s) mesurees entre l'extinction de l'un et l'armement du suivant : %sm, la plus courte %.0f m pour un seuil de 100 ; %d image(s) ou le nom a change sans que la ville se soit eteinte)" % [
+		arms >= 6 and margins.size() >= 5 and marge_min > 100.0
+		and overlaps == 0,
+		arms, margins.size(), marge_txt, marge_min, overlaps])
+	# LE POURCENTAGE EST LE SEUIL DU PLAN, ET IL FAUT LIRE LES MILLISECONDES A
+	# COTE : le meme cout absolu pese 18 % sur une image a l'arret et 4 % sur
+	# une image chargee. Le denominateur reste celui du JEU, la traversee a
+	# 12,5 m/s. Ce qui a change, c'est le NUMERATEUR : ce n'est plus un ecart
+	# entre deux medianes globales — il valait de -2,1 a +18,2 % selon le
+	# lancement, et rougissait une fois sur dix sans que la ville y soit pour
+	# rien — mais la mediane des differences APPARIEES, bloc a bloc, images de
+	# reconstruction du ruban ecartees. La ligne imprime l'etendue de ces
+	# differences : c'est elle, et pas la mediane, qui dit ce que la mesure vaut.
+	print("  LE COUT NE SE VOIT PAS : %s   (le bourg traverse a 12,5 m/s, sa visibilite basculee toutes les quatre images : %.2f ms par image allume contre %.2f eteint, sur %d et %d images retenues. Difference APPARIEE, chaque bloc allume contre le bloc eteint qui le suit : mediane %+.2f ms sur %d paires (etendue %+.2f a %+.2f), soit %+.1f %% pour un seuil de 15, ou %.0f ips contre %.0f. %d image(s) de reconstruction du ruban ecartees (la plus longue a %.2f ms) : road.gd n'avale aucun echantillon pendant le A/B, le demi-tour a laisse la fenetre vivante loin devant. Le chiffre qui decrit le bourg est la MILLISECONDE ; le pourcentage la divise par l'image du soir, qui va de 2,7 a 11 ms sur cette machine selon les lancements. Pour situer : la traversee entiere tient %.2f ms par image sur %d images, quand la nationale NUE et plantee en demande %.2f)" % [
+		d_ips < 15.0 and on_n > 60 and off_n > 60 and pairs.size() >= 20,
+		on_ms, off_ms, on_n, off_n,
+		d_ms, pairs.size(), d_lo, d_hi, d_ips,
+		1000.0 / on_ms, 1000.0 / off_ms, ab_skip, ab_skip_ms,
+		cross_ms / maxf(float(cross_n), 1.0), cross_n, bare_ms])
+
+	# --- les temoins : ce que chaque ligne detecte quand on la casse -------
+	# LA LECON DU J2, ECRITE DANS LE BANC ET PAS DANS UN RAPPORT. Trois de ses
+	# neuf lignes ne mesuraient pas ce que leur titre annoncait, et aucune ne
+	# savait le dire. Ci-dessous, chaque ligne du dessus est reprise sur une
+	# geometrie ou une liste d'evenements DELIBEREMENT fausse, avec le meme
+	# code de mesure : si le temoin ne rougit pas, c'est la ligne verte qui ne
+	# vaut rien. Les temoins ne portent pas de verdict — ils portent un chiffre
+	# et le mot ROUGIRAIT, pour que le compte de lignes vertes du banc reste
+	# celui des invariants.
+	print("--- les temoins : ce que chaque ligne detecte quand on la casse ---")
+	print("  [temoin] LE MASQUE EST OUVERT rougirait : %d triangles dans la fenetre du bourg des que road._town_in retombe a -1, contre %d avec le masque. Meme image, meme ruban, meme fenetre." % [
+		mask_off, mask_in])
+
+	var kk: int = road._town_in - road._index0
+	var seam_bad := -1.0
+	var seam_good := -1.0
+	if kk >= 0 and kk < road._pos.size():
+		var keepp: Vector3 = road._pos[kk]
+		road._pos[kk] = keepp + Vector3(0.05, 0.0, 0.0)
+		road._rebuild()
+		seam_bad = _ville_seam(town)
+		road._pos[kk] = keepp
+		road._rebuild()
+		seam_good = _ville_seam(town)
+	print("  [temoin] LA COUTURE rougirait : %.4f m des qu'on decale de 5 cm le seul echantillon _pos[_town_in] du ruban et qu'on re-triangule ; remis, elle retombe a %.6f m." % [
+		seam_bad, seam_good])
+
+	var flip: Array = _ville_flip(town._mesh, float(ref[0]), float(ref[1]))
+	print("  [temoin] TOUT EST A L'ENDROIT rougirait : un SEUL triangle retourne dans une copie de la surface 0 — %d d'aire du mauvais signe et %d de normale contredite sur %d, la ou le maillage livre en donne 0 et 0." % [
+		flip[1], flip[2], flip[0]])
+
+	# On avance l'armement qui suit la PLUS COURTE des marges reelles, et juste
+	# assez pour la faire tomber a 60 m : le temoin doit franchir le seuil, pas
+	# seulement bouger. Avancer un armement au hasard laissait la ligne verte.
+	var fake: Array = events.duplicate(true)
+	var fpend0 := -1
+	for i in fake.size():
+		if String(fake[i][0]) == "sleep":
+			fpend0 = int(fake[i][2])
+		elif String(fake[i][0]) == "arm" and fpend0 >= 0:
+			if absf(float(int(fake[i][2]) - fpend0) * RoadScript.STEP - marge_min) < 1.0:
+				fake[i][2] = fpend0 + int(60.0 / RoadScript.STEP)
+				break
+			fpend0 = -1
+	var fmin := 1.0e18
+	var fpend := -1
+	for e in fake:
+		if String(e[0]) == "sleep":
+			fpend = int(e[2])
+		elif String(e[0]) == "arm" and fpend >= 0:
+			fmin = minf(fmin, float(int(e[2]) - fpend) * RoadScript.STEP)
+			fpend = -1
+	print("  [temoin] DEUX VILLES JAMAIS ENSEMBLE rougirait : le meme calcul sur la meme liste d'evenements, l'armement qui suit la plus courte marge ramene a 60 m — la ligne rendrait %s avec %.0f m, contre %s et %.0f m reellement mesures." % [
+		fmin > 100.0, fmin, marge_min > 100.0, marge_min])
+
+	var s_gap := s_cross + 60.0
+	var p_bad: Vector3 = town._world(s_gap, 9.0)
+	var p_ok: Vector3 = town._world(s_gap, 1.2)
+	print("  [temoin] LE DEMI-TOUR TIENT rougirait : off_road_dist rend %.2f m pour un point pose a 9 m de l'axe du tronc (s = %.0f m, entre deux transversales) et %.2f m pour le meme point ramene sur la voie — la mesure n'est pas une constante." % [
+		road.off_road_dist(p_bad), s_gap, road.off_road_dist(p_ok)])
+
+	print("  [temoin] TROIS LUMIERES rougirait : sur la traversee, le mat le plus proche que la voiture ait croise etait a %.2f m d'elle ; une lampe qui prendrait le plus proche au lieu du plus proche AU-DELA de 60 m se serait allumee la, sous le nez, pour un plancher de 60,0." % [
+		mast_near])
+	var lamp0: OmniLight3D = lights[0]
+	lamp0.shadow_enabled = true
+	var sh2: Array = []
+	_ville_shadow_lights(get_tree().root, sh2)
+	lamp0.shadow_enabled = false
+	var sh3: Array = []
+	_ville_shadow_lights(get_tree().root, sh3)
+	print("  [temoin] AUCUNE OMBRE NEUVE rougirait : shadow_enabled remis a vrai sur une seule lampe du bourg et le compte passe de %d a %d ; remis a faux, il retombe a %d." % [
+		shadows.size(), sh2.size(), sh3.size()])
+
+	# DESTRUCTIF, ET EN DERNIER : on verse une septieme surface dans le
+	# maillage du bourg. ArrayMesh ne sait pas retirer une surface, seulement
+	# les effacer toutes — ce temoin ne peut donc pas se remettre, et il est
+	# donc le dernier geste du banc.
+	var vv := PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.BACK])
+	var nnn := PackedVector3Array([Vector3.UP, Vector3.UP, Vector3.UP])
+	var ff := PackedInt32Array([0, 1, 2])
+	var arrs := []
+	arrs.resize(Mesh.ARRAY_MAX)
+	arrs[Mesh.ARRAY_VERTEX] = vv
+	arrs[Mesh.ARRAY_NORMAL] = nnn
+	arrs[Mesh.ARRAY_INDEX] = ff
+	town._mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrs)
+	print("  [temoin] LA VILLE TIENT EN SIX SURFACES rougirait : une surface de plus versee dans le maillage du bourg et le compte passe a %d." % [
+		town._mesh.get_surface_count()])
+	print("  [temoin] LA VILLE NE S'ETEINT PAS DEDANS rougirait : le meme compteur a releve %d images eteintes pendant le A/B, ou le banc bascule town.visible lui-meme." % [
+		ab_off])
+
+	Engine.time_scale = 1.0
+	get_tree().quit()
+
+
+## La couture SUR LE DESSIN, en un chiffre : l'ecart maxi entre les trois
+## sommets d'asphalte que road.gd ecrit a l'echantillon _town_in et les trois
+## premiers que le bourg ecrit. Sert au verdict et a son temoin.
+func _ville_seam(town: Node3D) -> float:
+	var k: int = road._town_in - road._index0
+	if k < 0 or k >= road._pos.size() or (town._mesh as ArrayMesh).get_surface_count() == 0:
+		return -1.0
+	var ra: Array = road._mesh.surface_get_arrays(1)
+	var ta: Array = (town._mesh as ArrayMesh).surface_get_arrays(0)
+	var rv: PackedVector3Array = ra[Mesh.ARRAY_VERTEX]
+	var tv: PackedVector3Array = ta[Mesh.ARRAY_VERTEX]
+	var d := 0.0
+	for c in 3:
+		if k * 3 + c < rv.size() and c < tv.size():
+			d = maxf(d, rv[k * 3 + c].distance_to(tv[c]))
+	return d
+
+
+## Le temoin d'enroulement : la surface 0 du bourg recopiee dans un maillage
+## neuf avec UN triangle retourne, passee au meme audit. Rend [triangles,
+## aires fausses, normales contredites].
+##
+## On retourne un triangle et pas la surface entiere : c'est la panne
+## realiste — un `f.append_array` dont deux indices ont ete intervertis — et
+## c'est la plus difficile a voir, parce qu'elle laisse tout le reste juste.
+func _ville_flip(mesh: ArrayMesh, want_area: float, want_dot: float) -> Array:
+	var arr: Array = mesh.surface_get_arrays(0)
+	var f: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	if f.size() < 3:
+		return [0, 0, 0]
+	var swap: int = f[1]
+	f[1] = f[2]
+	f[2] = swap
+	arr[Mesh.ARRAY_INDEX] = f
+	var copy := ArrayMesh.new()
+	copy.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var w: Dictionary = _ville_winding(copy, want_area, want_dot)
+	return [w["tri"], w["area_bad"], w["dot_bad"]]

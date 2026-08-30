@@ -406,7 +406,14 @@ func _sample_comfort(delta: float) -> void:
 		_judge("jolt", jolt > JOLT_MAX, 1.5)
 		_judge("radio", car.radio != null and car.radio.loud(), 0.6)
 		_judge("windows", car.window_openness() > WINDOW_MAX, 0.4)
-		_judge("offroad", road._closest_dist(road._pos, car.global_position) > OFFROAD_AT, 1.5)
+		# La route repond elle-meme, et par la porte : elle seule sait ce
+		# qu'elle a de chaussee sous les roues — la nationale, et les rues du
+		# bourg quand on en traverse un. Le juge allait chercher la ligne
+		# mediane et la fonction de distance dans les membres prives de road :
+		# GDScript n'aurait rien dit le jour ou l'un des deux change de nom ou
+		# de sens, et le client se serait mis a raler d'un bas-cote imaginaire,
+		# en silence, une nuit entiere.
+		_judge("offroad", road.off_road_dist(car.global_position) > OFFROAD_AT, 1.5)
 		_judge("stall", car.stalled, 1.5)
 
 
